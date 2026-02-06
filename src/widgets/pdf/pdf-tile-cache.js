@@ -51,6 +51,27 @@ function computeVisibleTileRange({ camera, widgetBounds, viewport, canvasSize })
   };
 }
 
+function computeTileRangeFromSourceRect({ viewport, sourceLeftPx, sourceRightPx, sourceTopPx, sourceBottomPx }) {
+  const cols = Math.max(1, Math.ceil(viewport.width / TILE_PX));
+  const rows = Math.max(1, Math.ceil(viewport.height / TILE_PX));
+
+  const clampedLeft = clamp(sourceLeftPx, 0, viewport.width);
+  const clampedRight = clamp(sourceRightPx, 0, viewport.width);
+  const clampedTop = clamp(sourceTopPx, 0, viewport.height);
+  const clampedBottom = clamp(sourceBottomPx, 0, viewport.height);
+
+  if (clampedRight <= clampedLeft || clampedBottom <= clampedTop) {
+    return null;
+  }
+
+  return {
+    xStart: clamp(Math.floor(clampedLeft / TILE_PX), 0, cols - 1),
+    xEnd: clamp(Math.floor((clampedRight - 1) / TILE_PX), 0, cols - 1),
+    yStart: clamp(Math.floor(clampedTop / TILE_PX), 0, rows - 1),
+    yEnd: clamp(Math.floor((clampedBottom - 1) / TILE_PX), 0, rows - 1),
+  };
+}
+
 export class PdfTileCache {
   constructor(pageProxy) {
     this.page = pageProxy;
@@ -81,6 +102,40 @@ export class PdfTileCache {
         }
         this.pending.set(key, true);
         this.queue.push({ key, scaleBucket, tileX, tileY, viewport });
+      }
+    }
+
+    void this._drainQueue();
+  }
+
+  requestMappedRegions({ mappings, scaleBucket }) {
+    if (!Array.isArray(mappings) || mappings.length < 1) {
+      return;
+    }
+
+    const viewport = this.page.getViewport({ scale: scaleBucket });
+    for (const mapping of mappings) {
+      const range = computeTileRangeFromSourceRect({
+        viewport,
+        sourceLeftPx: mapping.sourceLeftPx,
+        sourceRightPx: mapping.sourceRightPx,
+        sourceTopPx: mapping.sourceTopPx,
+        sourceBottomPx: mapping.sourceBottomPx,
+      });
+
+      if (!range) {
+        continue;
+      }
+
+      for (let tileY = range.yStart; tileY <= range.yEnd; tileY += 1) {
+        for (let tileX = range.xStart; tileX <= range.xEnd; tileX += 1) {
+          const key = this._tileKey(scaleBucket, tileX, tileY);
+          if (this.tiles.has(key) || this.pending.has(key)) {
+            continue;
+          }
+          this.pending.set(key, true);
+          this.queue.push({ key, scaleBucket, tileX, tileY, viewport });
+        }
       }
     }
 
@@ -120,6 +175,88 @@ export class PdfTileCache {
 
         ctx.drawImage(tile.canvas, screen.x, screen.y, screenW, screenH);
         drawCount += 1;
+      }
+    }
+
+    return drawCount;
+  }
+
+  drawMappedRegions({ ctx, camera, mappings, scaleBucket }) {
+    if (!Array.isArray(mappings) || mappings.length < 1) {
+      return 0;
+    }
+
+    const viewport = this.page.getViewport({ scale: scaleBucket });
+    const cols = Math.max(1, Math.ceil(viewport.width / TILE_PX));
+    const rows = Math.max(1, Math.ceil(viewport.height / TILE_PX));
+
+    let drawCount = 0;
+
+    for (const mapping of mappings) {
+      const sourceLeft = clamp(mapping.sourceLeftPx, 0, viewport.width);
+      const sourceRight = clamp(mapping.sourceRightPx, 0, viewport.width);
+      const sourceTop = clamp(mapping.sourceTopPx, 0, viewport.height);
+      const sourceBottom = clamp(mapping.sourceBottomPx, 0, viewport.height);
+
+      if (sourceRight <= sourceLeft || sourceBottom <= sourceTop) {
+        continue;
+      }
+
+      const xStart = clamp(Math.floor(sourceLeft / TILE_PX), 0, cols - 1);
+      const xEnd = clamp(Math.floor((sourceRight - 1) / TILE_PX), 0, cols - 1);
+      const yStart = clamp(Math.floor(sourceTop / TILE_PX), 0, rows - 1);
+      const yEnd = clamp(Math.floor((sourceBottom - 1) / TILE_PX), 0, rows - 1);
+
+      for (let tileY = yStart; tileY <= yEnd; tileY += 1) {
+        for (let tileX = xStart; tileX <= xEnd; tileX += 1) {
+          const key = this._tileKey(scaleBucket, tileX, tileY);
+          const tile = this.tiles.get(key);
+          if (!tile) {
+            continue;
+          }
+
+          const tileSourceX = tileX * TILE_PX;
+          const tileSourceY = tileY * TILE_PX;
+          const tileSourceRight = tileSourceX + tile.canvas.width;
+          const tileSourceBottom = tileSourceY + tile.canvas.height;
+
+          const srcX0 = Math.max(sourceLeft, tileSourceX);
+          const srcX1 = Math.min(sourceRight, tileSourceRight);
+          const srcY0 = Math.max(sourceTop, tileSourceY);
+          const srcY1 = Math.min(sourceBottom, tileSourceBottom);
+          if (srcX1 <= srcX0 || srcY1 <= srcY0) {
+            continue;
+          }
+
+          const sourceWidth = sourceRight - sourceLeft;
+          const sourceHeight = sourceBottom - sourceTop;
+          const u0 = (srcX0 - sourceLeft) / sourceWidth;
+          const u1 = (srcX1 - sourceLeft) / sourceWidth;
+          const v0 = (srcY0 - sourceTop) / sourceHeight;
+          const v1 = (srcY1 - sourceTop) / sourceHeight;
+
+          const worldX = mapping.worldX + mapping.worldWidth * u0;
+          const worldY = mapping.worldY + mapping.worldHeight * v0;
+          const worldW = mapping.worldWidth * (u1 - u0);
+          const worldH = mapping.worldHeight * (v1 - v0);
+
+          const screen = camera.worldToScreen(worldX, worldY);
+          const screenW = worldW * camera.zoom;
+          const screenH = worldH * camera.zoom;
+
+          ctx.drawImage(
+            tile.canvas,
+            srcX0 - tileSourceX,
+            srcY0 - tileSourceY,
+            srcX1 - srcX0,
+            srcY1 - srcY0,
+            screen.x,
+            screen.y,
+            screenW,
+            screenH,
+          );
+          drawCount += 1;
+        }
       }
     }
 

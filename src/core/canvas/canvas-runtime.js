@@ -376,21 +376,22 @@ export class CanvasRuntime {
     this.ctx.clearRect(0, 0, width, height);
     this._drawGrid(width, height);
 
-    for (const layer of this._renderLayers) {
-      if (typeof layer.update === "function") {
-        layer.update(dt);
-      }
-      if (typeof layer.render === "function") {
-        layer.render(this.ctx, this.camera, renderContext);
-      }
-    }
-
     for (const widget of this.widgets) {
       widget.update(dt);
       if (widget.collapsed && typeof widget.renderSnapshot === "function") {
         widget.renderSnapshot(this.ctx, this.camera, renderContext);
       } else {
         widget.render(this.ctx, this.camera, renderContext);
+      }
+    }
+
+    // Render layers (for example ink) are painted after widgets so strokes remain visible on top.
+    for (const layer of this._renderLayers) {
+      if (typeof layer.update === "function") {
+        layer.update(dt);
+      }
+      if (typeof layer.render === "function") {
+        layer.render(this.ctx, this.camera, renderContext);
       }
     }
 

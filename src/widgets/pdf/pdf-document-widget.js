@@ -62,6 +62,7 @@ export class PdfDocumentWidget extends WidgetBase {
     this._whitespaceHitRegions = [];
     this._zoneWorldRects = new Map();
     this._pageLayout = new Map();
+    this._pageSegments = new Map();
     this._baseWidgetHeight = this.size.height;
   }
 
@@ -176,6 +177,7 @@ export class PdfDocumentWidget extends WidgetBase {
   _computeDisplayLayout() {
     this._zoneWorldRects.clear();
     this._pageLayout.clear();
+    this._pageSegments.clear();
 
     let cumulativeReduction = 0;
 
@@ -196,10 +198,27 @@ export class PdfDocumentWidget extends WidgetBase {
         height: pageHeight,
       });
 
-      let offsetBefore = 0;
+      const segments = [];
+      let consumedSourceY = 0;
+      let cursorWorldY = pageY;
+
       for (const zone of pageZones) {
         const baseY = zone.normalizedY * pageEntry.baseWorldHeight;
-        const zoneY = pageY + Math.max(0, baseY - offsetBefore);
+        const baseHeight = this._zoneBaseHeight(zone, pageEntry.baseWorldHeight);
+        const zoneDisplayHeight = this._zoneDisplayHeight(zone, pageEntry.baseWorldHeight);
+
+        const preSegmentHeight = Math.max(0, baseY - consumedSourceY);
+        if (preSegmentHeight > 0.01) {
+          segments.push({
+            sourceStartY: consumedSourceY,
+            sourceEndY: baseY,
+            worldStartY: cursorWorldY,
+            worldEndY: cursorWorldY + preSegmentHeight,
+          });
+          cursorWorldY += preSegmentHeight;
+        }
+
+        const zoneY = cursorWorldY;
         const zoneHeight = this._zoneDisplayHeight(zone, pageEntry.baseWorldHeight);
         this._zoneWorldRects.set(zone.id, {
           x: this.position.x,
@@ -209,9 +228,30 @@ export class PdfDocumentWidget extends WidgetBase {
           pageNumber: pageEntry.pageNumber,
         });
 
-        offsetBefore += this._zoneReduction(zone, pageEntry.baseWorldHeight);
+        if (!zone.collapsed) {
+          segments.push({
+            sourceStartY: baseY,
+            sourceEndY: baseY + baseHeight,
+            worldStartY: zoneY,
+            worldEndY: zoneY + zoneDisplayHeight,
+          });
+        }
+
+        consumedSourceY = baseY + baseHeight;
+        cursorWorldY = zoneY + zoneDisplayHeight;
       }
 
+      const remainingHeight = Math.max(0, pageEntry.baseWorldHeight - consumedSourceY);
+      if (remainingHeight > 0.01) {
+        segments.push({
+          sourceStartY: consumedSourceY,
+          sourceEndY: pageEntry.baseWorldHeight,
+          worldStartY: cursorWorldY,
+          worldEndY: cursorWorldY + remainingHeight,
+        });
+      }
+
+      this._pageSegments.set(pageEntry.pageNumber, segments);
       cumulativeReduction += pageReduction;
     }
 
@@ -239,6 +279,36 @@ export class PdfDocumentWidget extends WidgetBase {
 
   _getPageBoundsByNumber(pageNumber) {
     return this._pageLayout.get(pageNumber) ?? null;
+  }
+
+  _getPageSegmentsByNumber(pageNumber) {
+    return this._pageSegments.get(pageNumber) ?? [];
+  }
+
+  _buildPageTileMappings(pageEntry, scaleBucket, visibleWorld) {
+    const viewport = pageEntry.pageProxy.getViewport({ scale: scaleBucket });
+    const segments = this._getPageSegmentsByNumber(pageEntry.pageNumber);
+    if (segments.length < 1) {
+      return [];
+    }
+
+    return segments
+      .filter((segment) => {
+        if (segment.worldEndY <= segment.worldStartY) {
+          return false;
+        }
+        return !(segment.worldEndY < visibleWorld.minY || segment.worldStartY > visibleWorld.maxY);
+      })
+      .map((segment) => ({
+        sourceLeftPx: 0,
+        sourceRightPx: viewport.width,
+        sourceTopPx: (segment.sourceStartY / pageEntry.baseWorldHeight) * viewport.height,
+        sourceBottomPx: (segment.sourceEndY / pageEntry.baseWorldHeight) * viewport.height,
+        worldX: this.position.x,
+        worldY: segment.worldStartY,
+        worldWidth: this.size.width,
+        worldHeight: segment.worldEndY - segment.worldStartY,
+      }));
   }
 
   _getScaleBucket(zoom) {
@@ -421,24 +491,16 @@ export class PdfDocumentWidget extends WidgetBase {
       lastVisiblePage = pageEntry.pageNumber;
 
       const scaleBucket = this._getScaleBucket(camera.zoom);
-      pageEntry.tileCache.requestVisibleTiles({
-        camera,
-        widgetBounds: pageBounds,
-        canvasSize: {
-          width: renderContext.width,
-          height: renderContext.height,
-        },
+      const mappings = this._buildPageTileMappings(pageEntry, scaleBucket, visibleWorld);
+      pageEntry.tileCache.requestMappedRegions({
+        mappings,
         scaleBucket,
       });
 
-      const drawnTiles = pageEntry.tileCache.drawVisibleTiles({
+      const drawnTiles = pageEntry.tileCache.drawMappedRegions({
         ctx,
         camera,
-        widgetBounds: pageBounds,
-        canvasSize: {
-          width: renderContext.width,
-          height: renderContext.height,
-        },
+        mappings,
         scaleBucket,
       });
 

@@ -27,6 +27,7 @@
 
 ## In Progress
 - No active code changes in progress.
+- Follow-up interaction fix applied for ink visibility on widget surfaces.
 - Pending manual interaction QA on physical tablet hardware.
 
 ## Blockers
@@ -44,6 +45,8 @@
 - Runtime pointer routing now dispatches touch events to widget handlers before camera pan/pinch fallback.
 - Shared move/resize/collapse is centralized in `WidgetInteractionManager`; specialized handlers keep only widget-specific actions.
 - Widget serializable state now carries `interactionFlags` capability contract.
+- Canvas runtime now renders ink layers after widgets so stylus strokes remain visible on expanded-space, reference popup, and PDF widget surfaces.
+- PDF whitespace collapse now uses segment-based tile mapping so only collapsed whitespace regions compress while surrounding PDF content remains unscaled.
 
 ## Next Actions
 1. Manually validate Sprint 9 test plan across all widget types (move/resize/collapse parity and specialized controls).
