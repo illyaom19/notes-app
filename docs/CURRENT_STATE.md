@@ -1,29 +1,26 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 0 (Foundations) completed and shipped to `origin/main`.
+- Sprint 1 (Ink Engine) implemented and ready to ship.
 - Exit criteria status:
-  - Dummy widget module is dynamically loaded only when instantiated.
-  - Canvas pan/zoom runtime implemented and operational.
+  - Vector stylus strokes with pressure capture implemented.
+  - Zoom/pan camera preserves stroke geometry in world coordinates.
 
 ## What Exists Today
-- Root landing brief for agents: `AGENTS.md`
-- Documentation set in `docs/`
-- Web-first Sprint 0 app scaffold:
+- Sprint 0 foundations remain in place.
+- Sprint 1 ink engine modules:
+  - `src/features/ink/index.js`
+  - `src/features/ink/ink-engine.js`
+  - `src/features/ink/stroke-store.js`
+  - `src/features/ink/rendering.js`
+  - `src/features/ink/stroke-raster-cache.js`
+  - `src/features/ink/persistence.js`
+- Canvas runtime now supports pluggable input handlers and render layers:
+  - `src/core/canvas/canvas-runtime.js`
+- App shell now supports ink controls and status:
   - `index.html`
   - `src/main.js`
   - `src/styles/app.css`
-- Widget foundation:
-  - `src/core/widgets/widget-base.js`
-  - `src/core/widgets/widget-registry.js`
-  - `src/widgets/dummy/index.js`
-  - `src/widgets/dummy/dummy-widget.js`
-- Canvas/camera foundation:
-  - `src/core/canvas/camera.js`
-  - `src/core/canvas/canvas-runtime.js`
-- Worker-ready foundation:
-  - `src/core/workers/background-worker-client.js`
-  - `src/core/workers/analysis-worker.js`
 
 ## In Progress
 - No active implementation tasks.
@@ -32,30 +29,26 @@
 - None.
 
 ## Decisions Made
-- Stack choice: HTML/CSS/JS with native ES modules, Canvas2D, dynamic `import()`, and module Web Workers.
-- No bundler in Sprint 0 to keep startup path minimal and transparent.
-- Widget code remains unloaded until explicit instantiation through registry.
-- Worker remains unloaded until explicit "Start Worker" action.
+- Ink subsystem is lazily loaded via dynamic import:
+  - `import("./features/ink/index.js")` only when user clicks "Enable Ink".
+- Stylus capture is pen-only (`pointerType === "pen"`) to avoid conflict with mouse pan/zoom.
+- Completed strokes are raster-cached per camera/view state; active strokes remain vector-rendered for low latency.
+- Local persistence uses `localStorage` with a versioned payload (`notes-app.ink.strokes.v1`).
+- Undo/redo supports UI buttons and keyboard gestures (`Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y`).
 
 ## Next Actions
-1. Begin Sprint 1 implementation (`docs/SPRINT_1_Ink_Engine.md`).
-2. Add low-latency stylus vector stroke capture and persistence format.
-3. Preserve Sprint 0 modular loading guarantees while adding ink systems.
+1. Begin Sprint 2 implementation (`docs/SPRINT_2_Widget_System.md`).
+2. Keep ink feature isolated as a module while introducing the expanded-area widget.
+3. Maintain no-heavy-load boot behavior in all new integrations.
 
 ## Verification Status
-- `node --version` -> `v20.20.0`
-- JS syntax check passed for all source files:
-  - `find src -type f -name '*.js' -print0 | xargs -0 -n1 node --check`
-- Lazy-load wiring confirmed:
-  - `src/main.js` registers dummy via dynamic import at runtime
-- Worker lazy-start confirmed by code path:
-  - `new Worker(...)` only inside `BackgroundWorkerClient.start()`
+- `find src -type f -name '*.js' -print0 | xargs -0 -n1 node --check` passed.
 - Local server smoke command executed:
   - `timeout 2s python3 -m http.server 4173 --directory /home/illya/io_dev/notes-app`
-- Sprint 0 code commit:
-  - `7ba1073 Implement Sprint 0 modular foundations scaffold`
-- Pushed to remote:
-  - `main` updated on `origin` from `3669bb5` to `7ba1073`
+- Architecture checks:
+  - Lazy ink import in `src/main.js`
+  - Pen-only input gate in `src/features/ink/ink-engine.js`
+  - Persistence save path in `src/features/ink/persistence.js`
 
 ## Last Updated
 - 2026-02-06 (local environment time)

@@ -10,6 +10,8 @@ export class CanvasRuntime {
     this._lastFrameAt = performance.now();
     this._dragging = false;
     this._lastPointer = { x: 0, y: 0 };
+    this._inputHandlers = [];
+    this._renderLayers = [];
 
     if (!this.ctx) {
       throw new Error("Canvas 2D context unavailable.");
@@ -33,10 +35,29 @@ export class CanvasRuntime {
     return this.widgets.length;
   }
 
+  registerInputHandler(handler) {
+    this._inputHandlers.push(handler);
+    return () => {
+      this._inputHandlers = this._inputHandlers.filter((entry) => entry !== handler);
+    };
+  }
+
+  registerRenderLayer(layer) {
+    this._renderLayers.push(layer);
+    return () => {
+      this._renderLayers = this._renderLayers.filter((entry) => entry !== layer);
+    };
+  }
+
   _bindEvents() {
     window.addEventListener("resize", () => this._resizeToViewport());
 
     this.canvas.addEventListener("pointerdown", (event) => {
+      if (this._dispatchPointer("onPointerDown", event)) {
+        this.canvas.setPointerCapture(event.pointerId);
+        return;
+      }
+
       if (event.button !== 0 && event.button !== 1) {
         return;
       }
@@ -46,6 +67,10 @@ export class CanvasRuntime {
     });
 
     this.canvas.addEventListener("pointermove", (event) => {
+      if (this._dispatchPointer("onPointerMove", event)) {
+        return;
+      }
+
       if (!this._dragging) {
         return;
       }
@@ -58,6 +83,13 @@ export class CanvasRuntime {
     });
 
     const stopDragging = (event) => {
+      if (this._dispatchPointer("onPointerUp", event)) {
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+
       if (!this._dragging) {
         return;
       }
@@ -68,7 +100,15 @@ export class CanvasRuntime {
     };
 
     this.canvas.addEventListener("pointerup", stopDragging);
-    this.canvas.addEventListener("pointercancel", stopDragging);
+    this.canvas.addEventListener("pointercancel", (event) => {
+      if (this._dispatchPointer("onPointerCancel", event)) {
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+      stopDragging(event);
+    });
 
     this.canvas.addEventListener(
       "wheel",
@@ -112,6 +152,24 @@ export class CanvasRuntime {
     }
   }
 
+  _dispatchPointer(handlerName, event) {
+    for (let index = this._inputHandlers.length - 1; index >= 0; index -= 1) {
+      const handler = this._inputHandlers[index];
+      if (typeof handler[handlerName] !== "function") {
+        continue;
+      }
+
+      const handled = handler[handlerName](event, {
+        camera: this.camera,
+        canvas: this.canvas,
+      });
+      if (handled) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   _frame(now) {
     const dt = now - this._lastFrameAt;
     this._lastFrameAt = now;
@@ -126,6 +184,19 @@ export class CanvasRuntime {
 
     this.ctx.clearRect(0, 0, width, height);
     this._drawGrid(width, height);
+
+    for (const layer of this._renderLayers) {
+      if (typeof layer.update === "function") {
+        layer.update(dt);
+      }
+      if (typeof layer.render === "function") {
+        layer.render(this.ctx, this.camera, {
+          width,
+          height,
+          dpr: window.devicePixelRatio || 1,
+        });
+      }
+    }
 
     for (const widget of this.widgets) {
       widget.update(dt);

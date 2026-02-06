@@ -60,6 +60,11 @@ body {
   background: #eaf4fb;
 }
 
+.controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .status-panel {
   display: flex;
   flex-wrap: wrap;

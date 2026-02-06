@@ -3,9 +3,14 @@ import { WidgetRegistry } from "./core/widgets/widget-registry.js";
 import { BackgroundWorkerClient } from "./core/workers/background-worker-client.js";
 
 const instantiateButton = document.querySelector("#instantiate-dummy");
+const enableInkButton = document.querySelector("#enable-ink");
+const undoInkButton = document.querySelector("#undo-ink");
+const redoInkButton = document.querySelector("#redo-ink");
 const startWorkerButton = document.querySelector("#start-worker");
 const loadedModulesOutput = document.querySelector("#loaded-modules");
 const widgetCountOutput = document.querySelector("#widget-count");
+const inkStateOutput = document.querySelector("#ink-state");
+const strokeCountOutput = document.querySelector("#stroke-count");
 const cameraOutput = document.querySelector("#camera-state");
 const workerStateOutput = document.querySelector("#worker-state");
 const canvas = document.querySelector("#workspace-canvas");
@@ -15,6 +20,7 @@ if (!(canvas instanceof HTMLCanvasElement)) {
 }
 
 const loadedModules = new Set();
+let inkFeature = null;
 
 const registry = new WidgetRegistry();
 registry.register("dummy", () => import("./widgets/dummy/index.js"));
@@ -33,6 +39,23 @@ const runtime = new CanvasRuntime({
 const workerClient = new BackgroundWorkerClient(
   new URL("./core/workers/analysis-worker.js", import.meta.url),
 );
+
+function updateInkUi(state) {
+  if (!inkStateOutput || !strokeCountOutput || !undoInkButton || !redoInkButton) {
+    return;
+  }
+
+  strokeCountOutput.textContent = String(state.completedStrokes);
+  undoInkButton.disabled = state.undoDepth < 1;
+  redoInkButton.disabled = state.redoDepth < 1;
+
+  if (state.activePointers > 0) {
+    inkStateOutput.textContent = "writing";
+    return;
+  }
+
+  inkStateOutput.textContent = "active";
+}
 
 instantiateButton?.addEventListener("click", async () => {
   instantiateButton.disabled = true;
@@ -69,5 +92,74 @@ startWorkerButton?.addEventListener("click", async () => {
   } finally {
     startWorkerButton.disabled = false;
     startWorkerButton.textContent = "Start Worker";
+  }
+});
+
+enableInkButton?.addEventListener("click", async () => {
+  if (inkFeature) {
+    return;
+  }
+
+  enableInkButton.disabled = true;
+  enableInkButton.textContent = "Loading...";
+
+  try {
+    const inkModule = await import("./features/ink/index.js");
+    loadedModules.add("ink");
+    loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
+
+    inkFeature = inkModule.createInkFeature({
+      runtime,
+      onStateChange: (state) => updateInkUi(state),
+    });
+    if (inkStateOutput) {
+      inkStateOutput.textContent = "active";
+    }
+    enableInkButton.textContent = "Ink Enabled";
+  } catch (error) {
+    console.error(error);
+    enableInkButton.disabled = false;
+    enableInkButton.textContent = "Enable Ink";
+    if (inkStateOutput) {
+      inkStateOutput.textContent = "failed";
+    }
+    window.alert(`Ink initialization failed: ${error.message}`);
+  }
+});
+
+undoInkButton?.addEventListener("click", () => {
+  inkFeature?.undo();
+});
+
+redoInkButton?.addEventListener("click", () => {
+  inkFeature?.redo();
+});
+
+window.addEventListener("keydown", (event) => {
+  if (!inkFeature) {
+    return;
+  }
+
+  const key = event.key.toLowerCase();
+  const metaOrCtrl = event.ctrlKey || event.metaKey;
+  if (!metaOrCtrl) {
+    return;
+  }
+
+  if (key === "z" && event.shiftKey) {
+    event.preventDefault();
+    inkFeature.redo();
+    return;
+  }
+
+  if (key === "z") {
+    event.preventDefault();
+    inkFeature.undo();
+    return;
+  }
+
+  if (key === "y") {
+    event.preventDefault();
+    inkFeature.redo();
   }
 });
