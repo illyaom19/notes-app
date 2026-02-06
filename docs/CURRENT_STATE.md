@@ -1,7 +1,7 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 2 (Widget System) implemented and ready to ship.
+- Sprint 2 (Widget System) implemented and shipped to `origin/main`.
 - Exit criteria status:
   - Widget modules load dynamically from registry.
   - Collapsed widgets render through lightweight snapshot paths.
@@ -52,6 +52,10 @@
   - `createWidgetContextMenu(...)` wired in `src/main.js`
   - `setCollapsed(...)` in `src/core/widgets/widget-base.js`
   - Snapshot render branch for collapsed widgets in `src/core/canvas/canvas-runtime.js`
+- Sprint 2 code commit:
+  - `12f9a80 Implement Sprint 2 widget system and expanded-area widget`
+- Pushed to remote:
+  - `main` updated on `origin` from `807900c` to `12f9a80`
 
 ## Last Updated
 - 2026-02-06 (local environment time)
