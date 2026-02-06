@@ -5,6 +5,7 @@
 - Exit criteria status:
   - PDF widget loads via lazy module import.
   - PDF rendering path uses tile cache and thumbnail snapshot mode.
+  - PDF pages are vertically stacked in one widget with visible-page virtualization.
 
 ## What Exists Today
 - Sprint 0 foundations remain in place.
@@ -32,6 +33,7 @@
 - PDF widget is registered lazily: `registry.register("pdf-document", () => import("./widgets/pdf/index.js"))`.
 - `pdfjs-dist` is loaded only inside the PDF widget module through CDN dynamic import (primary + fallback).
 - Tiled rendering is done by per-page tile cache (`PdfTileCache`) with queued tile rasterization.
+- PDF document view is multi-page vertical stack with global canvas pan/zoom navigation.
 - Collapsed PDF widgets render thumbnail snapshots only (cheap collapsed path).
 - Ink overlay remains compatible because ink rendering layer already sits over the canvas scene.
 
@@ -48,6 +50,7 @@
   - PDF lazy registry entry exists in `src/main.js`
   - File-input import pipeline exists in `index.html` + `src/main.js`
   - Tile cache rendering exists in `src/widgets/pdf/pdf-tile-cache.js`
+  - Multi-page stack layout and visible-page virtualization exist in `src/widgets/pdf/pdf-document-widget.js`
   - Thumbnail snapshot path exists in `src/widgets/pdf/pdf-document-widget.js`
 
 ## Last Updated
