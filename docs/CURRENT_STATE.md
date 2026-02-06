@@ -1,9 +1,9 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Active implementation now includes Sprint 8 through Sprint 12 baseline features.
-- Roadmap is derived from `docs/MISSING_FROM_VISION.md`.
-- Legacy sprint docs (0 through 7) and prior summaries are archived under `docs/done/`.
+- Sprint set completed per requested scope: Sprint 0, 1, 2, 3, 4, 5, and 7.
+- Sprint 6 (AI suggestions) intentionally skipped per user instruction.
+- Final cleanup/alignment pass completed against `docs/PROJECT_SUMMARY.md`.
 
 ## What Exists Today
 - Core runtime and modular widget architecture:
@@ -17,48 +17,37 @@
   - Graph widget (interactive + snapshot): `src/widgets/graph/`
 - Implemented feature modules:
   - Ink engine: `src/features/ink/`
-  - Widget long-press menu + universal interaction layer: `src/features/widget-system/`
+  - Widget long-press menu: `src/features/widget-system/`
   - Reference popup interactions + snip tool: `src/features/reference-popups/`
   - Whitespace analyzer/manager: `src/features/whitespace/`
   - Graph interactions + persistence: `src/features/graph/`
-  - Context store: `src/features/contexts/context-store.js`
-  - Suggestion manager: `src/features/suggestions/suggestion-manager.js`
-  - Document registry: `src/features/documents/document-registry.js`
-
-## Sprint 8-12 Additions
-- Sprint 8:
-  - Context create/rename/delete/switch controls in top bar.
-  - Context-scoped in-memory widget buckets and context import flow.
-- Sprint 9:
-  - Added universal widget interaction manager with shared select, drag, resize, collapse affordances.
-- Sprint 10:
-  - Context menu now supports anchored, intent-based creation (`Create Expanded Here`, `Create Graph Here`).
-- Sprint 11:
-  - Added suggestion lifecycle buttons and storage (`generate`, `accept`, `dismiss -> ghost`, `restore`).
-  - Whitespace-based suggestion generation integrated.
-- Sprint 12:
-  - Added document strip with per-context document tabs.
-  - Added focused document state and reference binding actions (`Assign Last Ref`, `Show Doc Refs`).
 
 ## In Progress
-- No active edits pending after Sprint 8 through Sprint 12 integration pass.
+- No active implementation tasks.
+- Most recent completed pass: canvas UI restyle with rounded pills, compact caret-first controls, and dynamic PDF whitespace compaction.
 
 ## Blockers
 - None.
 
 ## Decisions Made
-- Old sprint and summary docs are preserved as history in `docs/done/`.
-- New planning docs continue numbering at Sprint 8 (no restart at Sprint 0).
-- Active roadmap comprehensively tracks missing vision items by sprint.
+- All heavy paths remain lazy-loaded via dynamic import/registry.
+- UI cleanup aligns better with minimal-surface philosophy by hiding controls behind a `Show Tools` toggle.
+- Reference, whitespace, and graph features stay modular and independently loadable.
+- Graph state persists locally and restores on launch when saved graph widgets exist.
+- Canvas widgets share rounded-drawing helpers from `src/core/canvas/rounded.js` for visual consistency.
+- PDF whitespace zones now affect layout in real time so collapsed regions reclaim space immediately.
 
 ## Next Actions
-1. Run manual UX regression on tablet for interactions introduced in universal controls and context/document switching.
-2. Harden context/document persistence semantics for full reload behavior.
-3. Continue with Sprint 13 from `docs/SPRINT_13_Advanced_Popup_Behavior_and_Metadata.md`.
+1. Validate full interaction flow manually on tablet (ink + pinch zoom + popups + whitespace + graphs).
+2. Verify compact/caret controls remain discoverable at low zoom levels.
+3. Begin Sprint 6 only if AI suggestions are re-enabled later.
+4. Optionally add automated smoke tests for widget creation + persistence restoration.
 
 ## Verification Status
-- JavaScript syntax validation passed:
-  - `for f in $(rg --files src | rg '\.js$'); do node --check \"$f\"; done`
+- `find src -type f -name '*.js' -print0 | xargs -0 -n1 node --check` passed after latest cleanup.
+- `for f in $(rg --files src | rg '\.js$'); do node --check "$f"; done` passed after pill-style and PDF layout updates.
+- Local server smoke command executed repeatedly during sprint progression:
+  - `timeout 2s python3 -m http.server 4173 --directory /home/illya/io_dev/notes-app`
 
 ## Last Updated
 - 2026-02-06 (local environment time)

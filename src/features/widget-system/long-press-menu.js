@@ -5,7 +5,7 @@ export function createWidgetContextMenu({
   canvas,
   menuElement,
   runtime,
-  onCreateWidgetAt,
+  onCreateExpanded,
   onWidgetMutated,
 }) {
   if (!menuElement) {
@@ -16,16 +16,13 @@ export function createWidgetContextMenu({
   let pointerStart = null;
   let pendingPointerId = null;
   let activeWidgetId = null;
-  let activeAnchorWorld = null;
 
-  const createExpandedButton = menuElement.querySelector('[data-action="create-expanded"]');
-  const createGraphButton = menuElement.querySelector('[data-action="create-graph"]');
+  const createButton = menuElement.querySelector('[data-action="create-expanded"]');
   const toggleButton = menuElement.querySelector('[data-action="toggle-collapse"]');
   const removeButton = menuElement.querySelector('[data-action="remove-widget"]');
 
   const closeMenu = () => {
     activeWidgetId = null;
-    activeAnchorWorld = null;
     menuElement.dataset.open = "false";
     menuElement.style.left = "-9999px";
     menuElement.style.top = "-9999px";
@@ -38,17 +35,10 @@ export function createWidgetContextMenu({
     return runtime.getWidgetById(activeWidgetId);
   };
 
-  const openMenuAt = (screenX, screenY, widget, anchorWorld) => {
+  const openMenuAt = (screenX, screenY, widget) => {
     activeWidgetId = widget?.id ?? null;
-    activeAnchorWorld = anchorWorld ?? null;
 
     const canActOnWidget = Boolean(widget);
-    if (createExpandedButton) {
-      createExpandedButton.disabled = false;
-    }
-    if (createGraphButton) {
-      createGraphButton.disabled = false;
-    }
     if (toggleButton) {
       toggleButton.disabled = !canActOnWidget;
       toggleButton.textContent = widget?.collapsed ? "Expand Widget" : "Collapse Widget";
@@ -91,8 +81,6 @@ export function createWidgetContextMenu({
       y: event.clientY,
       screenX: event.clientX,
       screenY: event.clientY,
-      worldX: runtime.camera.screenToWorld(event.offsetX, event.offsetY).x,
-      worldY: runtime.camera.screenToWorld(event.offsetX, event.offsetY).y,
       widgetId: targetWidget?.id ?? null,
     };
     pendingPointerId = event.pointerId;
@@ -102,10 +90,7 @@ export function createWidgetContextMenu({
       const widget = pointerStart?.widgetId
         ? runtime.getWidgetById(pointerStart.widgetId)
         : null;
-      openMenuAt(pointerStart.screenX, pointerStart.screenY, widget, {
-        x: pointerStart.worldX,
-        y: pointerStart.worldY,
-      });
+      openMenuAt(pointerStart.screenX, pointerStart.screenY, widget);
     }, LONG_PRESS_MS);
   };
 
@@ -129,8 +114,7 @@ export function createWidgetContextMenu({
   const handleContextMenu = (event) => {
     event.preventDefault();
     const widget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
-    const world = runtime.camera.screenToWorld(event.offsetX, event.offsetY);
-    openMenuAt(event.clientX, event.clientY, widget, world);
+    openMenuAt(event.clientX, event.clientY, widget);
   };
 
   const handleMenuClick = async (event) => {
@@ -143,13 +127,7 @@ export function createWidgetContextMenu({
     const activeWidget = getActiveWidget();
 
     if (action === "create-expanded") {
-      await onCreateWidgetAt("expanded-area", activeAnchorWorld);
-      closeMenu();
-      return;
-    }
-
-    if (action === "create-graph") {
-      await onCreateWidgetAt("graph-widget", activeAnchorWorld);
+      await onCreateExpanded();
       closeMenu();
       return;
     }

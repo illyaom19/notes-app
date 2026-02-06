@@ -10,35 +10,13 @@
     <main class="app-shell">
       <header class="topbar">
         <h1>Modular Notes Prototype</h1>
-        <div class="topbar-controls">
-          <label class="context-pick">
-            <span>Context</span>
-            <select id="context-select"></select>
-          </label>
-          <button id="new-context" type="button">New</button>
-          <button id="rename-context" type="button">Rename</button>
-          <button id="delete-context" type="button">Delete</button>
-          <button id="import-context-widget" type="button">Import Widget</button>
-          <button id="toggle-tools" type="button" class="tools-toggle">Show Tools</button>
-        </div>
+        <button id="toggle-tools" type="button" class="tools-toggle">Show Tools</button>
       </header>
-
-      <section class="document-strip" aria-label="Open Documents">
-        <div id="document-tabs" class="document-tabs"></div>
-        <div class="document-actions">
-          <button id="assign-last-reference" type="button">Assign Last Ref</button>
-          <button id="show-document-references" type="button">Show Doc Refs</button>
-        </div>
-      </section>
 
       <section id="controls-panel" class="controls-panel" hidden>
         <div class="controls" aria-label="Prototype Controls">
           <button id="import-pdf" type="button">Import PDF</button>
           <button id="detect-whitespace" type="button">Detect Whitespace</button>
-          <button id="generate-suggestions" type="button">Generate Suggestions</button>
-          <button id="accept-suggestion" type="button">Accept Suggestion</button>
-          <button id="dismiss-suggestion" type="button">Dismiss Suggestion</button>
-          <button id="restore-suggestion" type="button">Restore Ghost</button>
           <button id="start-snip" type="button">Start Snip</button>
           <button id="instantiate-dummy" type="button">Instantiate Dummy Widget</button>
           <button id="instantiate-expanded" type="button">Instantiate Expanded-Area Widget</button>
@@ -52,16 +30,12 @@
 
       <section class="status-panel" aria-label="App Status">
         <span><strong>Boot:</strong> Instant (no widgets loaded)</span>
-        <span><strong>Context:</strong> <output id="active-context">none</output></span>
-        <span><strong>Documents:</strong> <output id="document-count">0</output></span>
         <span><strong>Loaded Modules:</strong> <output id="loaded-modules">none</output></span>
         <span><strong>Widgets:</strong> <output id="widget-count">0</output></span>
         <span><strong>Reference Popups:</strong> <output id="reference-count">0</output></span>
         <span><strong>Snip:</strong> <output id="snip-state">idle</output></span>
         <span><strong>Whitespace:</strong> <output id="whitespace-state">idle</output></span>
         <span><strong>Whitespace Zones:</strong> <output id="whitespace-zone-count">0</output></span>
-        <span><strong>Suggestions:</strong> <output id="suggestion-count">0</output></span>
-        <span><strong>Ghosts:</strong> <output id="ghost-count">0</output></span>
         <span><strong>Graphs:</strong> <output id="graph-count">0</output></span>
         <span><strong>Ink:</strong> <output id="ink-state">idle</output></span>
         <span><strong>Strokes:</strong> <output id="stroke-count">0</output></span>
@@ -74,8 +48,7 @@
       </section>
 
       <menu id="widget-context-menu" class="widget-menu" aria-label="Widget actions">
-        <button type="button" data-action="create-expanded">Create Expanded Here</button>
-        <button type="button" data-action="create-graph">Create Graph Here</button>
+        <button type="button" data-action="create-expanded">Create Expanded-Area Widget</button>
         <button type="button" data-action="toggle-collapse">Toggle Collapse</button>
         <button type="button" data-action="remove-widget">Remove Widget</button>
       </menu>
