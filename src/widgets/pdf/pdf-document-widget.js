@@ -58,6 +58,9 @@ export class PdfDocumentWidget extends WidgetBase {
     this.thumbnailCanvas = null;
     this.loading = true;
     this.loadError = null;
+
+    this.whitespaceZones = [];
+    this._whitespaceHitRegions = [];
   }
 
   async initialize() {
@@ -158,7 +161,12 @@ export class PdfDocumentWidget extends WidgetBase {
     };
   }
 
-  _getPageBounds(pageEntry) {
+  _getPageBoundsByNumber(pageNumber) {
+    const pageEntry = this.pages.find((entry) => entry.pageNumber === pageNumber);
+    if (!pageEntry) {
+      return null;
+    }
+
     return {
       x: this.position.x,
       y: this.position.y + HEADER_WORLD + pageEntry.worldY,
@@ -192,7 +200,134 @@ export class PdfDocumentWidget extends WidgetBase {
     ctx.fillText(`p.${pageNumber}`, screen.x + 14, screen.y + 22 * camera.zoom);
   }
 
+  _zoneWorldRect(zone) {
+    const pageBounds = this._getPageBoundsByNumber(zone.pageNumber);
+    if (!pageBounds) {
+      return null;
+    }
+
+    const y = pageBounds.y + zone.normalizedY * pageBounds.height;
+    const height = Math.max(10, zone.normalizedHeight * pageBounds.height);
+    return {
+      x: pageBounds.x,
+      y,
+      width: pageBounds.width,
+      height,
+    };
+  }
+
+  _drawWhitespaceZone(ctx, camera, zone) {
+    const rect = this._zoneWorldRect(zone);
+    if (!rect) {
+      return;
+    }
+
+    const screen = camera.worldToScreen(rect.x, rect.y);
+    const screenW = rect.width * camera.zoom;
+    const screenH = rect.height * camera.zoom;
+
+    if (zone.collapsed) {
+      ctx.fillStyle = "rgba(228, 237, 246, 0.92)";
+      ctx.fillRect(screen.x, screen.y, screenW, screenH);
+
+      ctx.strokeStyle = "#4b7ea5";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(screen.x + 10, screen.y + 4);
+      ctx.lineTo(screen.x + screenW - 10, screen.y + 4);
+      ctx.moveTo(screen.x + 10, screen.y + screenH - 4);
+      ctx.lineTo(screen.x + screenW - 10, screen.y + screenH - 4);
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = "rgba(52, 123, 175, 0.72)";
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([8, 5]);
+      ctx.strokeRect(screen.x, screen.y, screenW, screenH);
+      ctx.setLineDash([]);
+    }
+
+    const chipW = Math.max(88, 108 * camera.zoom);
+    const chipH = Math.max(16, 20 * camera.zoom);
+    const chipX = screen.x + 8;
+    const chipY = screen.y + 8;
+
+    ctx.fillStyle = zone.collapsed ? "#2d5f84" : "#337eab";
+    ctx.fillRect(chipX, chipY, chipW, chipH);
+    ctx.fillStyle = "#f1f7fb";
+    ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.fillText(zone.collapsed ? "Expand Space" : "Collapse Space", chipX + 8, chipY + 14 * camera.zoom);
+
+    const chipWorld = camera.screenToWorld(chipX, chipY);
+
+    this._whitespaceHitRegions.push({
+      zoneId: zone.id,
+      x: chipWorld.x,
+      y: chipWorld.y,
+      width: chipW / camera.zoom,
+      height: chipH / camera.zoom,
+    });
+  }
+
+  setWhitespaceZones(zones) {
+    this.whitespaceZones = zones.map((zone) => ({
+      id: zone.id,
+      pageNumber: zone.pageNumber,
+      normalizedY: zone.normalizedY,
+      normalizedHeight: zone.normalizedHeight,
+      confidence: zone.confidence ?? 0,
+      collapsed: Boolean(zone.collapsed),
+      linkedWidgetId: zone.linkedWidgetId ?? null,
+    }));
+  }
+
+  getWhitespaceZones() {
+    return this.whitespaceZones;
+  }
+
+  toggleWhitespaceZone(zoneId) {
+    const zone = this.whitespaceZones.find((entry) => entry.id === zoneId);
+    if (!zone) {
+      return null;
+    }
+    zone.collapsed = !zone.collapsed;
+    return zone;
+  }
+
+  setWhitespaceZoneLinkedWidget(zoneId, linkedWidgetId) {
+    const zone = this.whitespaceZones.find((entry) => entry.id === zoneId);
+    if (!zone) {
+      return false;
+    }
+    zone.linkedWidgetId = linkedWidgetId ?? null;
+    return true;
+  }
+
+  getWhitespaceZoneAt(worldX, worldY) {
+    for (let index = this._whitespaceHitRegions.length - 1; index >= 0; index -= 1) {
+      const region = this._whitespaceHitRegions[index];
+      if (
+        worldX >= region.x &&
+        worldX <= region.x + region.width &&
+        worldY >= region.y &&
+        worldY <= region.y + region.height
+      ) {
+        return region.zoneId;
+      }
+    }
+    return null;
+  }
+
+  getWhitespaceZoneWorldRect(zoneId) {
+    const zone = this.whitespaceZones.find((entry) => entry.id === zoneId);
+    if (!zone) {
+      return null;
+    }
+    return this._zoneWorldRect(zone);
+  }
+
   render(ctx, camera, renderContext) {
+    this._whitespaceHitRegions = [];
+
     const frame = drawFrame(ctx, camera, this);
 
     if (this.loading) {
@@ -228,7 +363,11 @@ export class PdfDocumentWidget extends WidgetBase {
     let lastVisiblePage = null;
 
     for (const pageEntry of this.pages) {
-      const pageBounds = this._getPageBounds(pageEntry);
+      const pageBounds = this._getPageBoundsByNumber(pageEntry.pageNumber);
+      if (!pageBounds) {
+        continue;
+      }
+
       const pageWorldRect = {
         minX: pageBounds.x,
         maxX: pageBounds.x + pageBounds.width,
@@ -272,6 +411,11 @@ export class PdfDocumentWidget extends WidgetBase {
         ctx.fillStyle = "#5c7084";
         ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
         ctx.fillText(`Rendering page ${pageEntry.pageNumber}...`, screen.x + 12, screen.y + 20 * camera.zoom);
+      }
+
+      const zones = this.whitespaceZones.filter((zone) => zone.pageNumber === pageEntry.pageNumber);
+      for (const zone of zones) {
+        this._drawWhitespaceZone(ctx, camera, zone);
       }
 
       this._drawPageBadge(ctx, camera, pageBounds, pageEntry.pageNumber);

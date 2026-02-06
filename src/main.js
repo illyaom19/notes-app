@@ -4,6 +4,7 @@ import { BackgroundWorkerClient } from "./core/workers/background-worker-client.
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 
 const importPdfButton = document.querySelector("#import-pdf");
+const detectWhitespaceButton = document.querySelector("#detect-whitespace");
 const startSnipButton = document.querySelector("#start-snip");
 const instantiateButton = document.querySelector("#instantiate-dummy");
 const instantiateExpandedButton = document.querySelector("#instantiate-expanded");
@@ -15,6 +16,8 @@ const loadedModulesOutput = document.querySelector("#loaded-modules");
 const widgetCountOutput = document.querySelector("#widget-count");
 const referenceCountOutput = document.querySelector("#reference-count");
 const snipStateOutput = document.querySelector("#snip-state");
+const whitespaceStateOutput = document.querySelector("#whitespace-state");
+const whitespaceZoneCountOutput = document.querySelector("#whitespace-zone-count");
 const inkStateOutput = document.querySelector("#ink-state");
 const strokeCountOutput = document.querySelector("#stroke-count");
 const cameraOutput = document.querySelector("#camera-state");
@@ -30,6 +33,8 @@ if (!(canvas instanceof HTMLCanvasElement)) {
 const loadedModules = new Set();
 let inkFeature = null;
 let referenceFeatures = null;
+let whitespaceManager = null;
+let lastPdfWidgetId = null;
 
 const registry = new WidgetRegistry();
 registry.register("dummy", () => import("./widgets/dummy/index.js"));
@@ -75,6 +80,7 @@ function updateWidgetUi() {
     const referenceCount = runtime.listWidgets().filter((widget) => widget.type === "reference-popup").length;
     referenceCountOutput.textContent = String(referenceCount);
   }
+  updateWhitespaceZoneCount();
 }
 
 function updateSnipUi({ armed, dragging }) {
@@ -90,6 +96,24 @@ function updateSnipUi({ armed, dragging }) {
 
   if (startSnipButton) {
     startSnipButton.textContent = armed ? "Stop Snip" : "Start Snip";
+  }
+}
+
+function updateWhitespaceZoneCount() {
+  if (!whitespaceZoneCountOutput) {
+    return;
+  }
+
+  const zoneCount = runtime
+    .listWidgets()
+    .filter((widget) => widget.type === "pdf-document" && typeof widget.getWhitespaceZones === "function")
+    .reduce((total, widget) => total + widget.getWhitespaceZones().length, 0);
+  whitespaceZoneCountOutput.textContent = String(zoneCount);
+}
+
+function setWhitespaceState(value) {
+  if (whitespaceStateOutput) {
+    whitespaceStateOutput.textContent = value;
   }
 }
 
@@ -116,6 +140,7 @@ async function createPdfWidgetFromFile(file) {
     },
   });
   runtime.addWidget(widget);
+  lastPdfWidgetId = widget.id;
   updateWidgetUi();
 }
 
@@ -169,6 +194,73 @@ async function ensureReferenceFeatures() {
   return referenceFeatures;
 }
 
+function preferredPdfWidget() {
+  if (lastPdfWidgetId) {
+    const candidate = runtime.getWidgetById(lastPdfWidgetId);
+    if (candidate && candidate.type === "pdf-document") {
+      return candidate;
+    }
+  }
+
+  const fallback = runtime.listWidgets().find((widget) => widget.type === "pdf-document");
+  return fallback ?? null;
+}
+
+async function createExpandedFromWhitespaceZone(pdfWidget, zone) {
+  const rect = pdfWidget.getWhitespaceZoneWorldRect(zone.id);
+  if (!rect) {
+    return;
+  }
+
+  const linkedWidget = await registry.instantiate("expanded-area", {
+    id: globalThis.crypto?.randomUUID?.() ?? `space-${Date.now()}`,
+    position: {
+      x: rect.x + rect.width + 22,
+      y: rect.y,
+    },
+    size: {
+      width: 300,
+      height: Math.max(120, Math.min(320, rect.height)),
+    },
+    metadata: {
+      title: "Expanded Space",
+      note: `Linked to ${pdfWidget.metadata.title} (${zone.id})`,
+    },
+  });
+
+  runtime.addWidget(linkedWidget);
+  pdfWidget.setWhitespaceZoneLinkedWidget(zone.id, linkedWidget.id);
+  updateWidgetUi();
+}
+
+async function handleWhitespaceZoneToggle(pdfWidget, zone) {
+  if (zone.collapsed) {
+    if (!zone.linkedWidgetId) {
+      await createExpandedFromWhitespaceZone(pdfWidget, zone);
+    }
+  } else if (zone.linkedWidgetId) {
+    runtime.removeWidgetById(zone.linkedWidgetId);
+    pdfWidget.setWhitespaceZoneLinkedWidget(zone.id, null);
+    updateWidgetUi();
+  }
+}
+
+async function ensureWhitespaceManager() {
+  if (whitespaceManager) {
+    return whitespaceManager;
+  }
+
+  const whitespaceModule = await import("./features/whitespace/whitespace-manager.js");
+  whitespaceManager = whitespaceModule.createWhitespaceManager({
+    runtime,
+    onZoneToggled: (pdfWidget, zone) => {
+      void handleWhitespaceZoneToggle(pdfWidget, zone);
+      updateWhitespaceZoneCount();
+    },
+  });
+  return whitespaceManager;
+}
+
 instantiateButton?.addEventListener("click", async () => {
   instantiateButton.disabled = true;
   instantiateButton.textContent = "Loading...";
@@ -218,6 +310,36 @@ startSnipButton?.addEventListener("click", async () => {
     window.alert(`Snip tool failed: ${error.message}`);
   } finally {
     startSnipButton.disabled = false;
+  }
+});
+
+detectWhitespaceButton?.addEventListener("click", async () => {
+  if (!(detectWhitespaceButton instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const pdfWidget = preferredPdfWidget();
+  if (!pdfWidget) {
+    window.alert("Import a PDF before detecting whitespace.");
+    return;
+  }
+
+  detectWhitespaceButton.disabled = true;
+  detectWhitespaceButton.textContent = "Analyzing...";
+  setWhitespaceState("analyzing");
+
+  try {
+    const manager = await ensureWhitespaceManager();
+    const zones = await manager.analyzeWidget(pdfWidget);
+    setWhitespaceState(zones.length > 0 ? "ready" : "none");
+    updateWhitespaceZoneCount();
+  } catch (error) {
+    console.error(error);
+    setWhitespaceState("failed");
+    window.alert(`Whitespace analysis failed: ${error.message}`);
+  } finally {
+    detectWhitespaceButton.disabled = false;
+    detectWhitespaceButton.textContent = "Detect Whitespace";
   }
 });
 
@@ -354,3 +476,4 @@ window.addEventListener("keydown", (event) => {
 
 updateWidgetUi();
 updateSnipUi({ armed: false, dragging: false });
+setWhitespaceState("idle");
