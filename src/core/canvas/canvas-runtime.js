@@ -52,6 +52,17 @@ export class CanvasRuntime {
     return [...this.widgets];
   }
 
+  bringWidgetToFront(widgetId) {
+    const targetIndex = this.widgets.findIndex((widget) => widget.id === widgetId);
+    if (targetIndex < 0) {
+      return false;
+    }
+
+    const [target] = this.widgets.splice(targetIndex, 1);
+    this.widgets.push(target);
+    return true;
+  }
+
   pickWidgetAtScreenPoint(screenX, screenY) {
     const world = this.camera.screenToWorld(screenX, screenY);
     for (let index = this.widgets.length - 1; index >= 0; index -= 1) {

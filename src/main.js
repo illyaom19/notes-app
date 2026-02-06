@@ -4,6 +4,7 @@ import { BackgroundWorkerClient } from "./core/workers/background-worker-client.
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 
 const importPdfButton = document.querySelector("#import-pdf");
+const startSnipButton = document.querySelector("#start-snip");
 const instantiateButton = document.querySelector("#instantiate-dummy");
 const instantiateExpandedButton = document.querySelector("#instantiate-expanded");
 const enableInkButton = document.querySelector("#enable-ink");
@@ -12,6 +13,8 @@ const redoInkButton = document.querySelector("#redo-ink");
 const startWorkerButton = document.querySelector("#start-worker");
 const loadedModulesOutput = document.querySelector("#loaded-modules");
 const widgetCountOutput = document.querySelector("#widget-count");
+const referenceCountOutput = document.querySelector("#reference-count");
+const snipStateOutput = document.querySelector("#snip-state");
 const inkStateOutput = document.querySelector("#ink-state");
 const strokeCountOutput = document.querySelector("#stroke-count");
 const cameraOutput = document.querySelector("#camera-state");
@@ -26,11 +29,13 @@ if (!(canvas instanceof HTMLCanvasElement)) {
 
 const loadedModules = new Set();
 let inkFeature = null;
+let referenceFeatures = null;
 
 const registry = new WidgetRegistry();
 registry.register("dummy", () => import("./widgets/dummy/index.js"));
 registry.register("expanded-area", () => import("./widgets/expanded-area/index.js"));
 registry.register("pdf-document", () => import("./widgets/pdf/index.js"));
+registry.register("reference-popup", () => import("./widgets/reference-popup/index.js"));
 registry.onModuleLoaded((type) => {
   loadedModules.add(type);
   loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
@@ -66,6 +71,26 @@ function updateInkUi(state) {
 
 function updateWidgetUi() {
   widgetCountOutput.textContent = String(runtime.getWidgetCount());
+  if (referenceCountOutput) {
+    const referenceCount = runtime.listWidgets().filter((widget) => widget.type === "reference-popup").length;
+    referenceCountOutput.textContent = String(referenceCount);
+  }
+}
+
+function updateSnipUi({ armed, dragging }) {
+  if (snipStateOutput) {
+    if (dragging) {
+      snipStateOutput.textContent = "capturing";
+    } else if (armed) {
+      snipStateOutput.textContent = "armed";
+    } else {
+      snipStateOutput.textContent = "idle";
+    }
+  }
+
+  if (startSnipButton) {
+    startSnipButton.textContent = armed ? "Stop Snip" : "Start Snip";
+  }
 }
 
 async function createExpandedAreaWidget() {
@@ -92,6 +117,56 @@ async function createPdfWidgetFromFile(file) {
   });
   runtime.addWidget(widget);
   updateWidgetUi();
+}
+
+async function createReferencePopupFromSnip({ dataUrl, width, height }) {
+  const widget = await registry.instantiate("reference-popup", {
+    id: globalThis.crypto?.randomUUID?.() ?? `ref-${Date.now()}`,
+    position: { x: -80 + runtime.getWidgetCount() * 16, y: -80 + runtime.getWidgetCount() * 14 },
+    size: {
+      width: Math.max(220, Math.min(420, Math.round(width * 0.78))),
+      height: Math.max(150, Math.min(360, Math.round(height * 0.78 + 52))),
+    },
+    metadata: {
+      title: "Reference Popup",
+    },
+    dataPayload: {
+      imageDataUrl: dataUrl,
+      sourceLabel: "Quick Snip",
+    },
+  });
+  runtime.addWidget(widget);
+  updateWidgetUi();
+}
+
+async function ensureReferenceFeatures() {
+  if (referenceFeatures) {
+    return referenceFeatures;
+  }
+
+  const [snipModule, popupModule] = await Promise.all([
+    import("./features/reference-popups/snip-tool.js"),
+    import("./features/reference-popups/popup-interactions.js"),
+  ]);
+
+  const popupInteractions = popupModule.createReferencePopupInteractions({
+    runtime,
+    onPopupMutated: () => updateWidgetUi(),
+  });
+
+  const snipTool = snipModule.createSnipTool({
+    runtime,
+    onSnipReady: ({ dataUrl, width, height }) => {
+      void createReferencePopupFromSnip({ dataUrl, width, height });
+    },
+    onStateChange: (state) => updateSnipUi(state),
+  });
+
+  referenceFeatures = {
+    popupInteractions,
+    snipTool,
+  };
+  return referenceFeatures;
 }
 
 instantiateButton?.addEventListener("click", async () => {
@@ -126,6 +201,23 @@ instantiateExpandedButton?.addEventListener("click", async () => {
   } finally {
     instantiateExpandedButton.disabled = false;
     instantiateExpandedButton.textContent = "Instantiate Expanded-Area Widget";
+  }
+});
+
+startSnipButton?.addEventListener("click", async () => {
+  startSnipButton.disabled = true;
+  try {
+    const features = await ensureReferenceFeatures();
+    if (features.snipTool.isArmed()) {
+      features.snipTool.disarm();
+    } else {
+      features.snipTool.arm();
+    }
+  } catch (error) {
+    console.error(error);
+    window.alert(`Snip tool failed: ${error.message}`);
+  } finally {
+    startSnipButton.disabled = false;
   }
 });
 
@@ -259,3 +351,6 @@ window.addEventListener("keydown", (event) => {
     inkFeature.redo();
   }
 });
+
+updateWidgetUi();
+updateSnipUi({ armed: false, dragging: false });
