@@ -27,7 +27,7 @@ export class CanvasRuntime {
   addWidget(widget) {
     widget.mount({
       requestRender: () => {
-        // Render loop is always active in Sprint 0 for smooth camera interaction.
+        // Render loop stays active for camera and widget interaction responsiveness.
       },
     });
     this.widgets.push(widget);

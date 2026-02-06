@@ -4,6 +4,8 @@ import { BackgroundWorkerClient } from "./core/workers/background-worker-client.
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 
 const importPdfButton = document.querySelector("#import-pdf");
+const toggleToolsButton = document.querySelector("#toggle-tools");
+const controlsPanel = document.querySelector("#controls-panel");
 const detectWhitespaceButton = document.querySelector("#detect-whitespace");
 const startSnipButton = document.querySelector("#start-snip");
 const instantiateButton = document.querySelector("#instantiate-dummy");
@@ -39,6 +41,7 @@ let whitespaceManager = null;
 let lastPdfWidgetId = null;
 let graphFeatures = null;
 let graphPersistence = null;
+let toolsPanelOpen = false;
 
 const registry = new WidgetRegistry();
 registry.register("dummy", () => import("./widgets/dummy/index.js"));
@@ -109,6 +112,15 @@ function updateSnipUi({ armed, dragging }) {
 
   if (startSnipButton) {
     startSnipButton.textContent = armed ? "Stop Snip" : "Start Snip";
+  }
+}
+
+function syncToolsUi() {
+  if (controlsPanel instanceof HTMLElement) {
+    controlsPanel.hidden = !toolsPanelOpen;
+  }
+  if (toggleToolsButton instanceof HTMLButtonElement) {
+    toggleToolsButton.textContent = toolsPanelOpen ? "Hide Tools" : "Show Tools";
   }
 }
 
@@ -406,6 +418,12 @@ instantiateGraphButton?.addEventListener("click", async () => {
   }
 });
 
+toggleToolsButton?.addEventListener("click", () => {
+  toolsPanelOpen = !toolsPanelOpen;
+  window.localStorage.setItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
+  syncToolsUi();
+});
+
 detectWhitespaceButton?.addEventListener("click", async () => {
   if (!(detectWhitespaceButton instanceof HTMLButtonElement)) {
     return;
@@ -570,4 +588,6 @@ window.addEventListener("keydown", (event) => {
 updateWidgetUi();
 updateSnipUi({ armed: false, dragging: false });
 setWhitespaceState("idle");
+toolsPanelOpen = window.localStorage.getItem("notes-app.tools-panel.open") === "1";
+syncToolsUi();
 void restorePersistedGraphs();

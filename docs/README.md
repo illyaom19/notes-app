@@ -5,6 +5,10 @@
 - `docs/SPRINTS_SUMMARY.md`
 - `docs/CURRENT_STATE.md`
 
+## Implemented Scope
+- Implemented: Sprint 0, Sprint 1, Sprint 2, Sprint 3, Sprint 4, Sprint 5, Sprint 7
+- Skipped by instruction: Sprint 6 (AI suggestions)
+
 ## Sprint Specs
 - `docs/SPRINT_0_Foundations.md`
 - `docs/SPRINT_1_Ink_Engine.md`

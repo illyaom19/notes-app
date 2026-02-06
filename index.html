@@ -3,14 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Notes App - Sprint 0</title>
+    <title>Modular Notes Prototype</title>
     <link rel="stylesheet" href="./src/styles/app.css" />
   </head>
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <h1>Notes App Foundations</h1>
-        <div class="controls">
+        <h1>Modular Notes Prototype</h1>
+        <button id="toggle-tools" type="button" class="tools-toggle">Show Tools</button>
+      </header>
+
+      <section id="controls-panel" class="controls-panel" hidden>
+        <div class="controls" aria-label="Prototype Controls">
           <button id="import-pdf" type="button">Import PDF</button>
           <button id="detect-whitespace" type="button">Detect Whitespace</button>
           <button id="start-snip" type="button">Start Snip</button>
@@ -22,7 +26,7 @@
           <button id="redo-ink" type="button" disabled>Redo</button>
           <button id="start-worker" type="button">Start Worker</button>
         </div>
-      </header>
+      </section>
 
       <section class="status-panel" aria-label="App Status">
         <span><strong>Boot:</strong> Instant (no widgets loaded)</span>
