@@ -10,6 +10,8 @@ export class CanvasRuntime {
     this._lastFrameAt = performance.now();
     this._dragging = false;
     this._lastPointer = { x: 0, y: 0 };
+    this._touchPointers = new Map();
+    this._touchGesture = null;
     this._inputHandlers = [];
     this._renderLayers = [];
 
@@ -53,6 +55,16 @@ export class CanvasRuntime {
     window.addEventListener("resize", () => this._resizeToViewport());
 
     this.canvas.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "touch") {
+        event.preventDefault();
+        this._touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        this.canvas.setPointerCapture(event.pointerId);
+        if (this._touchPointers.size >= 2) {
+          this._touchGesture = this._computeTouchMetrics();
+        }
+        return;
+      }
+
       if (this._dispatchPointer("onPointerDown", event)) {
         this.canvas.setPointerCapture(event.pointerId);
         return;
@@ -67,6 +79,37 @@ export class CanvasRuntime {
     });
 
     this.canvas.addEventListener("pointermove", (event) => {
+      if (event.pointerType === "touch" && this._touchPointers.has(event.pointerId)) {
+        event.preventDefault();
+        const previous = this._touchPointers.get(event.pointerId);
+        this._touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+        if (this._touchPointers.size >= 2) {
+          const metrics = this._computeTouchMetrics();
+          if (this._touchGesture) {
+            if (this._touchGesture.distance > 0 && metrics.distance > 0) {
+              const zoomFactor = metrics.distance / this._touchGesture.distance;
+              this.camera.zoomAt(metrics.center.x, metrics.center.y, zoomFactor);
+            }
+
+            this.camera.panBy(
+              metrics.center.x - this._touchGesture.center.x,
+              metrics.center.y - this._touchGesture.center.y,
+            );
+            this._emitCamera();
+          }
+          this._touchGesture = metrics;
+          return;
+        }
+
+        this._touchGesture = null;
+        if (previous) {
+          this.camera.panBy(event.clientX - previous.x, event.clientY - previous.y);
+          this._emitCamera();
+        }
+        return;
+      }
+
       if (this._dispatchPointer("onPointerMove", event)) {
         return;
       }
@@ -83,6 +126,17 @@ export class CanvasRuntime {
     });
 
     const stopDragging = (event) => {
+      if (event.pointerType === "touch" && this._touchPointers.has(event.pointerId)) {
+        this._touchPointers.delete(event.pointerId);
+        if (this._touchPointers.size < 2) {
+          this._touchGesture = null;
+        }
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+
       if (this._dispatchPointer("onPointerUp", event)) {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
@@ -101,6 +155,17 @@ export class CanvasRuntime {
 
     this.canvas.addEventListener("pointerup", stopDragging);
     this.canvas.addEventListener("pointercancel", (event) => {
+      if (event.pointerType === "touch" && this._touchPointers.has(event.pointerId)) {
+        this._touchPointers.delete(event.pointerId);
+        if (this._touchPointers.size < 2) {
+          this._touchGesture = null;
+        }
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+
       if (this._dispatchPointer("onPointerCancel", event)) {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
@@ -242,5 +307,35 @@ export class CanvasRuntime {
     ctx.moveTo(origin.x, origin.y - 12);
     ctx.lineTo(origin.x, origin.y + 12);
     ctx.stroke();
+  }
+
+  _computeTouchMetrics() {
+    const touchValues = Array.from(this._touchPointers.values());
+    if (touchValues.length < 2) {
+      return {
+        center: { x: 0, y: 0 },
+        distance: 0,
+      };
+    }
+
+    const first = this._toCanvasPoint(touchValues[0]);
+    const second = this._toCanvasPoint(touchValues[1]);
+    const dx = second.x - first.x;
+    const dy = second.y - first.y;
+    return {
+      center: {
+        x: (first.x + second.x) / 2,
+        y: (first.y + second.y) / 2,
+      },
+      distance: Math.hypot(dx, dy),
+    };
+  }
+
+  _toCanvasPoint({ x, y }) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: x - rect.left,
+      y: y - rect.top,
+    };
   }
 }

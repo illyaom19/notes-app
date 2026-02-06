@@ -17,6 +17,10 @@
   - `src/features/ink/persistence.js`
 - Canvas runtime now supports pluggable input handlers and render layers:
   - `src/core/canvas/canvas-runtime.js`
+- Tablet touch gestures on canvas:
+  - Two-finger pinch-to-zoom
+  - Two-finger pan while pinching
+  - One-finger touch pan fallback
 - App shell now supports ink controls and status:
   - `index.html`
   - `src/main.js`
@@ -49,6 +53,9 @@
   - Lazy ink import in `src/main.js`
   - Pen-only input gate in `src/features/ink/ink-engine.js`
   - Persistence save path in `src/features/ink/persistence.js`
+- Tablet zoom update checks:
+  - Touch pointer path exists in `src/core/canvas/canvas-runtime.js`
+  - Pinch zoom uses dynamic `camera.zoomAt(...)` from two-touch distance changes
 - Sprint 1 code commit:
   - `12f5d05 Implement Sprint 1 ink engine and persistence`
 - Pushed to remote:
