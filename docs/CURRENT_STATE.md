@@ -1,7 +1,7 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 1 (Ink Engine) implemented and ready to ship.
+- Sprint 1 (Ink Engine) implemented and shipped to `origin/main`.
 - Exit criteria status:
   - Vector stylus strokes with pressure capture implemented.
   - Zoom/pan camera preserves stroke geometry in world coordinates.
@@ -49,6 +49,10 @@
   - Lazy ink import in `src/main.js`
   - Pen-only input gate in `src/features/ink/ink-engine.js`
   - Persistence save path in `src/features/ink/persistence.js`
+- Sprint 1 code commit:
+  - `12f5d05 Implement Sprint 1 ink engine and persistence`
+- Pushed to remote:
+  - `main` updated on `origin` from `b330c81` to `12f5d05`
 
 ## Last Updated
 - 2026-02-06 (local environment time)
