@@ -964,6 +964,7 @@ function wireBaseEventHandlers() {
 
       inkFeature = inkModule.createInkFeature({
         runtime,
+        getActiveContextId: () => activeContextId,
         onStateChange: (state) => updateInkUi(state),
       });
 

@@ -1,5 +1,21 @@
 const STORAGE_KEY = "notes-app.ink.strokes.v1";
 
+function normalizeStroke(stroke) {
+  if (!stroke || typeof stroke !== "object" || !Array.isArray(stroke.points)) {
+    return null;
+  }
+
+  return {
+    ...stroke,
+    layer:
+      stroke.layer === "pdf" || stroke.layer === "widget" || stroke.layer === "global"
+        ? stroke.layer
+        : "global",
+    contextId: typeof stroke.contextId === "string" ? stroke.contextId : null,
+    sourceWidgetId: typeof stroke.sourceWidgetId === "string" ? stroke.sourceWidgetId : null,
+  };
+}
+
 export function loadPersistedStrokes() {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -8,11 +24,29 @@ export function loadPersistedStrokes() {
     }
 
     const parsed = JSON.parse(raw);
-    if (parsed?.version !== 1 || !Array.isArray(parsed.strokes)) {
+    if (!parsed || typeof parsed !== "object") {
       return [];
     }
 
-    return parsed.strokes;
+    if (parsed.version === 2 && Array.isArray(parsed.strokes)) {
+      return parsed.strokes.map(normalizeStroke).filter((stroke) => stroke !== null);
+    }
+
+    // Backward compatibility for legacy global-only strokes.
+    if (parsed.version === 1 && Array.isArray(parsed.strokes)) {
+      return parsed.strokes.map((stroke) => ({
+        ...(normalizeStroke(stroke) ?? stroke),
+        layer: "global",
+        contextId: null,
+        sourceWidgetId: null,
+      }));
+    }
+
+    if (!Array.isArray(parsed.strokes)) {
+      return [];
+    }
+
+    return parsed.strokes.map(normalizeStroke).filter((stroke) => stroke !== null);
   } catch (_error) {
     return [];
   }

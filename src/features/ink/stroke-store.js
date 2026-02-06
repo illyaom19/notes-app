@@ -49,7 +49,7 @@ export class StrokeStore {
 
   serialize() {
     return {
-      version: 1,
+      version: 2,
       strokes: this._done,
     };
   }
