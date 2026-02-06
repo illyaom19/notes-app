@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Notes App - Sprint 0</title>
+    <link rel="stylesheet" href="./src/styles/app.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <h1>Notes App Foundations</h1>
+        <div class="controls">
+          <button id="instantiate-dummy" type="button">Instantiate Dummy Widget</button>
+          <button id="start-worker" type="button">Start Worker</button>
+        </div>
+      </header>
+
+      <section class="status-panel" aria-label="App Status">
+        <span><strong>Boot:</strong> Instant (no widgets loaded)</span>
+        <span><strong>Loaded Modules:</strong> <output id="loaded-modules">none</output></span>
+        <span><strong>Widgets:</strong> <output id="widget-count">0</output></span>
+        <span><strong>Worker:</strong> <output id="worker-state">idle</output></span>
+        <span><strong>Camera:</strong> <output id="camera-state">x=0, y=0, zoom=1.00</output></span>
+      </section>
+
+      <section class="canvas-wrap">
+        <canvas id="workspace-canvas" aria-label="Workspace Canvas"></canvas>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

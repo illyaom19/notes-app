@@ -1,0 +1,86 @@
+:root {
+  --bg: #f4f7f9;
+  --surface: #ffffff;
+  --line: #d7dde3;
+  --text: #0f1720;
+  --muted: #546274;
+  --accent: #0866a8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app-shell {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  min-height: 100%;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.controls {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.controls button {
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+}
+
+.controls button:hover {
+  background: #eaf4fb;
+}
+
+.status-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  padding: 0.65rem 1rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.canvas-wrap {
+  min-height: 0;
+  padding: 0;
+}
+
+#workspace-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  background:
+    radial-gradient(circle at 20% 20%, #ffffff, #eef3f7 60%, #e4ebf1 100%);
+}
