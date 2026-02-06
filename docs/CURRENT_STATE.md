@@ -1,9 +1,8 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint set completed per requested scope: Sprint 0, 1, 2, 3, 4, 5, and 7.
-- Sprint 6 (AI suggestions) intentionally skipped per user instruction.
-- Final cleanup/alignment pass completed against `docs/PROJECT_SUMMARY.md`.
+- Sprint 8 (`docs/SPRINT_8_Contexts_and_Scoped_Workspaces.md`) implemented from current `main` baseline.
+- Delivered scope: context model, active context switching, context-scoped workspace persistence, and cross-context widget import.
 
 ## What Exists Today
 - Core runtime and modular widget architecture:
@@ -20,34 +19,33 @@
   - Widget long-press menu: `src/features/widget-system/`
   - Reference popup interactions + snip tool: `src/features/reference-popups/`
   - Whitespace analyzer/manager: `src/features/whitespace/`
-  - Graph interactions + persistence: `src/features/graph/`
+  - Graph interactions: `src/features/graph/`
+  - Context metadata store: `src/features/contexts/context-store.js`
+  - Context-scoped workspace persistence: `src/features/contexts/context-workspace-store.js`
+  - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
 
 ## In Progress
-- No active implementation tasks.
-- Most recent completed pass: canvas UI restyle with rounded pills, compact caret-first controls, and dynamic PDF whitespace compaction.
+- No active code changes in progress.
+- Pending manual QA for Sprint 8 interaction flows.
 
 ## Blockers
 - None.
 
 ## Decisions Made
 - All heavy paths remain lazy-loaded via dynamic import/registry.
-- UI cleanup aligns better with minimal-surface philosophy by hiding controls behind a `Show Tools` toggle.
-- Reference, whitespace, and graph features stay modular and independently loadable.
-- Graph state persists locally and restores on launch when saved graph widgets exist.
-- Canvas widgets share rounded-drawing helpers from `src/core/canvas/rounded.js` for visual consistency.
-- PDF whitespace zones now affect layout in real time so collapsed regions reclaim space immediately.
+- Sprint 8 persistence will be partitioned by context id to satisfy scope isolation.
+- Active context will be resolved before restoring workspace widgets at boot.
+- Legacy/missing context metadata will be normalized into the default context during load.
+- Context-scoped widget/document state is persisted via `notes-app.context.workspace.v1.<contextId>`.
+- Cross-context import regenerates widget ids to avoid conflicts and preserves document bindings where possible.
 
 ## Next Actions
-1. Validate full interaction flow manually on tablet (ink + pinch zoom + popups + whitespace + graphs).
-2. Verify compact/caret controls remain discoverable at low zoom levels.
-3. Begin Sprint 6 only if AI suggestions are re-enabled later.
-4. Optionally add automated smoke tests for widget creation + persistence restoration.
+1. Manually validate Sprint 8 test plan flows: create/switch/import/restart and isolation checks.
+2. Optionally add automated tests around context switching and workspace persistence.
 
 ## Verification Status
-- `find src -type f -name '*.js' -print0 | xargs -0 -n1 node --check` passed after latest cleanup.
-- `for f in $(rg --files src | rg '\.js$'); do node --check "$f"; done` passed after pill-style and PDF layout updates.
-- Local server smoke command executed repeatedly during sprint progression:
-  - `timeout 2s python3 -m http.server 4173 --directory /home/illya/io_dev/notes-app`
+- `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.
+- `timeout 2s python3 -m http.server 4173 --directory /home/illya/io_dev/notes-app` failed in sandbox with `PermissionError: [Errno 1] Operation not permitted` when binding socket.
 
 ## Last Updated
 - 2026-02-06 (local environment time)

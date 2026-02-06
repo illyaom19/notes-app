@@ -42,6 +42,61 @@ body {
   font-weight: 600;
 }
 
+.topbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.topbar-controls button {
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.38rem 0.78rem;
+  cursor: pointer;
+}
+
+.topbar-controls button:hover {
+  background: #eaf4fb;
+}
+
+.topbar-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.context-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #c7d5e1;
+  border-radius: 999px;
+  padding: 0.3rem 0.5rem 0.3rem 0.6rem;
+  background: #f8fbfe;
+}
+
+.context-pick span {
+  font-size: 0.8rem;
+  color: #35506a;
+  white-space: nowrap;
+}
+
+.context-pick select {
+  border: 0;
+  background: transparent;
+  color: #18344c;
+  font-size: 0.85rem;
+  min-width: 190px;
+  max-width: min(42vw, 260px);
+}
+
+.context-pick select:focus {
+  outline: none;
+}
+
 .controls {
   display: flex;
   flex-wrap: wrap;
@@ -150,4 +205,20 @@ body {
 .widget-menu button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+@media (max-width: 940px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .topbar-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .context-pick {
+    min-width: 230px;
+  }
 }

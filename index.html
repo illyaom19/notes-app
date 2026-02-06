@@ -10,7 +10,17 @@
     <main class="app-shell">
       <header class="topbar">
         <h1>Modular Notes Prototype</h1>
-        <button id="toggle-tools" type="button" class="tools-toggle">Show Tools</button>
+        <div class="topbar-controls">
+          <label class="context-pick" for="context-select">
+            <span>Context</span>
+            <select id="context-select" aria-label="Active context"></select>
+          </label>
+          <button id="new-context" type="button">New</button>
+          <button id="rename-context" type="button">Rename</button>
+          <button id="delete-context" type="button">Delete</button>
+          <button id="import-context-widget" type="button">Import Widgets</button>
+          <button id="toggle-tools" type="button" class="tools-toggle">Show Tools</button>
+        </div>
       </header>
 
       <section id="controls-panel" class="controls-panel" hidden>
@@ -30,6 +40,8 @@
 
       <section class="status-panel" aria-label="App Status">
         <span><strong>Boot:</strong> Instant (no widgets loaded)</span>
+        <span><strong>Context:</strong> <output id="active-context">none</output></span>
+        <span><strong>Documents:</strong> <output id="document-count">0</output></span>
         <span><strong>Loaded Modules:</strong> <output id="loaded-modules">none</output></span>
         <span><strong>Widgets:</strong> <output id="widget-count">0</output></span>
         <span><strong>Reference Popups:</strong> <output id="reference-count">0</output></span>
