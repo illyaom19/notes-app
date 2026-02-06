@@ -8,6 +8,7 @@ const detectWhitespaceButton = document.querySelector("#detect-whitespace");
 const startSnipButton = document.querySelector("#start-snip");
 const instantiateButton = document.querySelector("#instantiate-dummy");
 const instantiateExpandedButton = document.querySelector("#instantiate-expanded");
+const instantiateGraphButton = document.querySelector("#instantiate-graph");
 const enableInkButton = document.querySelector("#enable-ink");
 const undoInkButton = document.querySelector("#undo-ink");
 const redoInkButton = document.querySelector("#redo-ink");
@@ -18,6 +19,7 @@ const referenceCountOutput = document.querySelector("#reference-count");
 const snipStateOutput = document.querySelector("#snip-state");
 const whitespaceStateOutput = document.querySelector("#whitespace-state");
 const whitespaceZoneCountOutput = document.querySelector("#whitespace-zone-count");
+const graphCountOutput = document.querySelector("#graph-count");
 const inkStateOutput = document.querySelector("#ink-state");
 const strokeCountOutput = document.querySelector("#stroke-count");
 const cameraOutput = document.querySelector("#camera-state");
@@ -35,12 +37,15 @@ let inkFeature = null;
 let referenceFeatures = null;
 let whitespaceManager = null;
 let lastPdfWidgetId = null;
+let graphFeatures = null;
+let graphPersistence = null;
 
 const registry = new WidgetRegistry();
 registry.register("dummy", () => import("./widgets/dummy/index.js"));
 registry.register("expanded-area", () => import("./widgets/expanded-area/index.js"));
 registry.register("pdf-document", () => import("./widgets/pdf/index.js"));
 registry.register("reference-popup", () => import("./widgets/reference-popup/index.js"));
+registry.register("graph-widget", () => import("./widgets/graph/index.js"));
 registry.onModuleLoaded((type) => {
   loadedModules.add(type);
   loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
@@ -80,7 +85,15 @@ function updateWidgetUi() {
     const referenceCount = runtime.listWidgets().filter((widget) => widget.type === "reference-popup").length;
     referenceCountOutput.textContent = String(referenceCount);
   }
+  if (graphCountOutput) {
+    const graphCount = runtime.listWidgets().filter((widget) => widget.type === "graph-widget").length;
+    graphCountOutput.textContent = String(graphCount);
+  }
   updateWhitespaceZoneCount();
+
+  if (graphPersistence) {
+    graphPersistence.saveFromRuntime(runtime);
+  }
 }
 
 function updateSnipUi({ armed, dragging }) {
@@ -261,6 +274,72 @@ async function ensureWhitespaceManager() {
   return whitespaceManager;
 }
 
+async function ensureGraphFeatures() {
+  if (graphFeatures && graphPersistence) {
+    return { ...graphFeatures, persistence: graphPersistence };
+  }
+
+  const [interactionsModule, persistenceModule] = await Promise.all([
+    import("./features/graph/graph-interactions.js"),
+    import("./features/graph/graph-persistence.js"),
+  ]);
+
+  graphPersistence = persistenceModule.createGraphPersistence();
+  const interactions = interactionsModule.createGraphInteractions({
+    runtime,
+    onGraphMutated: () => {
+      updateWidgetUi();
+      graphPersistence.saveFromRuntime(runtime);
+    },
+  });
+
+  graphFeatures = { interactions };
+  return { ...graphFeatures, persistence: graphPersistence };
+}
+
+async function createGraphWidget(definition = {}) {
+  await ensureGraphFeatures();
+  const widget = await registry.instantiate("graph-widget", {
+    id: definition.id ?? globalThis.crypto?.randomUUID?.() ?? `graph-${Date.now()}`,
+    position: definition.position ?? { x: -100 + runtime.getWidgetCount() * 14, y: -40 + runtime.getWidgetCount() * 12 },
+    size: definition.size,
+    metadata: definition.metadata,
+    dataPayload: definition.dataPayload,
+    collapsed: definition.collapsed,
+  });
+
+  runtime.addWidget(widget);
+  updateWidgetUi();
+  graphPersistence.saveFromRuntime(runtime);
+}
+
+async function restorePersistedGraphs() {
+  const hasPersistedGraphs = Boolean(window.localStorage.getItem("notes-app.graph.widgets.v1"));
+  if (!hasPersistedGraphs) {
+    return;
+  }
+
+  const { persistence } = await ensureGraphFeatures();
+  const definitions = persistence.loadDefinitions();
+  if (definitions.length < 1) {
+    return;
+  }
+
+  for (const definition of definitions) {
+    if (runtime.getWidgetById(definition.id)) {
+      continue;
+    }
+    const widget = await registry.instantiate("graph-widget", {
+      ...definition,
+      dataPayload: definition.dataPayload ?? {},
+    });
+    runtime.addWidget(widget);
+  }
+
+  updateWidgetUi();
+  persistence.saveFromRuntime(runtime);
+}
+
 instantiateButton?.addEventListener("click", async () => {
   instantiateButton.disabled = true;
   instantiateButton.textContent = "Loading...";
@@ -310,6 +389,20 @@ startSnipButton?.addEventListener("click", async () => {
     window.alert(`Snip tool failed: ${error.message}`);
   } finally {
     startSnipButton.disabled = false;
+  }
+});
+
+instantiateGraphButton?.addEventListener("click", async () => {
+  instantiateGraphButton.disabled = true;
+  instantiateGraphButton.textContent = "Loading...";
+  try {
+    await createGraphWidget();
+  } catch (error) {
+    console.error(error);
+    window.alert(`Graph widget failed: ${error.message}`);
+  } finally {
+    instantiateGraphButton.disabled = false;
+    instantiateGraphButton.textContent = "Instantiate Graph Widget";
   }
 });
 
@@ -477,3 +570,4 @@ window.addEventListener("keydown", (event) => {
 updateWidgetUi();
 updateSnipUi({ armed: false, dragging: false });
 setWhitespaceState("idle");
+void restorePersistedGraphs();

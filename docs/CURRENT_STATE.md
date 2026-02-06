@@ -1,11 +1,11 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 5 (Adaptive Whitespace) implemented and ready to ship.
+- Sprint 7 (Graphing Widget) implemented and ready to ship.
 - Exit criteria status:
-  - PDF whitespace detection pipeline implemented.
-  - Whitespace zones can be collapsed/expanded in-place.
-  - Collapsed zones integrate with Expanded-Area widgets.
+  - Graph widget loads lazily.
+  - Collapsed graph renders as snapshot.
+  - Expanded graph supports interaction and persists state.
 
 ## What Exists Today
 - Sprint 0 foundations remain in place.
@@ -13,13 +13,16 @@
 - Sprint 2 widget system (expanded-area + long-press menu) remains active.
 - Sprint 3 PDF widget supports stacked pages with visible-page virtualization.
 - Sprint 4 reference popup + snip pipeline remains active.
-- Sprint 5 additions:
-  - Whitespace analysis feature:
-    - `src/features/whitespace/pdf-whitespace-analyzer.js`
-    - `src/features/whitespace/whitespace-manager.js`
-  - PDF widget whitespace zones + overlays:
-    - `src/widgets/pdf/pdf-document-widget.js`
-  - App controls/status for whitespace operations:
+- Sprint 5 adaptive whitespace system remains active.
+- Sprint 7 additions:
+  - Graph widget:
+    - `src/widgets/graph/graph-engine.js`
+    - `src/widgets/graph/graph-widget.js`
+    - `src/widgets/graph/index.js`
+  - Graph interaction + persistence:
+    - `src/features/graph/graph-interactions.js`
+    - `src/features/graph/graph-persistence.js`
+  - App controls and restoration wiring:
     - `index.html`
     - `src/main.js`
 
@@ -30,24 +33,24 @@
 - None.
 
 ## Decisions Made
-- Whitespace analysis is lazy-loaded and runs only when user clicks `Detect Whitespace`.
-- Detection uses low-resolution per-page raster analysis and row-density heuristics.
-- Collapse/expand is non-destructive: PDF content is not deleted; whitespace bands are overlaid and reversible.
-- Collapsing a whitespace zone can auto-create a linked Expanded-Area widget; expanding removes the linked area.
+- Graph widget is registered lazily: `registry.register("graph-widget", ...)`.
+- Graph interaction layer is lazy-loaded and handles move/resize/pan/zoom/reset in expanded mode.
+- Collapsed graph mode uses cached snapshot rendering to keep collapsed cost low.
+- Graph widget states are persisted in local storage and restored on next launch.
 
 ## Next Actions
-1. Begin Sprint 7 implementation (`docs/SPRINT_7_Graph_Widget.md`).
-2. Keep graph engine lazy-loaded and snapshot-friendly when collapsed.
-3. Add graph state persistence while preserving existing performance constraints.
+1. Run final cleanup/alignment pass against `docs/PROJECT_SUMMARY.md`.
+2. Remove rough prototype inconsistencies and tighten UX copy/state outputs.
+3. Produce final cleanup commit after review.
 
 ## Verification Status
 - `find src -type f -name '*.js' -print0 | xargs -0 -n1 node --check` passed.
 - Local server smoke command executed:
   - `timeout 2s python3 -m http.server 4173 --directory /home/illya/io_dev/notes-app`
 - Architecture checks:
-  - Whitespace manager lazy import exists in `src/main.js`
-  - Analyzer + manager modules exist in `src/features/whitespace/`
-  - PDF widget whitespace zone methods and overlay rendering exist in `src/widgets/pdf/pdf-document-widget.js`
+  - Graph registry entry and creation flow in `src/main.js`
+  - Graph interaction manager in `src/features/graph/graph-interactions.js`
+  - Graph persistence and restore flow in `src/features/graph/graph-persistence.js` + `src/main.js`
 
 ## Last Updated
 - 2026-02-06 (local environment time)
