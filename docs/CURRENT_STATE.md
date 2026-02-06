@@ -1,8 +1,8 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 8 (`docs/SPRINT_8_Contexts_and_Scoped_Workspaces.md`) implemented from current `main` baseline.
-- Delivered scope: context model, active context switching, context-scoped workspace persistence, and cross-context widget import.
+- Sprint 9 (`docs/SPRINT_9_Universal_Widget_Interactions.md`) implemented from current `main` baseline.
+- Delivered scope: shared widget interaction routing, consistent move/resize/collapse behavior, runtime selection/focus state, and tablet touch parity while keeping stylus dedicated to ink.
 
 ## What Exists Today
 - Core runtime and modular widget architecture:
@@ -17,6 +17,7 @@
 - Implemented feature modules:
   - Ink engine: `src/features/ink/`
   - Widget long-press menu: `src/features/widget-system/`
+  - Universal widget interaction manager: `src/features/widget-system/widget-interaction-manager.js`
   - Reference popup interactions + snip tool: `src/features/reference-popups/`
   - Whitespace analyzer/manager: `src/features/whitespace/`
   - Graph interactions: `src/features/graph/`
@@ -26,7 +27,7 @@
 
 ## In Progress
 - No active code changes in progress.
-- Pending manual QA for Sprint 8 interaction flows.
+- Pending manual interaction QA on physical tablet hardware.
 
 ## Blockers
 - None.
@@ -38,10 +39,16 @@
 - Legacy/missing context metadata will be normalized into the default context during load.
 - Context-scoped widget/document state is persisted via `notes-app.context.workspace.v1.<contextId>`.
 - Cross-context import regenerates widget ids to avoid conflicts and preserves document bindings where possible.
+- Sprint 9 interaction model will standardize move/resize/collapse affordances across widget types via one shared manager.
+- Stylus will remain ink-only; widget manipulation will be touch/mouse driven.
+- Runtime pointer routing now dispatches touch events to widget handlers before camera pan/pinch fallback.
+- Shared move/resize/collapse is centralized in `WidgetInteractionManager`; specialized handlers keep only widget-specific actions.
+- Widget serializable state now carries `interactionFlags` capability contract.
 
 ## Next Actions
-1. Manually validate Sprint 8 test plan flows: create/switch/import/restart and isolation checks.
-2. Optionally add automated tests around context switching and workspace persistence.
+1. Manually validate Sprint 9 test plan across all widget types (move/resize/collapse parity and specialized controls).
+2. Measure context switch and interaction latency on target tablet hardware.
+3. Optionally add automated regression tests for pointer routing and shared widget gestures.
 
 ## Verification Status
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.

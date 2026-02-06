@@ -2,6 +2,7 @@ import { CanvasRuntime } from "./core/canvas/canvas-runtime.js";
 import { WidgetRegistry } from "./core/widgets/widget-registry.js";
 import { BackgroundWorkerClient } from "./core/workers/background-worker-client.js";
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
+import { createWidgetInteractionManager } from "./features/widget-system/widget-interaction-manager.js";
 
 const importPdfButton = document.querySelector("#import-pdf");
 const toggleToolsButton = document.querySelector("#toggle-tools");
@@ -48,6 +49,7 @@ let popupInteractions = null;
 let snipTool = null;
 let whitespaceManager = null;
 let graphInteractions = null;
+let widgetInteractionManager = null;
 let toolsPanelOpen = false;
 
 let contextStore = null;
@@ -1033,6 +1035,17 @@ function wireContextMenu() {
   });
 }
 
+function wireWidgetInteractionManager() {
+  if (widgetInteractionManager) {
+    return;
+  }
+
+  widgetInteractionManager = createWidgetInteractionManager({
+    runtime,
+    onWidgetMutated: () => updateWidgetUi(),
+  });
+}
+
 async function setupContextFeatures() {
   const [
     contextStoreModule,
@@ -1141,6 +1154,7 @@ async function setupContextFeatures() {
 
 async function bootstrap() {
   wireBaseEventHandlers();
+  wireWidgetInteractionManager();
   wireContextMenu();
 
   updateSnipUi({ armed: false, dragging: false });

@@ -3,6 +3,15 @@ export const RENDER_MODE = Object.freeze({
   SNAPSHOT: "snapshot",
 });
 
+function normalizeInteractionFlags(candidate) {
+  const source = candidate && typeof candidate === "object" ? candidate : {};
+  return {
+    movable: source.movable !== false,
+    resizable: source.resizable !== false,
+    collapsible: source.collapsible !== false,
+  };
+}
+
 export class WidgetBase {
   constructor(definition) {
     this.id = definition.id;
@@ -12,6 +21,7 @@ export class WidgetBase {
     this.renderMode = definition.renderMode ?? RENDER_MODE.INTERACTIVE;
     this.collapsed = Boolean(definition.collapsed);
     this.metadata = definition.metadata ?? {};
+    this.interactionFlags = normalizeInteractionFlags(definition.interactionFlags);
     this._mounted = false;
     this._context = null;
   }
@@ -39,11 +49,36 @@ export class WidgetBase {
   }
 
   containsWorldPoint(worldX, worldY) {
+    const bounds = this.getInteractionBounds();
     const minX = this.position.x;
     const minY = this.position.y;
-    const maxX = minX + this.size.width;
-    const maxY = minY + this.size.height;
+    const maxX = minX + bounds.width;
+    const maxY = minY + bounds.height;
     return worldX >= minX && worldX <= maxX && worldY >= minY && worldY <= maxY;
+  }
+
+  getInteractionFlags() {
+    return { ...this.interactionFlags };
+  }
+
+  getInteractionBounds() {
+    return {
+      width: this.size.width,
+      height:
+        typeof this.displayHeight === "number" && Number.isFinite(this.displayHeight)
+          ? this.displayHeight
+          : this.size.height,
+    };
+  }
+
+  moveBy(dx, dy) {
+    this.position.x += dx;
+    this.position.y += dy;
+  }
+
+  resizeBy(dx, dy) {
+    this.size.width = Math.max(120, this.size.width + dx);
+    this.size.height = Math.max(80, this.size.height + dy);
   }
 
   update(_deltaTimeMs) {
@@ -67,6 +102,7 @@ export class WidgetBase {
       renderMode: this.renderMode,
       collapsed: this.collapsed,
       metadata: this.metadata,
+      interactionFlags: this.getInteractionFlags(),
     };
   }
 }

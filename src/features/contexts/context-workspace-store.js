@@ -40,6 +40,15 @@ function normalizeSize(candidate) {
   };
 }
 
+function normalizeInteractionFlags(candidate) {
+  const source = asPlainObject(candidate);
+  return {
+    movable: source.movable !== false,
+    resizable: source.resizable !== false,
+    collapsible: source.collapsible !== false,
+  };
+}
+
 function normalizeWhitespaceZones(candidate) {
   if (!Array.isArray(candidate)) {
     return [];
@@ -132,6 +141,7 @@ function sanitizeSerializedWidget(candidate, contextId) {
     size: normalizeSize(candidate.size),
     collapsed: Boolean(candidate.collapsed),
     metadata: { ...asPlainObject(candidate.metadata) },
+    interactionFlags: normalizeInteractionFlags(candidate.interactionFlags),
     dataPayload: {},
     runtimeState: {},
   };
@@ -322,6 +332,7 @@ function serializeWidget(widget, contextId) {
     size: normalizeSize(state.size),
     collapsed: Boolean(state.collapsed),
     metadata: { ...asPlainObject(state.metadata) },
+    interactionFlags: normalizeInteractionFlags(state.interactionFlags),
     dataPayload: {},
     runtimeState: {},
   };
@@ -482,6 +493,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         position: { ...normalized.position },
         size: { ...normalized.size },
         metadata: { ...normalized.metadata },
+        interactionFlags: normalizeInteractionFlags(normalized.interactionFlags),
         collapsed: normalized.collapsed,
       };
 
@@ -534,6 +546,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         metadata: {
           ...normalized.metadata,
         },
+        interactionFlags: normalizeInteractionFlags(normalized.interactionFlags),
         dataPayload: {
           ...normalized.dataPayload,
         },

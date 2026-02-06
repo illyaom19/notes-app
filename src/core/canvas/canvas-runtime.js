@@ -12,8 +12,12 @@ export class CanvasRuntime {
     this._lastPointer = { x: 0, y: 0 };
     this._touchPointers = new Map();
     this._touchGesture = null;
+    this._touchInteractionPointers = new Set();
     this._inputHandlers = [];
     this._renderLayers = [];
+    this._overlayLayers = [];
+    this._selectedWidgetId = null;
+    this._focusedWidgetId = null;
 
     if (!this.ctx) {
       throw new Error("Canvas 2D context unavailable.");
@@ -41,6 +45,13 @@ export class CanvasRuntime {
 
     const [removed] = this.widgets.splice(targetIndex, 1);
     removed.unmount();
+
+    if (this._selectedWidgetId === widgetId) {
+      this._selectedWidgetId = null;
+    }
+    if (this._focusedWidgetId === widgetId) {
+      this._focusedWidgetId = null;
+    }
     return true;
   }
 
@@ -92,11 +103,49 @@ export class CanvasRuntime {
     };
   }
 
+  registerOverlayLayer(layer) {
+    this._overlayLayers.push(layer);
+    return () => {
+      this._overlayLayers = this._overlayLayers.filter((entry) => entry !== layer);
+    };
+  }
+
+  setSelectedWidgetId(widgetId) {
+    if (!widgetId || !this.getWidgetById(widgetId)) {
+      this._selectedWidgetId = null;
+      return;
+    }
+    this._selectedWidgetId = widgetId;
+  }
+
+  getSelectedWidgetId() {
+    return this._selectedWidgetId;
+  }
+
+  setFocusedWidgetId(widgetId) {
+    if (!widgetId || !this.getWidgetById(widgetId)) {
+      this._focusedWidgetId = null;
+      return;
+    }
+    this._focusedWidgetId = widgetId;
+  }
+
+  getFocusedWidgetId() {
+    return this._focusedWidgetId;
+  }
+
   _bindEvents() {
     window.addEventListener("resize", () => this._resizeToViewport());
 
     this.canvas.addEventListener("pointerdown", (event) => {
       if (event.pointerType === "touch") {
+        if (this._dispatchPointer("onPointerDown", event)) {
+          event.preventDefault();
+          this._touchInteractionPointers.add(event.pointerId);
+          this.canvas.setPointerCapture(event.pointerId);
+          return;
+        }
+
         event.preventDefault();
         this._touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
         this.canvas.setPointerCapture(event.pointerId);
@@ -111,6 +160,10 @@ export class CanvasRuntime {
         return;
       }
 
+      if (event.pointerType === "pen") {
+        return;
+      }
+
       if (event.button !== 0 && event.button !== 1) {
         return;
       }
@@ -120,6 +173,12 @@ export class CanvasRuntime {
     });
 
     this.canvas.addEventListener("pointermove", (event) => {
+      if (event.pointerType === "touch" && this._touchInteractionPointers.has(event.pointerId)) {
+        event.preventDefault();
+        this._dispatchPointer("onPointerMove", event);
+        return;
+      }
+
       if (event.pointerType === "touch" && this._touchPointers.has(event.pointerId)) {
         event.preventDefault();
         const previous = this._touchPointers.get(event.pointerId);
@@ -167,6 +226,16 @@ export class CanvasRuntime {
     });
 
     const stopDragging = (event) => {
+      if (event.pointerType === "touch" && this._touchInteractionPointers.has(event.pointerId)) {
+        event.preventDefault();
+        this._dispatchPointer("onPointerUp", event);
+        this._touchInteractionPointers.delete(event.pointerId);
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+
       if (event.pointerType === "touch" && this._touchPointers.has(event.pointerId)) {
         this._touchPointers.delete(event.pointerId);
         if (this._touchPointers.size < 2) {
@@ -196,6 +265,16 @@ export class CanvasRuntime {
 
     this.canvas.addEventListener("pointerup", stopDragging);
     this.canvas.addEventListener("pointercancel", (event) => {
+      if (event.pointerType === "touch" && this._touchInteractionPointers.has(event.pointerId)) {
+        event.preventDefault();
+        this._dispatchPointer("onPointerCancel", event);
+        this._touchInteractionPointers.delete(event.pointerId);
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+
       if (event.pointerType === "touch" && this._touchPointers.has(event.pointerId)) {
         this._touchPointers.delete(event.pointerId);
         if (this._touchPointers.size < 2) {
@@ -312,6 +391,15 @@ export class CanvasRuntime {
         widget.renderSnapshot(this.ctx, this.camera, renderContext);
       } else {
         widget.render(this.ctx, this.camera, renderContext);
+      }
+    }
+
+    for (const layer of this._overlayLayers) {
+      if (typeof layer.update === "function") {
+        layer.update(dt);
+      }
+      if (typeof layer.render === "function") {
+        layer.render(this.ctx, this.camera, renderContext);
       }
     }
   }

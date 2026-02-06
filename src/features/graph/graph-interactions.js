@@ -44,7 +44,12 @@ export function createGraphInteractions({ runtime, onGraphMutated }) {
         return true;
       }
 
-      if (!control) {
+      if (control === "move" || control === "resize") {
+        // Shared widget interaction manager owns universal move/resize behavior.
+        return false;
+      }
+
+      if (!control || control !== "pan") {
         return false;
       }
 
@@ -70,14 +75,6 @@ export function createGraphInteractions({ runtime, onGraphMutated }) {
       const dx = point.x - dragState.lastWorld.x;
       const dy = point.y - dragState.lastWorld.y;
       dragState.lastWorld = point;
-
-      if (dragState.mode === "move") {
-        widget.moveBy(dx, dy);
-      }
-
-      if (dragState.mode === "resize") {
-        widget.resizeBy(dx, dy);
-      }
 
       if (dragState.mode === "pan") {
         widget.panByWorldDelta(dx, dy);
