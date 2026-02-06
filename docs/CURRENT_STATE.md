@@ -1,7 +1,7 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 3 (PDF Document Widget) implemented.
+- Sprint 3 (PDF Document Widget) implemented and shipped to `origin/main`.
 - Exit criteria status:
   - PDF widget loads via lazy module import.
   - PDF rendering path uses tile cache and thumbnail snapshot mode.
