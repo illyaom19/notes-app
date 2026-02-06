@@ -3,6 +3,7 @@ import { WidgetRegistry } from "./core/widgets/widget-registry.js";
 import { BackgroundWorkerClient } from "./core/workers/background-worker-client.js";
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 
+const importPdfButton = document.querySelector("#import-pdf");
 const instantiateButton = document.querySelector("#instantiate-dummy");
 const instantiateExpandedButton = document.querySelector("#instantiate-expanded");
 const enableInkButton = document.querySelector("#enable-ink");
@@ -17,6 +18,7 @@ const cameraOutput = document.querySelector("#camera-state");
 const workerStateOutput = document.querySelector("#worker-state");
 const canvas = document.querySelector("#workspace-canvas");
 const widgetContextMenu = document.querySelector("#widget-context-menu");
+const pdfFileInput = document.querySelector("#pdf-file-input");
 
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error("Missing #workspace-canvas element.");
@@ -28,6 +30,7 @@ let inkFeature = null;
 const registry = new WidgetRegistry();
 registry.register("dummy", () => import("./widgets/dummy/index.js"));
 registry.register("expanded-area", () => import("./widgets/expanded-area/index.js"));
+registry.register("pdf-document", () => import("./widgets/pdf/index.js"));
 registry.onModuleLoaded((type) => {
   loadedModules.add(type);
   loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
@@ -74,6 +77,23 @@ async function createExpandedAreaWidget() {
   updateWidgetUi();
 }
 
+async function createPdfWidgetFromFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const widget = await registry.instantiate("pdf-document", {
+    id: globalThis.crypto?.randomUUID?.() ?? `pdf-${Date.now()}`,
+    position: { x: -180 + runtime.getWidgetCount() * 36, y: -120 + runtime.getWidgetCount() * 30 },
+    metadata: {
+      title: file.name,
+    },
+    dataPayload: {
+      bytes,
+      fileName: file.name,
+    },
+  });
+  runtime.addWidget(widget);
+  updateWidgetUi();
+}
+
 instantiateButton?.addEventListener("click", async () => {
   instantiateButton.disabled = true;
   instantiateButton.textContent = "Loading...";
@@ -106,6 +126,42 @@ instantiateExpandedButton?.addEventListener("click", async () => {
   } finally {
     instantiateExpandedButton.disabled = false;
     instantiateExpandedButton.textContent = "Instantiate Expanded-Area Widget";
+  }
+});
+
+importPdfButton?.addEventListener("click", () => {
+  if (!(pdfFileInput instanceof HTMLInputElement)) {
+    return;
+  }
+  pdfFileInput.value = "";
+  pdfFileInput.click();
+});
+
+pdfFileInput?.addEventListener("change", async (event) => {
+  if (!(event.target instanceof HTMLInputElement)) {
+    return;
+  }
+  if (!(importPdfButton instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const file = event.target.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  importPdfButton.disabled = true;
+  importPdfButton.textContent = "Importing...";
+
+  try {
+    await createPdfWidgetFromFile(file);
+  } catch (error) {
+    console.error(error);
+    window.alert(`PDF import failed: ${error.message}`);
+  } finally {
+    importPdfButton.disabled = false;
+    importPdfButton.textContent = "Import PDF";
+    event.target.value = "";
   }
 });
 

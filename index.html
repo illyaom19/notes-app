@@ -11,6 +11,7 @@
       <header class="topbar">
         <h1>Notes App Foundations</h1>
         <div class="controls">
+          <button id="import-pdf" type="button">Import PDF</button>
           <button id="instantiate-dummy" type="button">Instantiate Dummy Widget</button>
           <button id="instantiate-expanded" type="button">Instantiate Expanded-Area Widget</button>
           <button id="enable-ink" type="button">Enable Ink</button>
@@ -40,6 +41,8 @@
         <button type="button" data-action="remove-widget">Remove Widget</button>
       </menu>
     </main>
+
+    <input id="pdf-file-input" type="file" accept="application/pdf" hidden />
 
     <script type="module" src="./src/main.js"></script>
   </body>
