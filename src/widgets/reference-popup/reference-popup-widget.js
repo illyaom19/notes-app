@@ -1,3 +1,4 @@
+import { fillPill, fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 
 const HEADER_HEIGHT = 34;
@@ -17,7 +18,7 @@ export class ReferencePopupWidget extends WidgetBase {
         height: Math.max(MIN_SIZE.height, definition.size?.height ?? 210),
       },
       metadata: {
-        title: definition.metadata?.title ?? "Reference",
+        title: definition.metadata?.title ?? "Ref",
         minimized: Boolean(definition.metadata?.minimized),
       },
     });
@@ -140,25 +141,12 @@ export class ReferencePopupWidget extends WidgetBase {
     const height = this.displayHeight * camera.zoom;
     const headerHeight = HEADER_HEIGHT * camera.zoom;
 
-    ctx.fillStyle = "#ffffff";
-    ctx.strokeStyle = "#6f8faa";
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.rect(screen.x, screen.y, width, height);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = "#edf4fb";
-    ctx.beginPath();
-    ctx.rect(screen.x, screen.y, width, headerHeight);
-    ctx.fill();
+    fillStrokeRoundedRect(ctx, screen.x, screen.y, width, height, 16, "#ffffff", "#6f8faa", 1.4);
+    fillPill(ctx, screen.x + 10, screen.y + 6, Math.max(90, width - 88), 20 * camera.zoom, "#edf4fb");
 
     ctx.fillStyle = "#17354d";
     ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(this.metadata.title, screen.x + 10, screen.y + 22 * camera.zoom);
-
-    ctx.fillStyle = "#4a6680";
-    ctx.fillText(this.sourceLabel, screen.x + 10, screen.y + 34 * camera.zoom);
+    ctx.fillText(this.metadata.title, screen.x + 18, screen.y + 20 * camera.zoom);
 
     const minimizeRect = this._minimizeButtonRect();
     const closeRect = this._closeButtonRect();
@@ -166,14 +154,11 @@ export class ReferencePopupWidget extends WidgetBase {
     const closeScreen = camera.worldToScreen(closeRect.x, closeRect.y);
     const iconSize = 16 * camera.zoom;
 
-    ctx.fillStyle = "#dce7f1";
-    ctx.beginPath();
-    ctx.rect(minimizeScreen.x, minimizeScreen.y, iconSize, iconSize);
-    ctx.rect(closeScreen.x, closeScreen.y, iconSize, iconSize);
-    ctx.fill();
+    fillPill(ctx, minimizeScreen.x, minimizeScreen.y, iconSize, iconSize, "#dce7f1");
+    fillPill(ctx, closeScreen.x, closeScreen.y, iconSize, iconSize, "#dce7f1");
 
     ctx.fillStyle = "#284760";
-    ctx.fillText("-", minimizeScreen.x + 5 * camera.zoom, minimizeScreen.y + 12 * camera.zoom);
+    ctx.fillText("^", minimizeScreen.x + 5 * camera.zoom, minimizeScreen.y + 12 * camera.zoom);
     ctx.fillText("x", closeScreen.x + 4 * camera.zoom, closeScreen.y + 12 * camera.zoom);
 
     if (this.metadata.minimized) {
@@ -183,24 +168,21 @@ export class ReferencePopupWidget extends WidgetBase {
     const bodyY = screen.y + headerHeight;
     const bodyH = Math.max(MIN_BODY_HEIGHT * camera.zoom, height - headerHeight);
 
+    fillStrokeRoundedRect(ctx, screen.x + 8, bodyY + 8, width - 16, bodyH - 16, 12, "#f4f8fb", "#dbe7f2", 1);
+
     if (this._image) {
-      ctx.drawImage(this._image, screen.x + 8, bodyY + 8, width - 16, bodyH - 16);
+      ctx.drawImage(this._image, screen.x + 10, bodyY + 10, width - 20, bodyH - 20);
     } else {
-      ctx.fillStyle = "#f4f8fb";
-      ctx.beginPath();
-      ctx.rect(screen.x + 8, bodyY + 8, width - 16, bodyH - 16);
-      ctx.fill();
       ctx.fillStyle = "#50697f";
-      ctx.fillText("No snip attached", screen.x + 14, bodyY + 28);
+      ctx.fillText("v", screen.x + width / 2 - 4, bodyY + 24);
     }
 
     const resizeRect = this._resizeHandleRect();
     const resizeScreen = camera.worldToScreen(resizeRect.x, resizeRect.y);
     const handleSize = 18 * camera.zoom;
-    ctx.fillStyle = "#7e9db7";
-    ctx.beginPath();
-    ctx.rect(resizeScreen.x, resizeScreen.y, handleSize, handleSize);
-    ctx.fill();
+    fillPill(ctx, resizeScreen.x, resizeScreen.y, handleSize, handleSize, "#7e9db7");
+    ctx.fillStyle = "#f2f8fc";
+    ctx.fillText("<>", resizeScreen.x + 3 * camera.zoom, resizeScreen.y + 12 * camera.zoom);
   }
 
   renderSnapshot(ctx, camera) {

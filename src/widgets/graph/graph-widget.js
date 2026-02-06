@@ -1,3 +1,4 @@
+import { fillPill, fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 import { GraphEngine } from "./graph-engine.js";
 
@@ -22,7 +23,7 @@ export class GraphWidget extends WidgetBase {
         height: Math.max(MIN_SIZE.height, definition.size?.height ?? 280),
       },
       metadata: {
-        title: definition.metadata?.title ?? "Graph Widget",
+        title: definition.metadata?.title ?? "f(x)",
       },
     });
 
@@ -105,12 +106,11 @@ export class GraphWidget extends WidgetBase {
       return "resize";
     }
 
-    const headerY = this.position.y;
     if (
       worldX >= this.position.x &&
       worldX <= this.position.x + this.size.width &&
-      worldY >= headerY &&
-      worldY <= headerY + HEADER_HEIGHT
+      worldY >= this.position.y &&
+      worldY <= this.position.y + HEADER_HEIGHT
     ) {
       return "move";
     }
@@ -172,39 +172,30 @@ export class GraphWidget extends WidgetBase {
   _drawHeader(ctx, camera) {
     const screen = camera.worldToScreen(this.position.x, this.position.y);
     const width = this.size.width * camera.zoom;
-    const headerHeight = HEADER_HEIGHT * camera.zoom;
+    const totalHeight = this.size.height * camera.zoom;
 
-    ctx.fillStyle = "#ffffff";
-    ctx.strokeStyle = "#6f8faa";
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.rect(screen.x, screen.y, width, this.size.height * camera.zoom);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = "#edf5fc";
-    ctx.fillRect(screen.x, screen.y, width, headerHeight);
+    fillStrokeRoundedRect(ctx, screen.x, screen.y, width, totalHeight, 18, "#ffffff", "#6f8faa", 1.4);
+    fillPill(ctx, screen.x + 10, screen.y + 6, Math.max(96, width - 106), 20 * camera.zoom, "#edf5fc");
 
     ctx.fillStyle = "#1a3c57";
     ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(this.metadata.title, screen.x + 10, screen.y + 22 * camera.zoom);
+    ctx.fillText(this.metadata.title, screen.x + 18, screen.y + 20 * camera.zoom);
 
-    const controls = ["+", "-", "R"];
+    const controls = ["^", "v", "<>"];
     for (let i = 0; i < controls.length; i += 1) {
       const x = screen.x + width - (84 - i * 26) * camera.zoom;
       const y = screen.y + 8 * camera.zoom;
       const size = 18 * camera.zoom;
 
-      ctx.fillStyle = "#d9e8f5";
-      ctx.fillRect(x, y, size, size);
+      fillPill(ctx, x, y, size, size, "#d9e8f5");
       ctx.fillStyle = "#27445a";
-      ctx.fillText(controls[i], x + 6 * camera.zoom, y + 13 * camera.zoom);
+      ctx.fillText(controls[i], x + 4 * camera.zoom, y + 12 * camera.zoom);
     }
 
     return {
       screen,
       width,
-      headerHeight,
+      headerHeight: HEADER_HEIGHT * camera.zoom,
     };
   }
 
@@ -222,12 +213,11 @@ export class GraphWidget extends WidgetBase {
 
     const resize = camera.worldToScreen(this.position.x + this.size.width - 18, this.position.y + this.size.height - 18);
     const handleSize = 18 * camera.zoom;
-    ctx.fillStyle = "#7f9db8";
-    ctx.fillRect(resize.x, resize.y, handleSize, handleSize);
+    fillPill(ctx, resize.x, resize.y, handleSize, handleSize, "#7f9db8");
 
     ctx.fillStyle = "#3d5970";
     ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(this.state.equation, screen.x + 8, screen.y + 16);
+    ctx.fillText(this.state.equation.slice(0, 24), screen.x + 8, screen.y + 16);
   }
 
   _refreshSnapshot() {
@@ -263,18 +253,16 @@ export class GraphWidget extends WidgetBase {
     const width = frame.width - inset * 2;
     const height = Math.max(36, this.size.height * camera.zoom - frame.headerHeight - inset * 2);
 
-    ctx.fillStyle = "#eff5fb";
-    ctx.fillRect(x, y, width, height);
+    fillStrokeRoundedRect(ctx, x, y, width, height, 12, "#eff5fb", "#d9e6f2", 1);
 
     if (this._snapshotCanvas) {
       ctx.drawImage(this._snapshotCanvas, x, y, width, height);
     }
 
-    ctx.fillStyle = "rgba(22, 43, 62, 0.82)";
-    ctx.fillRect(x + 8, y + 8, 98, 20);
+    fillPill(ctx, x + 8, y + 8, 62, 18, "rgba(22, 43, 62, 0.82)");
     ctx.fillStyle = "#f2f8fc";
     ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText("Graph Snapshot", x + 14, y + 22);
+    ctx.fillText("f(x)^", x + 14, y + 20);
   }
 
   toSerializableState() {

@@ -1,3 +1,4 @@
+import { fillPill, fillStrokeRoundedRect, strokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 import { loadPdfJs } from "./pdfjs-loader.js";
 import { PdfTileCache } from "./pdf-tile-cache.js";
@@ -5,6 +6,18 @@ import { PdfTileCache } from "./pdf-tile-cache.js";
 const HEADER_WORLD = 40;
 const PAGE_GAP_WORLD = 16;
 const MIN_WIDGET_HEIGHT = 320;
+const COLLAPSED_ZONE_WORLD = 14;
+
+function intersects(a, b) {
+  return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
+}
+
+function shortName(name) {
+  if (!name) {
+    return "PDF";
+  }
+  return name.length > 20 ? `${name.slice(0, 17)}...` : name;
+}
 
 function drawFrame(ctx, camera, widget) {
   const screen = camera.worldToScreen(widget.position.x, widget.position.y);
@@ -12,18 +25,8 @@ function drawFrame(ctx, camera, widget) {
   const height = widget.size.height * camera.zoom;
   const headerHeight = HEADER_WORLD * camera.zoom;
 
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#6f8faa";
-  ctx.lineWidth = 1.3;
-  ctx.beginPath();
-  ctx.rect(screen.x, screen.y, width, height);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = "#eff4f8";
-  ctx.beginPath();
-  ctx.rect(screen.x, screen.y, width, headerHeight);
-  ctx.fill();
+  fillStrokeRoundedRect(ctx, screen.x, screen.y, width, height, 18, "#ffffff", "#6f8faa", 1.3);
+  fillPill(ctx, screen.x + 10, screen.y + 8, Math.max(100, width - 20), Math.max(18, headerHeight - 16), "#eff4f8");
 
   return {
     screen,
@@ -33,17 +36,13 @@ function drawFrame(ctx, camera, widget) {
   };
 }
 
-function intersects(a, b) {
-  return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
-}
-
 export class PdfDocumentWidget extends WidgetBase {
   constructor(definition) {
     super({
       ...definition,
       size: definition.size ?? { width: 480, height: 680 },
       metadata: {
-        title: definition.metadata?.title ?? definition.dataPayload?.fileName ?? "PDF Document",
+        title: definition.metadata?.title ?? definition.dataPayload?.fileName ?? "PDF",
       },
     });
 
@@ -61,12 +60,15 @@ export class PdfDocumentWidget extends WidgetBase {
 
     this.whitespaceZones = [];
     this._whitespaceHitRegions = [];
+    this._zoneWorldRects = new Map();
+    this._pageLayout = new Map();
+    this._baseWidgetHeight = this.size.height;
   }
 
   async initialize() {
     if (!(this.pdfBytes instanceof Uint8Array) || this.pdfBytes.length === 0) {
       this.loading = false;
-      this.loadError = "Invalid PDF data payload.";
+      this.loadError = "Invalid PDF";
       return;
     }
 
@@ -81,7 +83,7 @@ export class PdfDocumentWidget extends WidgetBase {
       this.loading = false;
     } catch (error) {
       this.loading = false;
-      this.loadError = error?.message ?? "Failed to load PDF document.";
+      this.loadError = error?.message ?? "PDF load failed";
     }
   }
 
@@ -102,8 +104,8 @@ export class PdfDocumentWidget extends WidgetBase {
         pageNumber,
         pageProxy,
         viewportAt1,
-        worldY: currentY,
-        worldHeight,
+        baseWorldY: currentY,
+        baseWorldHeight: worldHeight,
         tileCache: new PdfTileCache(pageProxy),
       });
 
@@ -112,8 +114,10 @@ export class PdfDocumentWidget extends WidgetBase {
 
     this.documentWorldHeight = currentY > 0 ? currentY - PAGE_GAP_WORLD : 0;
     const requiredHeight = HEADER_WORLD + this.documentWorldHeight;
-    const baseHeight = this._hasExplicitSize ? this.size.height : MIN_WIDGET_HEIGHT;
-    this.size.height = Math.max(baseHeight, requiredHeight);
+    const baseHeight = this._hasExplicitSize ? this.size.height : Math.max(MIN_WIDGET_HEIGHT, requiredHeight);
+    this.size.height = baseHeight;
+    this._baseWidgetHeight = baseHeight;
+    this._computeDisplayLayout();
   }
 
   async _buildThumbnail() {
@@ -146,6 +150,78 @@ export class PdfDocumentWidget extends WidgetBase {
     this.thumbnailCanvas = canvas;
   }
 
+  _zoneBaseHeight(zone, pageBaseHeight) {
+    return Math.max(8, zone.normalizedHeight * pageBaseHeight);
+  }
+
+  _zoneDisplayHeight(zone, pageBaseHeight) {
+    if (zone.collapsed) {
+      return COLLAPSED_ZONE_WORLD;
+    }
+    return this._zoneBaseHeight(zone, pageBaseHeight);
+  }
+
+  _zoneReduction(zone, pageBaseHeight) {
+    const base = this._zoneBaseHeight(zone, pageBaseHeight);
+    const display = this._zoneDisplayHeight(zone, pageBaseHeight);
+    return Math.max(0, base - display);
+  }
+
+  _zonesForPage(pageNumber) {
+    return this.whitespaceZones
+      .filter((zone) => zone.pageNumber === pageNumber)
+      .sort((a, b) => a.normalizedY - b.normalizedY);
+  }
+
+  _computeDisplayLayout() {
+    this._zoneWorldRects.clear();
+    this._pageLayout.clear();
+
+    let cumulativeReduction = 0;
+
+    for (const pageEntry of this.pages) {
+      const pageZones = this._zonesForPage(pageEntry.pageNumber);
+      const pageReduction = pageZones.reduce(
+        (sum, zone) => sum + this._zoneReduction(zone, pageEntry.baseWorldHeight),
+        0,
+      );
+
+      const pageY = this.position.y + HEADER_WORLD + pageEntry.baseWorldY - cumulativeReduction;
+      const pageHeight = Math.max(40, pageEntry.baseWorldHeight - pageReduction);
+
+      this._pageLayout.set(pageEntry.pageNumber, {
+        x: this.position.x,
+        y: pageY,
+        width: this.size.width,
+        height: pageHeight,
+      });
+
+      let offsetBefore = 0;
+      for (const zone of pageZones) {
+        const baseY = zone.normalizedY * pageEntry.baseWorldHeight;
+        const zoneY = pageY + Math.max(0, baseY - offsetBefore);
+        const zoneHeight = this._zoneDisplayHeight(zone, pageEntry.baseWorldHeight);
+        this._zoneWorldRects.set(zone.id, {
+          x: this.position.x,
+          y: zoneY,
+          width: this.size.width,
+          height: zoneHeight,
+          pageNumber: pageEntry.pageNumber,
+        });
+
+        offsetBefore += this._zoneReduction(zone, pageEntry.baseWorldHeight);
+      }
+
+      cumulativeReduction += pageReduction;
+    }
+
+    const documentDisplayHeight = Math.max(60, this.documentWorldHeight - cumulativeReduction);
+    this.size.height = Math.max(MIN_WIDGET_HEIGHT, this._baseWidgetHeight - cumulativeReduction);
+    if (!this._hasExplicitSize) {
+      this.size.height = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + documentDisplayHeight);
+    }
+  }
+
   _getVisibleWorldBounds(camera, renderContext) {
     if (!renderContext) {
       return null;
@@ -162,17 +238,7 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   _getPageBoundsByNumber(pageNumber) {
-    const pageEntry = this.pages.find((entry) => entry.pageNumber === pageNumber);
-    if (!pageEntry) {
-      return null;
-    }
-
-    return {
-      x: this.position.x,
-      y: this.position.y + HEADER_WORLD + pageEntry.worldY,
-      width: this.size.width,
-      height: pageEntry.worldHeight,
-    };
+    return this._pageLayout.get(pageNumber) ?? null;
   }
 
   _getScaleBucket(zoom) {
@@ -187,78 +253,42 @@ export class PdfDocumentWidget extends WidgetBase {
 
   _drawPageBadge(ctx, camera, pageBounds, pageNumber) {
     const screen = camera.worldToScreen(pageBounds.x, pageBounds.y);
-    const badgeW = Math.max(40, 56 * camera.zoom);
-    const badgeH = Math.max(16, 20 * camera.zoom);
+    const badgeW = Math.max(34, 44 * camera.zoom);
+    const badgeH = Math.max(16, 18 * camera.zoom);
 
-    ctx.fillStyle = "rgba(28, 48, 66, 0.78)";
-    ctx.beginPath();
-    ctx.rect(screen.x + 8, screen.y + 8, badgeW, badgeH);
-    ctx.fill();
-
+    fillPill(ctx, screen.x + 8, screen.y + 8, badgeW, badgeH, "rgba(28, 48, 66, 0.78)");
     ctx.fillStyle = "#f2f7fb";
     ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(`p.${pageNumber}`, screen.x + 14, screen.y + 22 * camera.zoom);
-  }
-
-  _zoneWorldRect(zone) {
-    const pageBounds = this._getPageBoundsByNumber(zone.pageNumber);
-    if (!pageBounds) {
-      return null;
-    }
-
-    const y = pageBounds.y + zone.normalizedY * pageBounds.height;
-    const height = Math.max(10, zone.normalizedHeight * pageBounds.height);
-    return {
-      x: pageBounds.x,
-      y,
-      width: pageBounds.width,
-      height,
-    };
+    ctx.fillText(`${pageNumber}`, screen.x + 20, screen.y + 21 * camera.zoom);
   }
 
   _drawWhitespaceZone(ctx, camera, zone) {
-    const rect = this._zoneWorldRect(zone);
+    const rect = this._zoneWorldRects.get(zone.id);
     if (!rect) {
       return;
     }
 
     const screen = camera.worldToScreen(rect.x, rect.y);
     const screenW = rect.width * camera.zoom;
-    const screenH = rect.height * camera.zoom;
+    const screenH = Math.max(8, rect.height * camera.zoom);
 
     if (zone.collapsed) {
-      ctx.fillStyle = "rgba(228, 237, 246, 0.92)";
-      ctx.fillRect(screen.x, screen.y, screenW, screenH);
-
-      ctx.strokeStyle = "#4b7ea5";
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.moveTo(screen.x + 10, screen.y + 4);
-      ctx.lineTo(screen.x + screenW - 10, screen.y + 4);
-      ctx.moveTo(screen.x + 10, screen.y + screenH - 4);
-      ctx.lineTo(screen.x + screenW - 10, screen.y + screenH - 4);
-      ctx.stroke();
+      fillPill(ctx, screen.x + 6, screen.y, Math.max(20, screenW - 12), screenH, "rgba(220, 232, 242, 0.95)");
     } else {
-      ctx.strokeStyle = "rgba(52, 123, 175, 0.72)";
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([8, 5]);
-      ctx.strokeRect(screen.x, screen.y, screenW, screenH);
-      ctx.setLineDash([]);
+      strokeRoundedRect(ctx, screen.x + 4, screen.y + 2, Math.max(10, screenW - 8), Math.max(10, screenH - 4), 10, "rgba(52, 123, 175, 0.72)", 1.2);
     }
 
-    const chipW = Math.max(88, 108 * camera.zoom);
-    const chipH = Math.max(16, 20 * camera.zoom);
-    const chipX = screen.x + 8;
-    const chipY = screen.y + 8;
+    const chipW = Math.max(18, 20 * camera.zoom);
+    const chipH = Math.max(18, 20 * camera.zoom);
+    const chipX = screen.x + 10;
+    const chipY = screen.y + 6;
 
-    ctx.fillStyle = zone.collapsed ? "#2d5f84" : "#337eab";
-    ctx.fillRect(chipX, chipY, chipW, chipH);
+    fillPill(ctx, chipX, chipY, chipW, chipH, zone.collapsed ? "#2d5f84" : "#337eab");
     ctx.fillStyle = "#f1f7fb";
     ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(zone.collapsed ? "Expand Space" : "Collapse Space", chipX + 8, chipY + 14 * camera.zoom);
+    ctx.fillText(zone.collapsed ? "v" : "^", chipX + 6 * camera.zoom, chipY + 13 * camera.zoom);
 
     const chipWorld = camera.screenToWorld(chipX, chipY);
-
     this._whitespaceHitRegions.push({
       zoneId: zone.id,
       x: chipWorld.x,
@@ -278,6 +308,7 @@ export class PdfDocumentWidget extends WidgetBase {
       collapsed: Boolean(zone.collapsed),
       linkedWidgetId: zone.linkedWidgetId ?? null,
     }));
+    this._computeDisplayLayout();
   }
 
   getWhitespaceZones() {
@@ -289,7 +320,9 @@ export class PdfDocumentWidget extends WidgetBase {
     if (!zone) {
       return null;
     }
+
     zone.collapsed = !zone.collapsed;
+    this._computeDisplayLayout();
     return zone;
   }
 
@@ -318,14 +351,22 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   getWhitespaceZoneWorldRect(zoneId) {
-    const zone = this.whitespaceZones.find((entry) => entry.id === zoneId);
-    if (!zone) {
+    this._computeDisplayLayout();
+    const rect = this._zoneWorldRects.get(zoneId);
+    if (!rect) {
       return null;
     }
-    return this._zoneWorldRect(zone);
+
+    return {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+    };
   }
 
   render(ctx, camera, renderContext) {
+    this._computeDisplayLayout();
     this._whitespaceHitRegions = [];
 
     const frame = drawFrame(ctx, camera, this);
@@ -333,19 +374,14 @@ export class PdfDocumentWidget extends WidgetBase {
     if (this.loading) {
       ctx.fillStyle = "#1e3548";
       ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText(this.metadata.title, frame.screen.x + 10, frame.screen.y + 16 * camera.zoom);
-      ctx.fillStyle = "#4d6071";
-      ctx.font = `${Math.max(11, 13 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("Loading PDF...", frame.screen.x + 12, frame.screen.y + frame.headerHeight + 24 * camera.zoom);
+      ctx.fillText("PDF", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
       return;
     }
 
     if (this.loadError) {
       ctx.fillStyle = "#9b2b2b";
       ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText(this.metadata.title, frame.screen.x + 10, frame.screen.y + 16 * camera.zoom);
-      ctx.font = `${Math.max(11, 13 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText(`PDF error: ${this.loadError}`, frame.screen.x + 12, frame.screen.y + frame.headerHeight + 24 * camera.zoom);
+      ctx.fillText("PDF x", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
       return;
     }
 
@@ -354,10 +390,10 @@ export class PdfDocumentWidget extends WidgetBase {
       return;
     }
 
-    const docLabel = `${this.metadata.title} (${this.pageCount} pages)`;
+    const docLabel = `${shortName(this.metadata.title)} • ${this.pageCount}p`;
     ctx.fillStyle = "#1e3548";
     ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(docLabel, frame.screen.x + 10, frame.screen.y + 16 * camera.zoom);
+    ctx.fillText(docLabel, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
 
     let firstVisiblePage = null;
     let lastVisiblePage = null;
@@ -409,8 +445,8 @@ export class PdfDocumentWidget extends WidgetBase {
       if (drawnTiles === 0) {
         const screen = camera.worldToScreen(pageBounds.x, pageBounds.y);
         ctx.fillStyle = "#5c7084";
-        ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-        ctx.fillText(`Rendering page ${pageEntry.pageNumber}...`, screen.x + 12, screen.y + 20 * camera.zoom);
+        ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+        ctx.fillText("...", screen.x + 12, screen.y + 18 * camera.zoom);
       }
 
       const zones = this.whitespaceZones.filter((zone) => zone.pageNumber === pageEntry.pageNumber);
@@ -424,21 +460,22 @@ export class PdfDocumentWidget extends WidgetBase {
     if (firstVisiblePage !== null && lastVisiblePage !== null) {
       const visibleLabel =
         firstVisiblePage === lastVisiblePage
-          ? `Visible page: ${firstVisiblePage}`
-          : `Visible pages: ${firstVisiblePage}-${lastVisiblePage}`;
+          ? `v ${firstVisiblePage}`
+          : `v ${firstVisiblePage}-${lastVisiblePage}`;
 
       ctx.fillStyle = "#5a6f83";
       ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText(visibleLabel, frame.screen.x + 12, frame.screen.y + 32 * camera.zoom);
+      ctx.fillText(visibleLabel, frame.screen.x + frame.width - 72, frame.screen.y + 20 * camera.zoom);
     }
   }
 
   renderSnapshot(ctx, camera) {
+    this._computeDisplayLayout();
     const frame = drawFrame(ctx, camera, this);
 
     ctx.fillStyle = "#1e3548";
     ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(`${this.metadata.title} (collapsed)`, frame.screen.x + 10, frame.screen.y + 16 * camera.zoom);
+    ctx.fillText(`PDF ^ ${this.pageCount}p`, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
 
     const inset = 10;
     const thumbX = frame.screen.x + inset;
@@ -446,28 +483,11 @@ export class PdfDocumentWidget extends WidgetBase {
     const thumbW = frame.width - inset * 2;
     const thumbH = Math.max(40, frame.height - frame.headerHeight - inset * 2);
 
-    ctx.fillStyle = "#f4f8fb";
-    ctx.beginPath();
-    ctx.rect(thumbX, thumbY, thumbW, thumbH);
-    ctx.fill();
+    fillStrokeRoundedRect(ctx, thumbX, thumbY, thumbW, thumbH, 12, "#f4f8fb", "#d9e6f2", 1);
 
     if (this.thumbnailCanvas) {
       ctx.drawImage(this.thumbnailCanvas, thumbX, thumbY, thumbW, thumbH);
-    } else {
-      ctx.fillStyle = "#5c7084";
-      ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("PDF thumbnail", thumbX + 12, thumbY + 20);
     }
-
-    const badgeText = `${this.pageCount} pages`;
-    ctx.fillStyle = "rgba(20, 43, 63, 0.86)";
-    ctx.beginPath();
-    ctx.rect(thumbX + 8, thumbY + 8, Math.max(62, 74 * camera.zoom), Math.max(16, 20 * camera.zoom));
-    ctx.fill();
-
-    ctx.fillStyle = "#f2f7fb";
-    ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(badgeText, thumbX + 14, thumbY + 22 * camera.zoom);
   }
 }
 

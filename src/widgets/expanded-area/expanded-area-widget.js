@@ -1,3 +1,4 @@
+import { fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 
 export class ExpandedAreaWidget extends WidgetBase {
@@ -6,8 +7,8 @@ export class ExpandedAreaWidget extends WidgetBase {
       ...definition,
       size: definition.size ?? { width: 420, height: 260 },
       metadata: {
-        title: definition.metadata?.title ?? "Expanded Area",
-        note: definition.metadata?.note ?? "Freeform extension surface",
+        title: definition.metadata?.title ?? "Space",
+        note: definition.metadata?.note ?? "Notes",
       },
     });
   }
@@ -17,29 +18,19 @@ export class ExpandedAreaWidget extends WidgetBase {
     const width = this.size.width * camera.zoom;
     const height = this.size.height * camera.zoom;
 
-    ctx.fillStyle = "#ffffff";
-    ctx.strokeStyle = "#2a7ebc";
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.rect(screen.x, screen.y, width, height);
-    ctx.fill();
-    ctx.stroke();
+    fillStrokeRoundedRect(ctx, screen.x, screen.y, width, height, 18, "#ffffff", "#2a7ebc", 1.6);
 
     ctx.fillStyle = "#0f2536";
-    ctx.font = `${Math.max(13, 16 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(this.metadata.title, screen.x + 14, screen.y + 30);
-
-    ctx.fillStyle = "#4f6374";
-    ctx.font = `${Math.max(10, 13 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(this.metadata.note, screen.x + 14, screen.y + 54);
+    ctx.font = `${Math.max(12, 14 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.fillText(this.metadata.title, screen.x + 14, screen.y + 24);
 
     ctx.strokeStyle = "#d3dee8";
     ctx.lineWidth = 1;
     for (let row = 1; row <= 4; row += 1) {
       const y = screen.y + (height / 5) * row;
       ctx.beginPath();
-      ctx.moveTo(screen.x + 12, y);
-      ctx.lineTo(screen.x + width - 12, y);
+      ctx.moveTo(screen.x + 14, y);
+      ctx.lineTo(screen.x + width - 14, y);
       ctx.stroke();
     }
   }
@@ -47,18 +38,12 @@ export class ExpandedAreaWidget extends WidgetBase {
   renderSnapshot(ctx, camera) {
     const screen = camera.worldToScreen(this.position.x, this.position.y);
     const width = this.size.width * camera.zoom;
-    const height = Math.max(44, this.size.height * camera.zoom * 0.24);
+    const height = Math.max(40, this.size.height * camera.zoom * 0.22);
 
-    ctx.fillStyle = "#eef8ff";
-    ctx.strokeStyle = "#77a9d0";
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.rect(screen.x, screen.y, width, height);
-    ctx.fill();
-    ctx.stroke();
+    fillStrokeRoundedRect(ctx, screen.x, screen.y, width, height, 16, "#eef8ff", "#77a9d0", 1.2);
 
     ctx.fillStyle = "#1f4e74";
-    ctx.font = `${Math.max(11, 13 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(`${this.metadata.title} (collapsed)`, screen.x + 12, screen.y + 24);
+    ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.fillText(`${this.metadata.title} ^`, screen.x + 12, screen.y + 22);
   }
 }
