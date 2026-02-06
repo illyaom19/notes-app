@@ -12,6 +12,7 @@
         <h1>Notes App Foundations</h1>
         <div class="controls">
           <button id="instantiate-dummy" type="button">Instantiate Dummy Widget</button>
+          <button id="instantiate-expanded" type="button">Instantiate Expanded-Area Widget</button>
           <button id="enable-ink" type="button">Enable Ink</button>
           <button id="undo-ink" type="button" disabled>Undo</button>
           <button id="redo-ink" type="button" disabled>Redo</button>
@@ -32,6 +33,12 @@
       <section class="canvas-wrap">
         <canvas id="workspace-canvas" aria-label="Workspace Canvas"></canvas>
       </section>
+
+      <menu id="widget-context-menu" class="widget-menu" aria-label="Widget actions">
+        <button type="button" data-action="create-expanded">Create Expanded-Area Widget</button>
+        <button type="button" data-action="toggle-collapse">Toggle Collapse</button>
+        <button type="button" data-action="remove-widget">Remove Widget</button>
+      </menu>
     </main>
 
     <script type="module" src="./src/main.js"></script>

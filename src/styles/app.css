@@ -77,6 +77,7 @@ body {
 }
 
 .canvas-wrap {
+  position: relative;
   min-height: 0;
   padding: 0;
 }
@@ -88,4 +89,41 @@ body {
   touch-action: none;
   background:
     radial-gradient(circle at 20% 20%, #ffffff, #eef3f7 60%, #e4ebf1 100%);
+}
+
+.widget-menu {
+  position: fixed;
+  display: none;
+  margin: 0;
+  padding: 0.35rem;
+  border: 1px solid #b5c6d5;
+  border-radius: 0.7rem;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(15, 23, 32, 0.14);
+  z-index: 40;
+}
+
+.widget-menu[data-open="true"] {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.widget-menu button {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: #203447;
+  border-radius: 0.5rem;
+  padding: 0.38rem 0.5rem;
+  min-width: 210px;
+  cursor: pointer;
+}
+
+.widget-menu button:hover:not(:disabled) {
+  background: #eef6fc;
+}
+
+.widget-menu button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

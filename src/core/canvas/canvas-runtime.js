@@ -33,6 +33,36 @@ export class CanvasRuntime {
     this.widgets.push(widget);
   }
 
+  removeWidgetById(widgetId) {
+    const targetIndex = this.widgets.findIndex((widget) => widget.id === widgetId);
+    if (targetIndex < 0) {
+      return false;
+    }
+
+    const [removed] = this.widgets.splice(targetIndex, 1);
+    removed.unmount();
+    return true;
+  }
+
+  getWidgetById(widgetId) {
+    return this.widgets.find((widget) => widget.id === widgetId) ?? null;
+  }
+
+  listWidgets() {
+    return [...this.widgets];
+  }
+
+  pickWidgetAtScreenPoint(screenX, screenY) {
+    const world = this.camera.screenToWorld(screenX, screenY);
+    for (let index = this.widgets.length - 1; index >= 0; index -= 1) {
+      const widget = this.widgets[index];
+      if (widget.containsWorldPoint(world.x, world.y)) {
+        return widget;
+      }
+    }
+    return null;
+  }
+
   getWidgetCount() {
     return this.widgets.length;
   }
@@ -265,7 +295,11 @@ export class CanvasRuntime {
 
     for (const widget of this.widgets) {
       widget.update(dt);
-      widget.render(this.ctx, this.camera);
+      if (widget.collapsed && typeof widget.renderSnapshot === "function") {
+        widget.renderSnapshot(this.ctx, this.camera);
+      } else {
+        widget.render(this.ctx, this.camera);
+      }
     }
   }
 

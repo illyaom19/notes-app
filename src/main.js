@@ -1,8 +1,10 @@
 import { CanvasRuntime } from "./core/canvas/canvas-runtime.js";
 import { WidgetRegistry } from "./core/widgets/widget-registry.js";
 import { BackgroundWorkerClient } from "./core/workers/background-worker-client.js";
+import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 
 const instantiateButton = document.querySelector("#instantiate-dummy");
+const instantiateExpandedButton = document.querySelector("#instantiate-expanded");
 const enableInkButton = document.querySelector("#enable-ink");
 const undoInkButton = document.querySelector("#undo-ink");
 const redoInkButton = document.querySelector("#redo-ink");
@@ -14,6 +16,7 @@ const strokeCountOutput = document.querySelector("#stroke-count");
 const cameraOutput = document.querySelector("#camera-state");
 const workerStateOutput = document.querySelector("#worker-state");
 const canvas = document.querySelector("#workspace-canvas");
+const widgetContextMenu = document.querySelector("#widget-context-menu");
 
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error("Missing #workspace-canvas element.");
@@ -24,6 +27,7 @@ let inkFeature = null;
 
 const registry = new WidgetRegistry();
 registry.register("dummy", () => import("./widgets/dummy/index.js"));
+registry.register("expanded-area", () => import("./widgets/expanded-area/index.js"));
 registry.onModuleLoaded((type) => {
   loadedModules.add(type);
   loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
@@ -57,6 +61,19 @@ function updateInkUi(state) {
   inkStateOutput.textContent = "active";
 }
 
+function updateWidgetUi() {
+  widgetCountOutput.textContent = String(runtime.getWidgetCount());
+}
+
+async function createExpandedAreaWidget() {
+  const widget = await registry.instantiate("expanded-area", {
+    id: globalThis.crypto?.randomUUID?.() ?? `expanded-${Date.now()}`,
+    position: { x: -120 + runtime.getWidgetCount() * 35, y: -60 + runtime.getWidgetCount() * 28 },
+  });
+  runtime.addWidget(widget);
+  updateWidgetUi();
+}
+
 instantiateButton?.addEventListener("click", async () => {
   instantiateButton.disabled = true;
   instantiateButton.textContent = "Loading...";
@@ -67,13 +84,28 @@ instantiateButton?.addEventListener("click", async () => {
       position: { x: -150 + runtime.getWidgetCount() * 40, y: -90 + runtime.getWidgetCount() * 30 },
     });
     runtime.addWidget(widget);
-    widgetCountOutput.textContent = String(runtime.getWidgetCount());
+    updateWidgetUi();
   } catch (error) {
     console.error(error);
     window.alert(`Failed to instantiate widget: ${error.message}`);
   } finally {
     instantiateButton.disabled = false;
     instantiateButton.textContent = "Instantiate Dummy Widget";
+  }
+});
+
+instantiateExpandedButton?.addEventListener("click", async () => {
+  instantiateExpandedButton.disabled = true;
+  instantiateExpandedButton.textContent = "Loading...";
+
+  try {
+    await createExpandedAreaWidget();
+  } catch (error) {
+    console.error(error);
+    window.alert(`Failed to instantiate expanded widget: ${error.message}`);
+  } finally {
+    instantiateExpandedButton.disabled = false;
+    instantiateExpandedButton.textContent = "Instantiate Expanded-Area Widget";
   }
 });
 
@@ -93,6 +125,14 @@ startWorkerButton?.addEventListener("click", async () => {
     startWorkerButton.disabled = false;
     startWorkerButton.textContent = "Start Worker";
   }
+});
+
+createWidgetContextMenu({
+  canvas,
+  menuElement: widgetContextMenu,
+  runtime,
+  onCreateExpanded: () => createExpandedAreaWidget(),
+  onWidgetMutated: () => updateWidgetUi(),
 });
 
 enableInkButton?.addEventListener("click", async () => {

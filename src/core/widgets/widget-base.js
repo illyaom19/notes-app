@@ -33,12 +33,29 @@ export class WidgetBase {
     this.renderMode = mode;
   }
 
+  setCollapsed(nextCollapsed) {
+    this.collapsed = Boolean(nextCollapsed);
+    this.renderMode = this.collapsed ? RENDER_MODE.SNAPSHOT : RENDER_MODE.INTERACTIVE;
+  }
+
+  containsWorldPoint(worldX, worldY) {
+    const minX = this.position.x;
+    const minY = this.position.y;
+    const maxX = minX + this.size.width;
+    const maxY = minY + this.size.height;
+    return worldX >= minX && worldX <= maxX && worldY >= minY && worldY <= maxY;
+  }
+
   update(_deltaTimeMs) {
     // Optional override.
   }
 
   render(_ctx, _camera) {
     throw new Error("WidgetBase.render must be implemented by concrete widgets.");
+  }
+
+  renderSnapshot(ctx, camera) {
+    this.render(ctx, camera);
   }
 
   toSerializableState() {

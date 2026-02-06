@@ -29,5 +29,24 @@ export class DummyWidget extends WidgetBase {
     const modeLabel =
       this.renderMode === RENDER_MODE.SNAPSHOT ? "Snapshot" : "Interactive";
     ctx.fillText(`Mode: ${modeLabel}`, screen.x + 12, screen.y + 48);
+    ctx.fillText("Long-press for menu", screen.x + 12, screen.y + 70);
+  }
+
+  renderSnapshot(ctx, camera) {
+    const screen = camera.worldToScreen(this.position.x, this.position.y);
+    const width = this.size.width * camera.zoom;
+    const height = Math.max(42, this.size.height * camera.zoom * 0.28);
+
+    ctx.fillStyle = "#f2f7fc";
+    ctx.strokeStyle = "#86a7c4";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.rect(screen.x, screen.y, width, height);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#30485e";
+    ctx.font = `${Math.max(11, 13 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.fillText(`Dummy Snapshot (${this.id.slice(0, 8)})`, screen.x + 10, screen.y + 24);
   }
 }
