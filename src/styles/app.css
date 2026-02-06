@@ -22,7 +22,7 @@ body {
 
 .app-shell {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr;
   min-height: 100%;
 }
 
@@ -30,7 +30,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem;
+  gap: 0.8rem;
   padding: 0.85rem 1rem;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
@@ -40,6 +40,88 @@ body {
   margin: 0;
   font-size: 1.05rem;
   font-weight: 600;
+}
+
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.topbar-controls button,
+.context-pick select {
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+.context-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.context-pick span {
+  font-weight: 600;
+}
+
+.context-pick select {
+  min-width: 180px;
+  cursor: pointer;
+}
+
+.document-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: #f8fbfd;
+}
+
+.document-tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-height: 2rem;
+}
+
+.document-tab {
+  border: 1px solid #9eb7cb;
+  background: #ffffff;
+  color: #23435a;
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.document-tab[data-active="true"] {
+  background: #e7f2fa;
+  border-color: #0866a8;
+  color: #0f3f66;
+}
+
+.document-actions {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.document-actions button {
+  border: 1px solid #8db0c9;
+  background: #ffffff;
+  color: #1f4561;
+  border-radius: 999px;
+  padding: 0.32rem 0.72rem;
+  cursor: pointer;
+  font-size: 0.82rem;
 }
 
 .controls {
@@ -150,4 +232,24 @@ body {
 .widget-menu button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+@media (max-width: 980px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .topbar-controls {
+    width: 100%;
+  }
+
+  .context-pick select {
+    min-width: 150px;
+  }
+
+  .document-strip {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
