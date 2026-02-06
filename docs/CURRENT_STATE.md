@@ -52,10 +52,7 @@
   - `createWidgetContextMenu(...)` wired in `src/main.js`
   - `setCollapsed(...)` in `src/core/widgets/widget-base.js`
   - Snapshot render branch for collapsed widgets in `src/core/canvas/canvas-runtime.js`
-- Sprint 2 code commit:
-  - `12f9a80 Implement Sprint 2 widget system and expanded-area widget`
-- Pushed to remote:
-  - `main` updated on `origin` from `807900c` to `12f9a80`
+- Sprint 2 implementation and handoff docs have been committed and pushed to `origin/main`.
 
 ## Last Updated
 - 2026-02-06 (local environment time)
