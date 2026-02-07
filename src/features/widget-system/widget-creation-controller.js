@@ -45,6 +45,7 @@ export function createWidgetCreationController({
     clearHoldTimer();
     menuPointerId = null;
     pointerState = null;
+    activeTouchPointerIds.clear();
     pendingAnchor = null;
     pendingSourceWidgetId = null;
     activeCreateType = null;
@@ -371,6 +372,7 @@ export function createWidgetCreationController({
     if (event.pointerType !== "touch") {
       return;
     }
+    activeTouchPointerIds.delete(event.pointerId);
     cancelPendingHoldForPointer(event.pointerId);
   };
 

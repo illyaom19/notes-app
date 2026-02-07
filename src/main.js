@@ -560,6 +560,9 @@ const runtime = new CanvasRuntime({
       scheduleOnboardingRefresh(40);
     }
   },
+  onSelectionChange: () => {
+    renderSuggestionRail();
+  },
 });
 
 const workerClient = new BackgroundWorkerClient(
@@ -2760,12 +2763,12 @@ function renderSuggestionRail() {
     scopeId: scope.scopeId,
     sectionId: scope.sectionId,
     states: ["proposed", "restored"],
-  }).filter((entry) => entry.payload?.sourceWidgetId === focusedPdf.id);
+  }).filter((entry) => entry.kind === "reference-popup" && entry.payload?.sourceWidgetId === focusedPdf.id);
   const ghosted = suggestionStore.list({
     scopeId: scope.scopeId,
     sectionId: scope.sectionId,
     states: ["ghosted"],
-  }).filter((entry) => entry.payload?.sourceWidgetId === focusedPdf.id);
+  }).filter((entry) => entry.kind === "reference-popup" && entry.payload?.sourceWidgetId === focusedPdf.id);
 
   suggestionUiController.render({
     focusedPdfWidgetId: focusedPdf.id,
@@ -2846,7 +2849,7 @@ function scheduleSuggestionAnalysis({ immediate = false } = {}) {
 function persistActiveWorkspace() {
   const scopeId = workspaceScopeId();
   if (!contextWorkspaceStore || !contextStore || !scopeId || restoringContext) {
-    return;
+    return false;
   }
 
   pruneActiveDocuments();
@@ -2870,7 +2873,7 @@ function persistActiveWorkspace() {
   if (saved) {
     hasShownWorkspaceStorageWarning = false;
     contextStore.touchActiveContext();
-    return;
+    return true;
   }
 
   if (!hasShownWorkspaceStorageWarning) {
@@ -2879,6 +2882,7 @@ function persistActiveWorkspace() {
       title: "Storage",
     });
   }
+  return false;
 }
 
 function flushWorkspacePersist() {
@@ -2886,7 +2890,7 @@ function flushWorkspacePersist() {
     window.clearTimeout(persistTimer);
     persistTimer = null;
   }
-  persistActiveWorkspace();
+  return persistActiveWorkspace();
 }
 
 function scheduleWorkspacePersist() {
@@ -3664,8 +3668,18 @@ async function createPdfWidgetFromBytes({
     focusDocumentWidgets(documentEntry.id, { selectPrimary: true });
   }
 
+  const persistedImmediately = flushWorkspacePersist();
+  if (!persistedImmediately) {
+    runtime.removeWidgetById(widget.id);
+    if (lastPdfWidgetId === widget.id) {
+      lastPdfWidgetId = preferredPdfWidget()?.id ?? null;
+    }
+    pruneActiveDocuments();
+    updateWidgetUi();
+    throw new Error("Storage is full. PDF import was canceled because it could not be persisted.");
+  }
+
   updateWidgetUi();
-  flushWorkspacePersist();
   window.setTimeout(() => {
     void analyzeWhitespaceForPdfWidget(widget);
   }, 30);
@@ -3697,6 +3711,9 @@ async function createPdfWidgetFromFile(
       candidate.id = sourceDocumentId.trim();
     }
     sourceDocument = notebookDocumentLibraryStore.upsertDocument(activeContextId, candidate);
+    if (!sourceDocument) {
+      throw new Error("Storage is full. Unable to store this PDF in the notebook library.");
+    }
   }
 
   const widget = await createPdfWidgetFromBytes({
@@ -5244,6 +5261,7 @@ function wireWidgetInteractionManager() {
 
   widgetInteractionManager = createWidgetInteractionManager({
     runtime,
+    canvas,
     onWidgetMutated: () => updateWidgetUi(),
   });
 }

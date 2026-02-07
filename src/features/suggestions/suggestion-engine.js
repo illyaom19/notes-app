@@ -10,8 +10,6 @@ const KEYWORD_RULES = [
 const MAX_TOTAL_SUGGESTIONS = 16;
 const MAX_KEYWORD_SUGGESTIONS_PER_WIDGET = 4;
 const MAX_KEYWORD_PAGES_PER_WIDGET = 10;
-const MIN_ZONE_CONFIDENCE = 0.35;
-const MIN_ZONE_HEIGHT = 0.045;
 
 function safeText(value) {
   return typeof value === "string" ? value : "";
@@ -93,62 +91,6 @@ export function createSuggestionEngine() {
 
     pageTextCache.set(key, text);
     return text;
-  }
-
-  function collectWhitespaceSuggestions(widget) {
-    if (typeof widget.getWhitespaceZones !== "function" || typeof widget.getWhitespaceZoneWorldRect !== "function") {
-      return [];
-    }
-
-    const zones = widget.getWhitespaceZones();
-    if (!Array.isArray(zones) || zones.length < 1) {
-      return [];
-    }
-
-    const suggestions = [];
-    for (const zone of zones) {
-      if (!zone || zone.linkedWidgetId) {
-        continue;
-      }
-
-      const normalizedHeight = Number(zone.normalizedHeight);
-      if (!Number.isFinite(normalizedHeight) || normalizedHeight < MIN_ZONE_HEIGHT) {
-        continue;
-      }
-
-      const confidence = Number(zone.confidence);
-      if (Number.isFinite(confidence) && confidence < MIN_ZONE_CONFIDENCE) {
-        continue;
-      }
-
-      const rect = widget.getWhitespaceZoneWorldRect(zone.id);
-      if (!rect) {
-        continue;
-      }
-
-      suggestions.push({
-        id: suggestionId("suggestion"),
-        documentId:
-          typeof widget.metadata?.documentId === "string" && widget.metadata.documentId.trim()
-            ? widget.metadata.documentId
-            : null,
-        kind: "expanded-area",
-        label: `Expand whitespace (p${zone.pageNumber})`,
-        fingerprint: `zone:${widget.id}:${zone.id}`,
-        anchor: {
-          x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2,
-        },
-        payload: {
-          sourceWidgetId: widget.id,
-          whitespaceZoneId: zone.id,
-          pageNumber: zone.pageNumber,
-          confidence: Number.isFinite(confidence) ? confidence : null,
-        },
-      });
-    }
-
-    return suggestions;
   }
 
   async function collectKeywordSuggestions(widget) {
@@ -248,12 +190,6 @@ export function createSuggestionEngine() {
       for (const widget of widgets) {
         if (!widget) {
           continue;
-        }
-
-        const whitespaceSuggestions = collectWhitespaceSuggestions(widget);
-        collected.push(...whitespaceSuggestions);
-        if (collected.length >= MAX_TOTAL_SUGGESTIONS) {
-          break;
         }
 
         const keywordSuggestions = await collectKeywordSuggestions(widget);

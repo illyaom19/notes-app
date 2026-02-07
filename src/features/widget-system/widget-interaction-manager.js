@@ -4,6 +4,7 @@ const HEADER_HEIGHT_PX = 34;
 const CONTROL_SIZE_PX = 24;
 const RESIZE_HANDLE_PX = 24;
 const CONTROL_PADDING_PX = 6;
+const TAP_MOVE_THRESHOLD_PX = 8;
 
 function worldPoint(event, camera) {
   return camera.screenToWorld(event.offsetX, event.offsetY);
@@ -116,18 +117,70 @@ function isTypingTarget(target) {
   );
 }
 
-export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
+export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutated }) {
   const dragState = {
     pointerId: null,
     widgetId: null,
     mode: null,
     lastWorld: null,
   };
+  const tapState = {
+    pointerId: null,
+    widgetId: null,
+    startClientX: 0,
+    startClientY: 0,
+    moved: false,
+  };
+  const activeTouchPointerIds = new Set();
+
+  function clearDragState() {
+    dragState.pointerId = null;
+    dragState.widgetId = null;
+    dragState.mode = null;
+    dragState.lastWorld = null;
+  }
+
+  function clearTapState() {
+    tapState.pointerId = null;
+    tapState.widgetId = null;
+    tapState.startClientX = 0;
+    tapState.startClientY = 0;
+    tapState.moved = false;
+  }
+
+  function beginTapCandidate(event, widget) {
+    tapState.pointerId = event.pointerId;
+    tapState.widgetId = widget.id;
+    tapState.startClientX = event.clientX;
+    tapState.startClientY = event.clientY;
+    tapState.moved = false;
+  }
+
+  function maybeInvalidateTapCandidate(event) {
+    if (tapState.pointerId !== event.pointerId || !tapState.widgetId || tapState.moved) {
+      return;
+    }
+
+    const movedDistance = Math.hypot(
+      event.clientX - tapState.startClientX,
+      event.clientY - tapState.startClientY,
+    );
+    if (movedDistance >= TAP_MOVE_THRESHOLD_PX) {
+      tapState.moved = true;
+    }
+  }
 
   const manager = {
     onPointerDown(event, context) {
       if (event.pointerType === "pen") {
         return false;
+      }
+
+      if (event.pointerType === "touch") {
+        activeTouchPointerIds.add(event.pointerId);
+        if (activeTouchPointerIds.size > 1) {
+          clearTapState();
+        }
       }
 
       if (event.button !== 0) {
@@ -137,18 +190,16 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
       const camera = context.camera;
       const widget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
       if (!widget) {
+        clearTapState();
         runtime.setFocusedWidgetId(null);
         runtime.setSelectedWidgetId(null);
         return false;
       }
 
-      runtime.bringWidgetToFront(widget.id);
-      runtime.setFocusedWidgetId(widget.id);
-      runtime.setSelectedWidgetId(widget.id);
-
-      // Touch presses on widgets should not capture interaction controls so camera
-      // gesture handling can stay deterministic.
+      // Touch should keep camera pan/pinch control even over widgets; use tap-up
+      // selection only and avoid capturing widget drag/resize controls.
       if (event.pointerType === "touch") {
+        beginTapCandidate(event, widget);
         return false;
       }
 
@@ -157,12 +208,20 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
       const rects = controlRects(widget, camera);
 
       if (flags.collapsible && rectContains(rects.collapse, point.x, point.y)) {
+        clearTapState();
+        runtime.bringWidgetToFront(widget.id);
+        runtime.setFocusedWidgetId(widget.id);
+        runtime.setSelectedWidgetId(widget.id);
         widget.setCollapsed(!widget.collapsed);
         onWidgetMutated(widget);
         return true;
       }
 
       if (flags.resizable && rectContains(rects.resize, point.x, point.y)) {
+        clearTapState();
+        runtime.bringWidgetToFront(widget.id);
+        runtime.setFocusedWidgetId(widget.id);
+        runtime.setSelectedWidgetId(widget.id);
         dragState.pointerId = event.pointerId;
         dragState.widgetId = widget.id;
         dragState.mode = "resize";
@@ -171,6 +230,10 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
       }
 
       if (flags.movable && rectContains(rects.header, point.x, point.y)) {
+        clearTapState();
+        runtime.bringWidgetToFront(widget.id);
+        runtime.setFocusedWidgetId(widget.id);
+        runtime.setSelectedWidgetId(widget.id);
         dragState.pointerId = event.pointerId;
         dragState.widgetId = widget.id;
         dragState.mode = "move";
@@ -178,21 +241,20 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
         return true;
       }
 
-      // Body taps still select/focus the widget, but camera pan/pinch should continue to work.
+      beginTapCandidate(event, widget);
       return false;
     },
 
     onPointerMove(event, context) {
+      maybeInvalidateTapCandidate(event);
+
       if (dragState.pointerId !== event.pointerId || !dragState.widgetId || !dragState.mode) {
         return false;
       }
 
       const widget = runtime.getWidgetById(dragState.widgetId);
       if (!widget) {
-        dragState.pointerId = null;
-        dragState.widgetId = null;
-        dragState.mode = null;
-        dragState.lastWorld = null;
+        clearDragState();
         return false;
       }
 
@@ -212,23 +274,61 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
     },
 
     onPointerUp(event) {
-      if (dragState.pointerId !== event.pointerId) {
-        return false;
+      if (event.pointerType === "touch") {
+        activeTouchPointerIds.delete(event.pointerId);
       }
 
-      dragState.pointerId = null;
-      dragState.widgetId = null;
-      dragState.mode = null;
-      dragState.lastWorld = null;
-      return true;
+      if (dragState.pointerId === event.pointerId) {
+        clearDragState();
+        clearTapState();
+        return true;
+      }
+
+      if (tapState.pointerId === event.pointerId) {
+        const selected = tapState.widgetId ? runtime.getWidgetById(tapState.widgetId) : null;
+        const shouldSelect = selected && !tapState.moved;
+        clearTapState();
+        if (shouldSelect) {
+          runtime.bringWidgetToFront(selected.id);
+          runtime.setFocusedWidgetId(selected.id);
+          runtime.setSelectedWidgetId(selected.id);
+        }
+      }
+
+      return false;
     },
 
     onPointerCancel(event) {
-      return this.onPointerUp(event);
+      if (event.pointerType === "touch") {
+        activeTouchPointerIds.delete(event.pointerId);
+      }
+      if (dragState.pointerId === event.pointerId) {
+        clearDragState();
+      }
+      if (tapState.pointerId === event.pointerId) {
+        clearTapState();
+      }
+      return false;
     },
   };
 
   const detachInput = runtime.registerInputHandler(manager);
+  const handleRawPointerMove = (event) => {
+    maybeInvalidateTapCandidate(event);
+  };
+  const handleRawPointerEnd = (event) => {
+    if (event.pointerType === "touch") {
+      activeTouchPointerIds.delete(event.pointerId);
+    }
+    if (tapState.pointerId === event.pointerId && dragState.pointerId !== event.pointerId) {
+      clearTapState();
+    }
+  };
+  if (canvas instanceof HTMLCanvasElement) {
+    canvas.addEventListener("pointermove", handleRawPointerMove, { passive: true });
+    canvas.addEventListener("pointerup", handleRawPointerEnd, { passive: true });
+    canvas.addEventListener("pointercancel", handleRawPointerEnd, { passive: true });
+  }
 
   const overlay = {
     render(ctx, camera) {
@@ -341,6 +441,11 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
 
   return {
     dispose() {
+      if (canvas instanceof HTMLCanvasElement) {
+        canvas.removeEventListener("pointermove", handleRawPointerMove);
+        canvas.removeEventListener("pointerup", handleRawPointerEnd);
+        canvas.removeEventListener("pointercancel", handleRawPointerEnd);
+      }
       detachInput();
       detachOverlay();
       window.removeEventListener("keydown", handleKeyDown);

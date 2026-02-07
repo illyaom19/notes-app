@@ -1,13 +1,14 @@
 import { Camera2D } from "./camera.js";
 
 export class CanvasRuntime {
-  constructor({ canvas, onCameraChange, onViewModeChange }) {
+  constructor({ canvas, onCameraChange, onViewModeChange, onSelectionChange }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.camera = new Camera2D();
     this.widgets = [];
     this.onCameraChange = onCameraChange;
     this.onViewModeChange = onViewModeChange;
+    this.onSelectionChange = onSelectionChange;
     this._lastFrameAt = performance.now();
     this._dragging = false;
     this._lastPointer = { x: 0, y: 0 };
@@ -50,11 +51,16 @@ export class CanvasRuntime {
     const [removed] = this.widgets.splice(targetIndex, 1);
     removed.unmount();
 
+    const previousSelectedId = this._selectedWidgetId;
+    const previousFocusedId = this._focusedWidgetId;
     if (this._selectedWidgetId === widgetId) {
       this._selectedWidgetId = null;
     }
     if (this._focusedWidgetId === widgetId) {
       this._focusedWidgetId = null;
+    }
+    if (previousSelectedId !== this._selectedWidgetId || previousFocusedId !== this._focusedWidgetId) {
+      this._emitSelectionChange();
     }
     return true;
   }
@@ -133,11 +139,12 @@ export class CanvasRuntime {
   }
 
   setSelectedWidgetId(widgetId) {
-    if (!widgetId || !this.getWidgetById(widgetId)) {
-      this._selectedWidgetId = null;
+    const nextSelectedId = !widgetId || !this.getWidgetById(widgetId) ? null : widgetId;
+    if (nextSelectedId === this._selectedWidgetId) {
       return;
     }
-    this._selectedWidgetId = widgetId;
+    this._selectedWidgetId = nextSelectedId;
+    this._emitSelectionChange();
   }
 
   getSelectedWidgetId() {
@@ -145,11 +152,12 @@ export class CanvasRuntime {
   }
 
   setFocusedWidgetId(widgetId) {
-    if (!widgetId || !this.getWidgetById(widgetId)) {
-      this._focusedWidgetId = null;
+    const nextFocusedId = !widgetId || !this.getWidgetById(widgetId) ? null : widgetId;
+    if (nextFocusedId === this._focusedWidgetId) {
       return;
     }
-    this._focusedWidgetId = widgetId;
+    this._focusedWidgetId = nextFocusedId;
+    this._emitSelectionChange();
   }
 
   getFocusedWidgetId() {
@@ -184,7 +192,6 @@ export class CanvasRuntime {
 
     this.canvas.addEventListener("pointerdown", (event) => {
       if (event.pointerType === "touch") {
-        const isTouchOnWidget = Boolean(this.pickWidgetAtScreenPoint(event.offsetX, event.offsetY));
         const canDispatchToInteraction = this._touchControllerOwner !== "camera";
 
         if (canDispatchToInteraction && this._dispatchPointer("onPointerDown", event)) {
@@ -195,7 +202,7 @@ export class CanvasRuntime {
           return;
         }
 
-        if (this._touchControllerOwner === "interaction" || isTouchOnWidget) {
+        if (this._touchControllerOwner === "interaction") {
           event.preventDefault();
           this._touchIgnoredPointers.add(event.pointerId);
           this._reconcileTouchControllerOwner();
@@ -422,6 +429,17 @@ export class CanvasRuntime {
         zoom: this.camera.zoom,
       });
     }
+  }
+
+  _emitSelectionChange() {
+    if (typeof this.onSelectionChange !== "function") {
+      return;
+    }
+
+    this.onSelectionChange({
+      selectedWidgetId: this._selectedWidgetId,
+      focusedWidgetId: this._focusedWidgetId,
+    });
   }
 
   _dispatchPointer(handlerName, event) {

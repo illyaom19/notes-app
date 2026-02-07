@@ -1,4 +1,4 @@
-import { fillPill, fillStrokeRoundedRect, strokeRoundedRect } from "../../core/canvas/rounded.js";
+import { fillPill, fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 import { resolveWidgetLod, widgetTypeTitle } from "../../features/widget-system/widget-lod.js";
 import { loadPdfJs } from "./pdfjs-loader.js";
@@ -8,6 +8,9 @@ const HEADER_WORLD = 40;
 const PAGE_GAP_WORLD = 16;
 const MIN_WIDGET_HEIGHT = 320;
 const COLLAPSED_ZONE_WORLD = 14;
+const GUTTER_MIN_WORLD = 22;
+const GUTTER_MAX_WORLD = 44;
+const CONTENT_EDGE_PAD_WORLD = 6;
 
 function intersects(a, b) {
   return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
@@ -64,6 +67,11 @@ export class PdfDocumentWidget extends WidgetBase {
     this._pageLayout = new Map();
     this._pageSegments = new Map();
     this._layoutWidth = this.size.width;
+    this._layoutMetrics = {
+      gutterWidth: GUTTER_MIN_WORLD,
+      pageX: this.position.x + GUTTER_MIN_WORLD,
+      pageWidth: Math.max(120, this.size.width - GUTTER_MIN_WORLD - CONTENT_EDGE_PAD_WORLD),
+    };
   }
 
   async initialize() {
@@ -114,7 +122,8 @@ export class PdfDocumentWidget extends WidgetBase {
     }
 
     this.documentWorldHeight = currentY > 0 ? currentY - PAGE_GAP_WORLD : 0;
-    this._refreshPageBaseLayoutForWidth();
+    const metrics = this._resolveLayoutMetrics();
+    this._refreshPageBaseLayoutForWidth(metrics.pageWidth);
     const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + this.documentWorldHeight);
     if (!Number.isFinite(this.size.height) || this.size.height < requiredHeight) {
       this.size.height = requiredHeight;
@@ -122,17 +131,31 @@ export class PdfDocumentWidget extends WidgetBase {
     this._computeDisplayLayout();
   }
 
-  _refreshPageBaseLayoutForWidth() {
+  _resolveLayoutMetrics() {
+    const gutterWidth = Math.max(
+      GUTTER_MIN_WORLD,
+      Math.min(GUTTER_MAX_WORLD, this.size.width * 0.085),
+    );
+    const pageX = this.position.x + gutterWidth;
+    const pageWidth = Math.max(120, this.size.width - gutterWidth - CONTENT_EDGE_PAD_WORLD);
+    return {
+      gutterWidth,
+      pageX,
+      pageWidth,
+    };
+  }
+
+  _refreshPageBaseLayoutForWidth(pageWidth = this._resolveLayoutMetrics().pageWidth) {
     let currentY = 0;
     for (const pageEntry of this.pages) {
       const ratio = pageEntry.viewportAt1.height / Math.max(1, pageEntry.viewportAt1.width);
-      const worldHeight = Math.max(40, ratio * this.size.width);
+      const worldHeight = Math.max(40, ratio * pageWidth);
       pageEntry.baseWorldY = currentY;
       pageEntry.baseWorldHeight = worldHeight;
       currentY += worldHeight + PAGE_GAP_WORLD;
     }
     this.documentWorldHeight = currentY > 0 ? currentY - PAGE_GAP_WORLD : 0;
-    this._layoutWidth = this.size.width;
+    this._layoutWidth = pageWidth;
   }
 
   async _buildThumbnail() {
@@ -189,8 +212,11 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   _computeDisplayLayout() {
-    if (this.pages.length > 0 && Math.abs(this.size.width - this._layoutWidth) > 0.01) {
-      this._refreshPageBaseLayoutForWidth();
+    const metrics = this._resolveLayoutMetrics();
+    this._layoutMetrics = metrics;
+
+    if (this.pages.length > 0 && Math.abs(metrics.pageWidth - this._layoutWidth) > 0.01) {
+      this._refreshPageBaseLayoutForWidth(metrics.pageWidth);
     }
 
     this._zoneWorldRects.clear();
@@ -210,9 +236,9 @@ export class PdfDocumentWidget extends WidgetBase {
       const pageHeight = Math.max(40, pageEntry.baseWorldHeight - pageReduction);
 
       this._pageLayout.set(pageEntry.pageNumber, {
-        x: this.position.x,
+        x: metrics.pageX,
         y: pageY,
-        width: this.size.width,
+        width: metrics.pageWidth,
         height: pageHeight,
       });
 
@@ -239,9 +265,9 @@ export class PdfDocumentWidget extends WidgetBase {
         const zoneY = cursorWorldY;
         const zoneHeight = this._zoneDisplayHeight(zone, pageEntry.baseWorldHeight);
         this._zoneWorldRects.set(zone.id, {
-          x: this.position.x,
+          x: metrics.pageX,
           y: zoneY,
-          width: this.size.width,
+          width: metrics.pageWidth,
           height: zoneHeight,
           pageNumber: pageEntry.pageNumber,
         });
@@ -305,6 +331,10 @@ export class PdfDocumentWidget extends WidgetBase {
 
   _buildPageTileMappings(pageEntry, scaleBucket, visibleWorld) {
     const viewport = pageEntry.pageProxy.getViewport({ scale: scaleBucket });
+    const pageBounds = this._getPageBoundsByNumber(pageEntry.pageNumber);
+    if (!pageBounds) {
+      return [];
+    }
     const segments = this._getPageSegmentsByNumber(pageEntry.pageNumber);
     if (segments.length < 1) {
       return [];
@@ -322,9 +352,9 @@ export class PdfDocumentWidget extends WidgetBase {
         sourceRightPx: viewport.width,
         sourceTopPx: (segment.sourceStartY / pageEntry.baseWorldHeight) * viewport.height,
         sourceBottomPx: (segment.sourceEndY / pageEntry.baseWorldHeight) * viewport.height,
-        worldX: this.position.x,
+        worldX: pageBounds.x,
         worldY: segment.worldStartY,
-        worldWidth: this.size.width,
+        worldWidth: pageBounds.width,
         worldHeight: segment.worldEndY - segment.worldStartY,
       }));
   }
@@ -340,14 +370,22 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   _drawPageBadge(ctx, camera, pageBounds, pageNumber) {
+    const gutterWidth = Math.max(8, this._layoutMetrics.gutterWidth * camera.zoom);
     const screen = camera.worldToScreen(pageBounds.x, pageBounds.y);
-    const badgeW = Math.max(34, 44 * camera.zoom);
+    const badgeW = Math.max(20, Math.min(Math.max(34, 44 * camera.zoom), gutterWidth - 6));
     const badgeH = Math.max(16, 18 * camera.zoom);
+    const gutterLeft = screen.x - gutterWidth;
+    const badgeX = Math.max(gutterLeft + 3, screen.x - badgeW - 4);
+    const badgeY = screen.y + 8;
 
-    fillPill(ctx, screen.x + 8, screen.y + 8, badgeW, badgeH, "rgba(28, 48, 66, 0.78)");
+    fillPill(ctx, badgeX, badgeY, badgeW, badgeH, "rgba(28, 48, 66, 0.78)");
     ctx.fillStyle = "#f2f7fb";
     ctx.font = `${Math.max(1, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(`${pageNumber}`, screen.x + 20, screen.y + 21 * camera.zoom);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${pageNumber}`, badgeX + badgeW / 2, badgeY + badgeH / 2);
+    ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
   }
 
   _drawWhitespaceZone(ctx, camera, zone, { showGlyph = true } = {}) {
@@ -361,21 +399,39 @@ export class PdfDocumentWidget extends WidgetBase {
     const screenH = Math.max(8, rect.height * camera.zoom);
 
     if (zone.collapsed) {
-      fillPill(ctx, screen.x + 6, screen.y, Math.max(20, screenW - 12), screenH, "rgba(220, 232, 242, 0.95)");
-    } else {
-      strokeRoundedRect(ctx, screen.x + 4, screen.y + 2, Math.max(10, screenW - 8), Math.max(10, screenH - 4), 10, "rgba(52, 123, 175, 0.72)", 1.2);
+      const dividerX = screen.x + 6;
+      const dividerY = screen.y;
+      const dividerW = Math.max(20, screenW - 12);
+      const dividerH = screenH;
+      fillPill(ctx, dividerX, dividerY, dividerW, dividerH, "rgba(220, 232, 242, 0.95)");
+
+      const dividerWorld = camera.screenToWorld(dividerX, dividerY);
+      this._whitespaceHitRegions.push({
+        zoneId: zone.id,
+        x: dividerWorld.x,
+        y: dividerWorld.y,
+        width: dividerW / camera.zoom,
+        height: dividerH / camera.zoom,
+      });
+      return;
     }
 
-    const chipW = Math.max(34, 26 * camera.zoom);
-    const chipH = Math.max(34, 26 * camera.zoom);
-    const chipX = screen.x + 10;
-    const chipY = screen.y + 6;
+    const gutterWidth = this._layoutMetrics.gutterWidth * camera.zoom;
+    const gutterLeft = screen.x - gutterWidth;
+    const chipW = Math.max(28, 24 * camera.zoom);
+    const chipH = Math.max(28, 24 * camera.zoom);
+    const chipX = Math.max(gutterLeft + 3, screen.x - chipW - 6);
+    const chipY = screen.y + Math.max(2, Math.min(screenH - chipH - 2, (screenH - chipH) / 2));
 
-    fillPill(ctx, chipX, chipY, chipW, chipH, zone.collapsed ? "#2d5f84" : "#337eab");
+    fillPill(ctx, chipX, chipY, chipW, chipH, "#337eab");
     if (showGlyph) {
       ctx.fillStyle = "#f1f7fb";
       ctx.font = `${Math.max(1, 14 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText(zone.collapsed ? "+" : "-", chipX + 10 * camera.zoom, chipY + 21 * camera.zoom);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("-", chipX + chipW / 2, chipY + chipH / 2);
+      ctx.textAlign = "start";
+      ctx.textBaseline = "alphabetic";
     }
 
     const chipWorld = camera.screenToWorld(chipX, chipY);
@@ -597,12 +653,21 @@ export class PdfDocumentWidget extends WidgetBase {
     if (!isLabelOnly && firstVisiblePage !== null && lastVisiblePage !== null) {
       const visibleLabel =
         firstVisiblePage === lastVisiblePage
-          ? `Page ${firstVisiblePage}`
-          : `Pages ${firstVisiblePage}-${lastVisiblePage}`;
+          ? `${firstVisiblePage}`
+          : `${firstVisiblePage}-${lastVisiblePage}`;
 
-      ctx.fillStyle = "#5a6f83";
-      ctx.font = `${Math.max(1, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText(visibleLabel, frame.screen.x + frame.width - 72, frame.screen.y + 20 * camera.zoom);
+      const pillX = frame.screen.x + 3;
+      const pillY = frame.screen.y + frame.headerHeight + 8;
+      const pillW = Math.max(18, this._layoutMetrics.gutterWidth * camera.zoom - 4);
+      const pillH = Math.max(16, 18 * camera.zoom);
+      fillPill(ctx, pillX, pillY, pillW, pillH, "rgba(31, 56, 75, 0.78)");
+      ctx.fillStyle = "#f2f7fb";
+      ctx.font = `${Math.max(1, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(visibleLabel, pillX + pillW / 2, pillY + pillH / 2);
+      ctx.textAlign = "start";
+      ctx.textBaseline = "alphabetic";
     }
   }
 
