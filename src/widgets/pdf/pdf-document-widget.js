@@ -46,7 +46,6 @@ export class PdfDocumentWidget extends WidgetBase {
       },
     });
 
-    this._hasExplicitSize = Boolean(definition.size);
     this.fileName = definition.dataPayload?.fileName ?? "document.pdf";
     this.pdfBytes = definition.dataPayload?.bytes ?? null;
 
@@ -63,7 +62,7 @@ export class PdfDocumentWidget extends WidgetBase {
     this._zoneWorldRects = new Map();
     this._pageLayout = new Map();
     this._pageSegments = new Map();
-    this._baseWidgetHeight = this.size.height;
+    this._layoutWidth = this.size.width;
   }
 
   async initialize() {
@@ -114,11 +113,25 @@ export class PdfDocumentWidget extends WidgetBase {
     }
 
     this.documentWorldHeight = currentY > 0 ? currentY - PAGE_GAP_WORLD : 0;
-    const requiredHeight = HEADER_WORLD + this.documentWorldHeight;
-    const baseHeight = this._hasExplicitSize ? this.size.height : Math.max(MIN_WIDGET_HEIGHT, requiredHeight);
-    this.size.height = baseHeight;
-    this._baseWidgetHeight = baseHeight;
+    this._refreshPageBaseLayoutForWidth();
+    const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + this.documentWorldHeight);
+    if (!Number.isFinite(this.size.height) || this.size.height < requiredHeight) {
+      this.size.height = requiredHeight;
+    }
     this._computeDisplayLayout();
+  }
+
+  _refreshPageBaseLayoutForWidth() {
+    let currentY = 0;
+    for (const pageEntry of this.pages) {
+      const ratio = pageEntry.viewportAt1.height / Math.max(1, pageEntry.viewportAt1.width);
+      const worldHeight = Math.max(40, ratio * this.size.width);
+      pageEntry.baseWorldY = currentY;
+      pageEntry.baseWorldHeight = worldHeight;
+      currentY += worldHeight + PAGE_GAP_WORLD;
+    }
+    this.documentWorldHeight = currentY > 0 ? currentY - PAGE_GAP_WORLD : 0;
+    this._layoutWidth = this.size.width;
   }
 
   async _buildThumbnail() {
@@ -175,6 +188,10 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   _computeDisplayLayout() {
+    if (this.pages.length > 0 && Math.abs(this.size.width - this._layoutWidth) > 0.01) {
+      this._refreshPageBaseLayoutForWidth();
+    }
+
     this._zoneWorldRects.clear();
     this._pageLayout.clear();
     this._pageSegments.clear();
@@ -256,9 +273,9 @@ export class PdfDocumentWidget extends WidgetBase {
     }
 
     const documentDisplayHeight = Math.max(60, this.documentWorldHeight - cumulativeReduction);
-    this.size.height = Math.max(MIN_WIDGET_HEIGHT, this._baseWidgetHeight - cumulativeReduction);
-    if (!this._hasExplicitSize) {
-      this.size.height = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + documentDisplayHeight);
+    const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + documentDisplayHeight);
+    if (!Number.isFinite(this.size.height) || this.size.height < requiredHeight) {
+      this.size.height = requiredHeight;
     }
   }
 
@@ -504,6 +521,21 @@ export class PdfDocumentWidget extends WidgetBase {
         firstVisiblePage = pageEntry.pageNumber;
       }
       lastVisiblePage = pageEntry.pageNumber;
+
+      const pageScreen = camera.worldToScreen(pageBounds.x, pageBounds.y);
+      const pageScreenW = pageBounds.width * camera.zoom;
+      const pageScreenH = pageBounds.height * camera.zoom;
+      fillStrokeRoundedRect(
+        ctx,
+        pageScreen.x,
+        pageScreen.y,
+        pageScreenW,
+        pageScreenH,
+        10,
+        "#ffffff",
+        "#d6e4f0",
+        1,
+      );
 
       const scaleBucket = this._getScaleBucket(camera.zoom);
       const mappings = this._buildPageTileMappings(pageEntry, scaleBucket, visibleWorld);

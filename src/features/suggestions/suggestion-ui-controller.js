@@ -1,91 +1,77 @@
-function setText(element, value) {
-  if (element instanceof HTMLElement) {
-    element.textContent = value;
-  }
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function suggestionKindLabel(kind) {
-  if (kind === "expanded-area") {
-    return "Space";
+function compactLabel(suggestion) {
+  const base = typeof suggestion?.label === "string" ? suggestion.label.trim() : "";
+  if (!base) {
+    return "Suggestion";
   }
-  if (kind === "reference-popup") {
-    return "Reference";
-  }
-  return "Suggestion";
+  return base.length > 36 ? `${base.slice(0, 33)}...` : base;
 }
 
-function renderSuggestionRow(suggestion, { ghost = false } = {}) {
-  const row = document.createElement("article");
-  row.className = "suggestion-row";
-  row.dataset.suggestionId = suggestion.id;
-  row.dataset.kind = suggestion.kind;
+function railPositionForWidget(runtime, widget) {
+  const bounds =
+    typeof widget.getInteractionBounds === "function"
+      ? widget.getInteractionBounds()
+      : widget.size;
 
-  const title = document.createElement("p");
-  title.className = "suggestion-row-title";
-  title.textContent = suggestion.label;
+  const worldX = widget.position.x + Math.max(1, bounds.width) + 14;
+  const worldY = widget.position.y + 52;
+  const screen = runtime.camera.worldToScreen(worldX, worldY);
 
-  const meta = document.createElement("p");
-  meta.className = "suggestion-row-meta";
-  meta.textContent = suggestionKindLabel(suggestion.kind);
+  return {
+    left: clamp(screen.x, 8, window.innerWidth - 178),
+    top: clamp(screen.y, 8, window.innerHeight - 150),
+  };
+}
 
-  const actions = document.createElement("div");
-  actions.className = "suggestion-row-actions";
+function buildActiveChip(suggestion) {
+  const row = document.createElement("div");
+  row.className = "suggestion-chip suggestion-chip--active";
 
   const focusButton = document.createElement("button");
   focusButton.type = "button";
+  focusButton.className = "suggestion-chip-label";
   focusButton.dataset.action = "focus";
   focusButton.dataset.suggestionId = suggestion.id;
-  focusButton.textContent = "Locate";
-  actions.append(focusButton);
+  focusButton.textContent = compactLabel(suggestion);
 
-  if (!ghost) {
-    const acceptButton = document.createElement("button");
-    acceptButton.type = "button";
-    acceptButton.dataset.action = "accept";
-    acceptButton.dataset.suggestionId = suggestion.id;
-    acceptButton.textContent = "Accept";
+  const acceptButton = document.createElement("button");
+  acceptButton.type = "button";
+  acceptButton.className = "suggestion-chip-action suggestion-chip-action--accept";
+  acceptButton.dataset.action = "accept";
+  acceptButton.dataset.suggestionId = suggestion.id;
+  acceptButton.textContent = "✓";
 
-    const dismissButton = document.createElement("button");
-    dismissButton.type = "button";
-    dismissButton.dataset.action = "dismiss";
-    dismissButton.dataset.suggestionId = suggestion.id;
-    dismissButton.textContent = "Ghost";
+  const ghostButton = document.createElement("button");
+  ghostButton.type = "button";
+  ghostButton.className = "suggestion-chip-action suggestion-chip-action--ghost";
+  ghostButton.dataset.action = "ghost";
+  ghostButton.dataset.suggestionId = suggestion.id;
+  ghostButton.textContent = "✕";
 
-    actions.append(acceptButton, dismissButton);
-  } else {
-    const restoreButton = document.createElement("button");
-    restoreButton.type = "button";
-    restoreButton.dataset.action = "restore";
-    restoreButton.dataset.suggestionId = suggestion.id;
-    restoreButton.textContent = "Restore";
-
-    const discardButton = document.createElement("button");
-    discardButton.type = "button";
-    discardButton.dataset.action = "discard";
-    discardButton.dataset.suggestionId = suggestion.id;
-    discardButton.textContent = "Discard";
-
-    actions.append(restoreButton, discardButton);
-  }
-
-  row.append(title, meta, actions);
+  row.append(focusButton, acceptButton, ghostButton);
   return row;
+}
+
+function buildGhostChip(suggestion) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "suggestion-chip suggestion-chip--ghost";
+  button.dataset.action = "restore";
+  button.dataset.suggestionId = suggestion.id;
+  button.textContent = `○ ${compactLabel(suggestion)}`;
+  return button;
 }
 
 export function createSuggestionUiController({
   rootElement,
-  proposedListElement,
-  ghostListElement,
-  activeCountElement,
-  ghostCountElement,
-  emptyStateElement,
-  refreshButton,
+  runtime,
   onAccept,
-  onDismiss,
+  onGhost,
   onRestore,
-  onDiscard,
   onFocus,
-  onRefresh,
 }) {
   if (!(rootElement instanceof HTMLElement)) {
     return {
@@ -102,8 +88,8 @@ export function createSuggestionUiController({
       return;
     }
 
-    const button = target.closest("button[data-action][data-suggestion-id]");
-    if (!(button instanceof HTMLButtonElement)) {
+    const button = target.closest("[data-action][data-suggestion-id]");
+    if (!(button instanceof HTMLElement)) {
       return;
     }
 
@@ -123,8 +109,8 @@ export function createSuggestionUiController({
       return;
     }
 
-    if (action === "dismiss") {
-      await onDismiss?.(suggestion);
+    if (action === "ghost") {
+      await onGhost?.(suggestion);
       return;
     }
 
@@ -133,27 +119,18 @@ export function createSuggestionUiController({
       return;
     }
 
-    if (action === "discard") {
-      await onDiscard?.(suggestion);
-      return;
-    }
-
     if (action === "focus") {
       onFocus?.(suggestion);
     }
   };
 
-  const handleRefresh = () => {
-    onRefresh?.();
-  };
-
-  rootElement.addEventListener("click", (event) => {
+  const onRootClick = (event) => {
     void handleAction(event);
-  });
-  refreshButton?.addEventListener("click", handleRefresh);
+  };
+  rootElement.addEventListener("click", onRootClick);
 
   return {
-    render({ proposed = [], ghosted = [] } = {}) {
+    render({ focusedPdfWidgetId = null, proposed = [], ghosted = [] } = {}) {
       suggestionsById = new Map();
       for (const entry of [...proposed, ...ghosted]) {
         if (entry && typeof entry.id === "string") {
@@ -161,33 +138,41 @@ export function createSuggestionUiController({
         }
       }
 
-      if (proposedListElement instanceof HTMLElement) {
-        proposedListElement.innerHTML = "";
-        for (const entry of proposed) {
-          proposedListElement.append(renderSuggestionRow(entry));
-        }
-      }
-
-      if (ghostListElement instanceof HTMLElement) {
-        ghostListElement.innerHTML = "";
-        for (const entry of ghosted) {
-          ghostListElement.append(renderSuggestionRow(entry, { ghost: true }));
-        }
-      }
-
-      setText(activeCountElement, String(proposed.length));
-      setText(ghostCountElement, String(ghosted.length));
-
       const hasAny = proposed.length > 0 || ghosted.length > 0;
-      if (emptyStateElement instanceof HTMLElement) {
-        emptyStateElement.hidden = hasAny;
+      const focusedWidget =
+        typeof focusedPdfWidgetId === "string" && focusedPdfWidgetId.trim()
+          ? runtime.getWidgetById(focusedPdfWidgetId)
+          : null;
+
+      if (!hasAny || !focusedWidget || focusedWidget.type !== "pdf-document") {
+        rootElement.hidden = true;
+        rootElement.dataset.open = "false";
+        rootElement.innerHTML = "";
+        return;
       }
 
-      rootElement.dataset.hasSuggestions = hasAny ? "true" : "false";
+      const position = railPositionForWidget(runtime, focusedWidget);
+      rootElement.style.left = `${position.left}px`;
+      rootElement.style.top = `${position.top}px`;
+      rootElement.hidden = false;
+      rootElement.dataset.open = "true";
+      rootElement.innerHTML = "";
+
+      const stack = document.createElement("div");
+      stack.className = "suggestion-rail-stack";
+
+      for (const suggestion of proposed.slice(0, 6)) {
+        stack.append(buildActiveChip(suggestion));
+      }
+      for (const suggestion of ghosted.slice(0, 8)) {
+        stack.append(buildGhostChip(suggestion));
+      }
+
+      rootElement.append(stack);
     },
 
     dispose() {
-      refreshButton?.removeEventListener("click", handleRefresh);
+      rootElement.removeEventListener("click", onRootClick);
     },
   };
 }

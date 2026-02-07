@@ -64,12 +64,6 @@ const pdfFileInput = document.querySelector("#pdf-file-input");
 const researchPanel = document.querySelector("#research-panel");
 const searchPanel = document.querySelector("#search-panel");
 const suggestionRail = document.querySelector("#suggestion-rail");
-const suggestionProposedList = document.querySelector("#suggestion-proposed-list");
-const suggestionGhostList = document.querySelector("#suggestion-ghost-list");
-const suggestionActiveCountOutput = document.querySelector("#suggestion-active-count");
-const suggestionGhostCountOutput = document.querySelector("#suggestion-ghost-count");
-const suggestionEmptyState = document.querySelector("#suggestion-rail-empty");
-const suggestionRefreshButton = document.querySelector("#suggestion-refresh");
 const referenceManagerLauncher = document.querySelector("#reference-manager-launcher");
 const referenceManagerOverlay = document.querySelector("#reference-manager-overlay");
 const referenceManagerPanel = document.querySelector("#reference-manager-panel");
@@ -221,6 +215,7 @@ const runtime = new CanvasRuntime({
     if (cameraOutput) {
       cameraOutput.textContent = `x=${x.toFixed(1)}, y=${y.toFixed(1)}, zoom=${zoom.toFixed(2)}`;
     }
+    renderSuggestionRail();
   },
   onViewModeChange: ({ mode }) => {
     peekModeActive = mode === "peek";
@@ -2372,6 +2367,20 @@ function preferredPdfWidget() {
   return candidates[candidates.length - 1] ?? null;
 }
 
+function focusedPdfWidgetForSuggestions() {
+  const focusedId = runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId();
+  if (!focusedId) {
+    return null;
+  }
+
+  const widget = runtime.getWidgetById(focusedId);
+  if (!widget || widget.type !== "pdf-document") {
+    return null;
+  }
+
+  return widget;
+}
+
 function updateContextUi() {
   if (contextStore && contextUiController) {
     const contexts = contextStore.list();
@@ -2389,7 +2398,13 @@ function updateContextUi() {
 function renderSuggestionRail() {
   const scope = currentSuggestionScope();
   if (!scope || !suggestionUiController) {
-    suggestionUiController?.render({ proposed: [], ghosted: [] });
+    suggestionUiController?.render({ focusedPdfWidgetId: null, proposed: [], ghosted: [] });
+    return;
+  }
+
+  const focusedPdf = focusedPdfWidgetForSuggestions();
+  if (!focusedPdf) {
+    suggestionUiController.render({ focusedPdfWidgetId: null, proposed: [], ghosted: [] });
     return;
   }
 
@@ -2397,14 +2412,18 @@ function renderSuggestionRail() {
     scopeId: scope.scopeId,
     sectionId: scope.sectionId,
     states: ["proposed", "restored"],
-  });
+  }).filter((entry) => entry.payload?.sourceWidgetId === focusedPdf.id);
   const ghosted = suggestionStore.list({
     scopeId: scope.scopeId,
     sectionId: scope.sectionId,
     states: ["ghosted"],
-  });
+  }).filter((entry) => entry.payload?.sourceWidgetId === focusedPdf.id);
 
-  suggestionUiController.render({ proposed, ghosted });
+  suggestionUiController.render({
+    focusedPdfWidgetId: focusedPdf.id,
+    proposed,
+    ghosted,
+  });
 }
 
 function updateReferenceManagerUi() {
@@ -3169,6 +3188,7 @@ async function createExpandedAreaWidget(definition = {}, intent = null) {
 
   runtime.addWidget(widget);
   updateWidgetUi();
+  flushWorkspacePersist();
   return widget;
 }
 
@@ -3275,6 +3295,7 @@ async function createPdfWidgetFromBytes({
   }
 
   updateWidgetUi();
+  flushWorkspacePersist();
   window.setTimeout(() => {
     void analyzeWhitespaceForPdfWidget(widget);
   }, 30);
@@ -3386,6 +3407,7 @@ async function createReferencePopupWidget({ definition = {}, intent = null } = {
   }
 
   updateWidgetUi();
+  flushWorkspacePersist();
   return widget;
 }
 
@@ -4689,6 +4711,14 @@ function wireBaseEventHandlers() {
   window.addEventListener("beforeunload", () => {
     flushWorkspacePersist();
   });
+  window.addEventListener("pagehide", () => {
+    flushWorkspacePersist();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      flushWorkspacePersist();
+    }
+  });
 }
 
 function wireContextMenu() {
@@ -4713,29 +4743,18 @@ function wireSuggestionUi() {
 
   suggestionUiController = createSuggestionUiController({
     rootElement: suggestionRail,
-    proposedListElement: suggestionProposedList,
-    ghostListElement: suggestionGhostList,
-    activeCountElement: suggestionActiveCountOutput,
-    ghostCountElement: suggestionGhostCountOutput,
-    emptyStateElement: suggestionEmptyState,
-    refreshButton: suggestionRefreshButton,
+    runtime,
     onAccept: async (suggestion) => {
       await acceptSuggestion(suggestion);
     },
-    onDismiss: (suggestion) => {
+    onGhost: (suggestion) => {
       transitionSuggestionState(suggestion, "ghosted");
     },
     onRestore: (suggestion) => {
       transitionSuggestionState(suggestion, "restored");
     },
-    onDiscard: (suggestion) => {
-      transitionSuggestionState(suggestion, "discarded");
-    },
     onFocus: (suggestion) => {
       focusSuggestion(suggestion);
-    },
-    onRefresh: () => {
-      scheduleSuggestionAnalysis({ immediate: true });
     },
   });
 

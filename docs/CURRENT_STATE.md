@@ -139,11 +139,15 @@
   - Touch-origin `contextmenu` is globally suppressed for non-editable targets to prevent native long-press action sheets.
   - UI text selection/callout is disabled by default, with explicit allow-list for text entry controls (`input`, `textarea`, `select`, contenteditable).
   - `selectstart` is prevented globally for non-editable targets to avoid accidental UI text selection while gesturing.
+- Camera navigation behavior now follows:
+  - Touch/mouse drags that start on widget body content (including PDFs) keep camera pan/pinch behavior active.
+  - Widget movement remains header-drag driven; resize/collapse controls remain explicit.
 - Radial creation intent recognition now follows:
   - Touch radial menu opens only from a long stationary single-touch press.
   - Multi-touch immediately cancels hold-to-open, preventing pinch/pan false positives.
   - Raw touch pointer movement now cancels pending hold-open even when runtime is handling camera pan/pinch, preventing false positives during navigation.
   - Desktop right-click opens radial creation on empty canvas and opens widget context actions when clicking an existing widget.
+  - Radial creation now has release-to-select fallback to nearest option, avoiding secondary-tap requirements.
 - Search UX now follows:
   - Search results are grouped by current section and other sections in the active notebook.
   - Search panel supports non-selectable group headers.
@@ -154,6 +158,16 @@
   - Onboarding hint catalog is reduced to three task hints (PDF import, radial create, search/peek).
 - Popup clutter handling now follows:
   - Reference popup overflow (>3) is auto-minimized and dock-stacked along the viewport edge.
+- PDF rendering/persistence now follows:
+  - PDF widget bounds now expand to full document layout height so multi-page documents remain visible when page 1 is off-screen.
+  - PDF page layout reflows when width changes, preventing stale page placement during resize/zoom workflows.
+  - Workspace persistence now flushes on `beforeunload`, `pagehide`, and `visibilitychange(hidden)` for better refresh/background reliability.
+  - Widget creation paths now flush workspace persistence immediately after successful creation.
+- Suggestions UX now follows:
+  - The previous full-width suggestion panel is replaced by a compact floating rail.
+  - Suggestions rail is shown only for the currently focused PDF and stays positioned beside that PDF.
+  - Active suggestions expose minimal `✓` (accept) and `✕` (ghost) controls.
+  - Ghost suggestions render as translucent chips and restore to active state on tap.
 - Research flow policy (current):
   - Research panel code remains present for compatibility, but active UX emphasis has shifted to notebook/section/radial/search flows and research remains deferred for future re-introduction.
 
@@ -164,6 +178,8 @@
 4. Decide whether to fully remove hidden/deferred research panel wiring or retain compatibility mode.
 
 ## Verification Status
+- `for f in /home/illya/io_dev/notes-app/src/main.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-interaction-manager.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-creation-controller.js /home/illya/io_dev/notes-app/src/widgets/pdf/pdf-document-widget.js /home/illya/io_dev/notes-app/src/features/suggestions/suggestion-ui-controller.js /home/illya/io_dev/notes-app/tests/storage/context-workspace-store-assets.test.mjs; do node --check "$f" || exit 1; done` passed.
+- `node --test /home/illya/io_dev/notes-app/tests` passed (including new PDF persistence round-trip coverage in `tests/storage/context-workspace-store-assets.test.mjs`).
 - `node --check /home/illya/io_dev/notes-app/src/main.js /home/illya/io_dev/notes-app/src/features/widget-system/long-press-menu.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-creation-controller.js /home/illya/io_dev/notes-app/src/features/contexts/context-workspace-store.js` passed.
 - `node --test /home/illya/io_dev/notes-app/tests` passed (including updated `tests/storage/context-workspace-store-assets.test.mjs`).
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.

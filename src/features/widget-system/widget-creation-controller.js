@@ -69,6 +69,31 @@ export function createWidgetCreationController({
     return button instanceof HTMLButtonElement ? button : null;
   }
 
+  function nearestButtonAtClientPoint(clientX, clientY, maxDistancePx = 56) {
+    let nearest = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const button of menuElement.querySelectorAll("button[data-create-type]")) {
+      if (!(button instanceof HTMLButtonElement)) {
+        continue;
+      }
+
+      const rect = button.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.hypot(clientX - centerX, clientY - centerY);
+      if (distance < nearestDistance) {
+        nearest = button;
+        nearestDistance = distance;
+      }
+    }
+
+    if (nearestDistance > maxDistancePx) {
+      return null;
+    }
+    return nearest;
+  }
+
   function setActiveButton(button) {
     const nextType = button?.dataset.createType ?? null;
     activeCreateType = nextType;
@@ -233,8 +258,10 @@ export function createWidgetCreationController({
       clearHoldTimer();
 
       if (menuElement.dataset.open === "true") {
-        const button = buttonAtClientPoint(event.clientX, event.clientY);
-        const type = button?.dataset.createType ?? activeCreateType;
+        const directButton = buttonAtClientPoint(event.clientX, event.clientY);
+        const nearestButton =
+          !directButton && !activeCreateType ? nearestButtonAtClientPoint(event.clientX, event.clientY) : null;
+        const type = directButton?.dataset.createType ?? activeCreateType ?? nearestButton?.dataset.createType;
 
         if (type && pendingAnchor) {
           onCreateIntent?.({

@@ -51,6 +51,25 @@ function popupWidget({ id, imageDataUrl }) {
   };
 }
 
+function pdfWidget({ id, bytesBase64 }) {
+  return {
+    id,
+    type: "pdf-document",
+    position: { x: 12, y: 28 },
+    size: { width: 480, height: 680 },
+    collapsed: false,
+    metadata: { title: "Document" },
+    dataPayload: {
+      fileName: "document.pdf",
+      pdfAssetId: null,
+      bytesBase64,
+    },
+    runtimeState: {
+      whitespaceZones: [],
+    },
+  };
+}
+
 test("workspace store keeps widget assets externalized and cleans them on deletion", async () => {
   const storage = createMemoryStorage();
   const restoreEnv = installBrowserEnv(storage);
@@ -123,6 +142,46 @@ test("workspace load repairs stale widget asset ids using inline fallback payloa
 
     const definition = store.toWidgetDefinition(repairedWidget);
     assert.equal(definition.dataPayload.imageDataUrl, "data:image/png;base64,DDDD");
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("workspace store persists and hydrates pdf bytes across reloads", () => {
+  const storage = createMemoryStorage();
+  const restoreEnv = installBrowserEnv(storage);
+
+  try {
+    const store = createContextWorkspaceStore({ storage });
+    const contextId = "ctx-pdf-roundtrip";
+    const samplePdfBytesBase64 = "JVBERi0xLjQK";
+
+    store.saveWorkspace(
+      emptyWorkspace(contextId, [
+        pdfWidget({
+          id: "pdf-1",
+          bytesBase64: samplePdfBytesBase64,
+        }),
+      ]),
+    );
+
+    const firstLoad = store.loadWorkspace(contextId);
+    assert.equal(firstLoad.widgets.length, 1);
+    assert.equal(firstLoad.widgets[0].type, "pdf-document");
+
+    const hydratedA = store.toWidgetDefinition(firstLoad.widgets[0]);
+    assert.equal(hydratedA.type, "pdf-document");
+    assert.ok(hydratedA.dataPayload.bytes instanceof Uint8Array);
+    assert.ok(hydratedA.dataPayload.bytes.length > 0);
+
+    const reloadedStore = createContextWorkspaceStore({ storage });
+    const secondLoad = reloadedStore.loadWorkspace(contextId);
+    assert.equal(secondLoad.widgets.length, 1);
+    assert.equal(secondLoad.widgets[0].type, "pdf-document");
+
+    const hydratedB = reloadedStore.toWidgetDefinition(secondLoad.widgets[0]);
+    assert.ok(hydratedB.dataPayload.bytes instanceof Uint8Array);
+    assert.ok(hydratedB.dataPayload.bytes.length > 0);
   } finally {
     restoreEnv();
   }

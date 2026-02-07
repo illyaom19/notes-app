@@ -172,7 +172,8 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
         return true;
       }
 
-      return true;
+      // Body taps still select/focus the widget, but camera pan/pinch should continue to work.
+      return false;
     },
 
     onPointerMove(event, context) {
