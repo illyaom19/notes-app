@@ -1,16 +1,18 @@
+const LONG_PRESS_MS = 520;
+const MOVE_THRESHOLD_PX = 10;
+
 export function createSectionManagementUi({
   tabsElement,
-  switchElement,
   activeSectionOutput,
   newSectionButton,
-  renameSectionButton,
-  deleteSectionButton,
   onSwitchSection,
   onCreateSection,
-  onRenameSection,
-  onDeleteSection,
+  onOpenSectionActions,
 }) {
   const listeners = [];
+  let holdTimer = null;
+  let holdState = null;
+  let suppressedSectionId = null;
 
   function bind(target, type, handler) {
     if (!target) {
@@ -21,28 +23,116 @@ export function createSectionManagementUi({
     listeners.push(() => target.removeEventListener(type, handler));
   }
 
-  bind(switchElement, "change", (event) => {
-    if (!(event.target instanceof HTMLSelectElement)) {
-      return;
-    }
-
-    if (!event.target.value) {
-      return;
-    }
-
-    onSwitchSection?.(event.target.value);
-  });
-
   bind(newSectionButton, "click", () => {
     onCreateSection?.();
   });
 
-  bind(renameSectionButton, "click", () => {
-    onRenameSection?.();
+  function clearHoldState() {
+    if (holdTimer) {
+      window.clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+    holdState = null;
+  }
+
+  function resolveSectionButton(target) {
+    if (!(target instanceof HTMLElement)) {
+      return null;
+    }
+    const button = target.closest("button[data-section-id]");
+    return button instanceof HTMLButtonElement ? button : null;
+  }
+
+  bind(tabsElement, "pointerdown", (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    if (event.pointerType !== "touch" || event.button !== 0) {
+      return;
+    }
+
+    const button = resolveSectionButton(event.target);
+    if (!button) {
+      return;
+    }
+
+    holdState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      sectionId: button.dataset.sectionId ?? null,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+
+    holdTimer = window.setTimeout(() => {
+      holdTimer = null;
+      if (!holdState || !holdState.sectionId) {
+        return;
+      }
+      suppressedSectionId = holdState.sectionId;
+      onOpenSectionActions?.(holdState.sectionId, {
+        clientX: holdState.clientX,
+        clientY: holdState.clientY,
+      });
+      clearHoldState();
+    }, LONG_PRESS_MS);
   });
 
-  bind(deleteSectionButton, "click", () => {
-    onDeleteSection?.();
+  bind(tabsElement, "pointermove", (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    if (!holdState || holdState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    holdState.clientX = event.clientX;
+    holdState.clientY = event.clientY;
+
+    const moved = Math.hypot(event.clientX - holdState.startX, event.clientY - holdState.startY);
+    if (moved >= MOVE_THRESHOLD_PX) {
+      clearHoldState();
+    }
+  });
+
+  bind(window, "pointerup", (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    if (!holdState || holdState.pointerId !== event.pointerId) {
+      return;
+    }
+    clearHoldState();
+  });
+
+  bind(window, "pointercancel", (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    if (!holdState || holdState.pointerId !== event.pointerId) {
+      return;
+    }
+    clearHoldState();
+  });
+
+  bind(tabsElement, "contextmenu", (event) => {
+    const button = resolveSectionButton(event.target);
+    if (!button) {
+      return;
+    }
+
+    const sectionId = button.dataset.sectionId;
+    if (!sectionId) {
+      return;
+    }
+
+    event.preventDefault();
+    suppressedSectionId = sectionId;
+    onOpenSectionActions?.(sectionId, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
   });
 
   bind(tabsElement, "click", (event) => {
@@ -58,6 +148,11 @@ export function createSectionManagementUi({
 
     const sectionId = button.dataset.sectionId;
     if (!sectionId) {
+      return;
+    }
+
+    if (suppressedSectionId && suppressedSectionId === sectionId) {
+      suppressedSectionId = null;
       return;
     }
 
@@ -81,27 +176,6 @@ export function createSectionManagementUi({
         }
       }
 
-      if (switchElement instanceof HTMLSelectElement) {
-        switchElement.innerHTML = "";
-
-        if (safeSections.length < 1) {
-          const placeholder = document.createElement("option");
-          placeholder.value = "";
-          placeholder.textContent = "No sections";
-          switchElement.append(placeholder);
-        } else {
-          for (const section of safeSections) {
-            const option = document.createElement("option");
-            option.value = section.id;
-            option.textContent = section.name;
-            option.selected = section.id === activeSectionId;
-            switchElement.append(option);
-          }
-        }
-
-        switchElement.disabled = safeSections.length < 1;
-      }
-
       if (activeSectionOutput instanceof HTMLElement) {
         const active = safeSections.find((entry) => entry.id === activeSectionId);
         activeSectionOutput.textContent = active ? active.name : "none";
@@ -110,9 +184,9 @@ export function createSectionManagementUi({
 
     setControlsDisabled(nextDisabled) {
       const disabled = Boolean(nextDisabled);
-      const controls = [switchElement, newSectionButton, renameSectionButton, deleteSectionButton];
+      const controls = [newSectionButton];
       for (const control of controls) {
-        if (control instanceof HTMLSelectElement || control instanceof HTMLButtonElement) {
+        if (control instanceof HTMLButtonElement) {
           control.disabled = disabled;
         }
       }

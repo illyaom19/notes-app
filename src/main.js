@@ -33,7 +33,6 @@ const controlsPanel = document.querySelector("#controls-panel");
 const statusPanel = document.querySelector(".status-panel");
 const toggleResearchPanelButton = document.querySelector("#toggle-research-panel");
 const toggleSearchPanelButton = document.querySelector("#toggle-search-panel");
-const holdPeekModeButton = document.querySelector("#hold-peek-mode");
 const enableInkButton = document.querySelector("#enable-ink");
 const toggleInkToolButton = document.querySelector("#toggle-ink-tool");
 const undoInkButton = document.querySelector("#undo-ink");
@@ -78,10 +77,7 @@ const referencePreviewLayer = document.querySelector("#reference-preview-layer")
 const documentTabs = document.querySelector("#document-tabs");
 const documentSwitcher = document.querySelector("#document-switcher");
 const sectionTabs = document.querySelector("#section-tabs");
-const sectionSwitcher = document.querySelector("#section-switcher");
 const newSectionButton = document.querySelector("#new-section");
-const renameSectionButton = document.querySelector("#rename-section");
-const deleteSectionButton = document.querySelector("#delete-section");
 const documentSettingsHint = document.querySelector("#document-settings-hint");
 const referenceBindingSelect = document.querySelector("#document-reference-bindings");
 const formulaBindingSelect = document.querySelector("#document-formula-bindings");
@@ -102,13 +98,9 @@ const productionHiddenControls = Array.from(document.querySelectorAll("[data-pro
 const uiModeStateOutput = document.querySelector("#ui-mode-state");
 
 const contextSelect = document.querySelector("#context-select");
+const contextPickerPill = document.querySelector("#context-picker-pill");
 const newContextButton = document.querySelector("#new-context");
-const renameContextButton = document.querySelector("#rename-context");
-const deleteContextButton = document.querySelector("#delete-context");
 const importContextWidgetButton = document.querySelector("#import-context-widget");
-const documentsPanel = document.querySelector(".documents-panel");
-const documentSettingsPanel = document.querySelector(".document-settings");
-const toggleDocumentSettingsButton = document.querySelector("#toggle-document-settings");
 const onboardingHintRoot = document.querySelector("#onboarding-hint");
 const onboardingHintTitle = document.querySelector("#onboarding-hint-title");
 const onboardingHintBody = document.querySelector("#onboarding-hint-body");
@@ -135,7 +127,6 @@ let widgetInteractionManager = null;
 let widgetCreationController = null;
 let detachDocumentFocusSync = null;
 let toolsPanelOpen = false;
-let documentSettingsOpen = true;
 let pendingPdfImportIntent = null;
 let uiModeState = { mode: "production" };
 let debugModeEnabled = false;
@@ -161,7 +152,6 @@ let inkStateSnapshot = {
 };
 let peekModeActive = false;
 let peekModeHoldKeyboard = false;
-let peekModeHoldPointer = false;
 
 let contextStore = null;
 let contextWorkspaceStore = null;
@@ -351,18 +341,7 @@ function syncDebugControls() {
 }
 
 function syncDocumentSettingsUi() {
-  if (documentsPanel instanceof HTMLElement) {
-    const showDocuments = !isProductionUi() || documentSettingsOpen || debugModeEnabled;
-    documentsPanel.hidden = !showDocuments;
-  }
-
-  if (documentSettingsPanel instanceof HTMLElement) {
-    documentSettingsPanel.hidden = !documentSettingsOpen;
-  }
-
-  if (toggleDocumentSettingsButton instanceof HTMLButtonElement) {
-    toggleDocumentSettingsButton.textContent = documentSettingsOpen ? "Hide Doc Panel" : "Doc Panel";
-  }
+  // Doc panel has been removed from the visible app shell.
 }
 
 function syncUiModeControls() {
@@ -390,11 +369,6 @@ function syncUiModeControls() {
     uiModeStateOutput.textContent = productionMode ? "production" : "debug";
   }
 
-  if (productionMode && !debugModeEnabled && !documentSettingsOpen) {
-    documentsPanel?.classList.add("documents-compact");
-  } else {
-    documentsPanel?.classList.remove("documents-compact");
-  }
 }
 
 function setUiMode(nextMode, { persist = true } = {}) {
@@ -406,14 +380,6 @@ function setUiMode(nextMode, { persist = true } = {}) {
   }
 
   debugModeEnabled = uiModeState.mode === "debug";
-  if (debugModeEnabled) {
-    documentSettingsOpen = true;
-  } else if (toggleDocumentSettingsButton instanceof HTMLButtonElement) {
-    documentSettingsOpen = false;
-    window.localStorage.setItem("notes-app.document-settings.open", "0");
-  } else {
-    documentSettingsOpen = false;
-  }
 
   syncDebugControls();
   syncUiModeControls();
@@ -643,14 +609,11 @@ function setPeekMode(nextEnabled, source = "manual") {
   if (peekStateOutput) {
     peekStateOutput.textContent = peekModeActive ? `on (LOD/${source})` : "off";
   }
-  if (holdPeekModeButton instanceof HTMLButtonElement) {
-    holdPeekModeButton.textContent = peekModeActive ? "Release Peek" : "Hold Peek";
-  }
   return peekModeActive;
 }
 
 function updatePeekModeFromHolds(source) {
-  const shouldPeek = peekModeHoldKeyboard || peekModeHoldPointer;
+  const shouldPeek = peekModeHoldKeyboard;
   setPeekMode(shouldPeek, source);
 }
 
@@ -1085,7 +1048,7 @@ function updateInkUi(state) {
   }
 
   inkStateOutput.textContent = inkFeature ? (enabled ? "active" : "paused") : "idle";
-  if ((peekModeHoldKeyboard || peekModeHoldPointer) && !peekModeActive) {
+  if (peekModeHoldKeyboard && !peekModeActive) {
     updatePeekModeFromHolds("hold");
   }
 }
@@ -1130,7 +1093,17 @@ function updateSnipUi({ armed, dragging }) {
 function syncToolsUi() {
   if (controlsPanel instanceof HTMLElement) {
     controlsPanel.hidden = !toolsPanelOpen;
-    controlsPanel.setAttribute("aria-label", isProductionUi() ? "Menu" : "Prototype Controls");
+    controlsPanel.dataset.open = toolsPanelOpen ? "true" : "false";
+    controlsPanel.setAttribute("aria-label", "Menu");
+    if (toolsPanelOpen && toggleToolsButton instanceof HTMLButtonElement) {
+      const trigger = toggleToolsButton.getBoundingClientRect();
+      const panelWidth = Math.min(430, window.innerWidth - 12);
+      const left = Math.max(8, Math.min(window.innerWidth - panelWidth - 8, trigger.right - panelWidth));
+      const top = Math.max(8, trigger.bottom + 8);
+      controlsPanel.style.left = `${left}px`;
+      controlsPanel.style.top = `${top}px`;
+      controlsPanel.style.right = "auto";
+    }
   }
 
   if (toggleToolsButton instanceof HTMLButtonElement) {
@@ -4298,10 +4271,44 @@ function wireBaseEventHandlers() {
     { capture: true },
   );
 
+  const closeToolsMenu = () => {
+    if (!toolsPanelOpen) {
+      return;
+    }
+    toolsPanelOpen = false;
+    window.localStorage.setItem("notes-app.tools-panel.open", "0");
+    syncToolsUi();
+  };
+
   toggleToolsButton?.addEventListener("click", () => {
     toolsPanelOpen = !toolsPanelOpen;
     window.localStorage.setItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
     syncToolsUi();
+  });
+
+  window.addEventListener("pointerdown", (event) => {
+    if (!toolsPanelOpen) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Node)) {
+      return;
+    }
+
+    if (
+      (controlsPanel instanceof HTMLElement && controlsPanel.contains(target)) ||
+      (toggleToolsButton instanceof HTMLElement && toggleToolsButton.contains(target))
+    ) {
+      return;
+    }
+
+    closeToolsMenu();
+  });
+  window.addEventListener("resize", () => {
+    if (toolsPanelOpen) {
+      syncToolsUi();
+    }
   });
 
   toggleUiModeButton?.addEventListener("click", () => {
@@ -4310,50 +4317,12 @@ function wireBaseEventHandlers() {
     scheduleOnboardingRefresh(0);
   });
 
-  toggleDocumentSettingsButton?.addEventListener("click", () => {
-    documentSettingsOpen = !documentSettingsOpen;
-    window.localStorage.setItem("notes-app.document-settings.open", documentSettingsOpen ? "1" : "0");
-    syncDocumentSettingsUi();
-  });
-
   toggleOnboardingHintsButton?.addEventListener("click", () => {
     toggleOnboardingHints();
   });
 
   resetOnboardingHintsButton?.addEventListener("click", () => {
     resetOnboardingHints();
-  });
-
-  const beginPeekHold = () => {
-    peekModeHoldPointer = true;
-    updatePeekModeFromHolds("button");
-  };
-  const endPeekHold = () => {
-    peekModeHoldPointer = false;
-    updatePeekModeFromHolds("button");
-  };
-
-  holdPeekModeButton?.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    holdPeekModeButton.setPointerCapture(event.pointerId);
-    beginPeekHold();
-  });
-  holdPeekModeButton?.addEventListener("pointerup", (event) => {
-    event.preventDefault();
-    if (holdPeekModeButton.hasPointerCapture(event.pointerId)) {
-      holdPeekModeButton.releasePointerCapture(event.pointerId);
-    }
-    endPeekHold();
-  });
-  holdPeekModeButton?.addEventListener("pointercancel", (event) => {
-    event.preventDefault();
-    if (holdPeekModeButton.hasPointerCapture(event.pointerId)) {
-      holdPeekModeButton.releasePointerCapture(event.pointerId);
-    }
-    endPeekHold();
-  });
-  holdPeekModeButton?.addEventListener("pointerleave", () => {
-    endPeekHold();
   });
 
   toggleResearchPanelButton?.addEventListener("click", async () => {
@@ -4654,6 +4623,12 @@ function wireBaseEventHandlers() {
 
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
+    if (key === "escape" && toolsPanelOpen) {
+      toolsPanelOpen = false;
+      window.localStorage.setItem("notes-app.tools-panel.open", "0");
+      syncToolsUi();
+    }
+
     if ((key === " " || key === "spacebar") && !isTypingTarget(event.target)) {
       if (!event.repeat) {
         peekModeHoldKeyboard = true;
@@ -4725,7 +4700,6 @@ function wireBaseEventHandlers() {
 
   window.addEventListener("blur", () => {
     peekModeHoldKeyboard = false;
-    peekModeHoldPointer = false;
     updatePeekModeFromHolds("blur");
   });
 
@@ -4943,18 +4917,22 @@ async function setupContextFeatures() {
     scheduleOnboardingRefresh(0);
   };
 
-  const renameContextHandler = () => {
-    const active = activeContextRecord();
-    if (!active) {
+  const renameContextHandler = (contextId = activeContextId) => {
+    if (!contextStore || !contextId) {
       return;
     }
 
-    const nextName = window.prompt("Rename notebook:", active.name);
+    const target = contextStore.getContextById(contextId);
+    if (!target) {
+      return;
+    }
+
+    const nextName = window.prompt("Rename notebook:", target.name);
     if (!nextName) {
       return;
     }
 
-    const renamed = contextStore.renameContext(active.id, nextName);
+    const renamed = contextStore.renameContext(target.id, nextName);
     if (!renamed) {
       window.alert("Notebook name cannot be empty.");
       return;
@@ -4964,43 +4942,55 @@ async function setupContextFeatures() {
     scheduleWorkspacePersist();
   };
 
-  const deleteContextHandler = async () => {
-    const active = activeContextRecord();
-    if (!active) {
+  const deleteContextHandler = async (contextId = activeContextId) => {
+    if (!contextStore || !contextWorkspaceStore || !contextId) {
       return;
     }
 
-    const confirmed = window.confirm(`Delete notebook "${active.name}"?`);
+    const target = contextStore.getContextById(contextId);
+    if (!target) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete notebook "${target.name}"?`);
     if (!confirmed) {
       return;
     }
 
     flushWorkspacePersist();
-    const activeSections = sectionsStore.listSections(active.id);
+    const targetSections = sectionsStore.listSections(target.id);
+    const deletingActiveContext = target.id === activeContextId;
 
-    const result = contextStore.deleteContext(active.id);
+    const result = contextStore.deleteContext(target.id);
     if (!result) {
       window.alert("At least one notebook must remain.");
       return;
     }
 
-    for (const section of activeSections) {
+    for (const section of targetSections) {
       contextWorkspaceStore.deleteWorkspace(workspaceScopeId(result.deletedContextId, section.id));
     }
     sectionsStore.deleteNotebook(result.deletedContextId);
     notebookLibraryStore.deleteNotebook(result.deletedContextId);
     notebookDocumentLibraryStore.deleteNotebook(result.deletedContextId);
-    activeContextId = result.activeContextId;
-    sectionsStore.ensureNotebook(activeContextId);
-    activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
-    onboardingRuntimeSignals.searchOpened = false;
-    onboardingRuntimeSignals.peekActivated = false;
-    onboardingRuntimeSignals.gestureUsed = false;
-    documentManager.setContextId(workspaceScopeId());
+
+    if (deletingActiveContext) {
+      activeContextId = result.activeContextId;
+      sectionsStore.ensureNotebook(activeContextId);
+      activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
+      onboardingRuntimeSignals.searchOpened = false;
+      onboardingRuntimeSignals.peekActivated = false;
+      onboardingRuntimeSignals.gestureUsed = false;
+      documentManager.setContextId(workspaceScopeId());
+      updateContextUi();
+      await restoreWorkspaceForActiveContext();
+      updateOnboardingControlsUi();
+      scheduleOnboardingRefresh(0);
+      return;
+    }
+
     updateContextUi();
-    await restoreWorkspaceForActiveContext();
-    updateOnboardingControlsUi();
-    scheduleOnboardingRefresh(0);
+    scheduleWorkspacePersist();
   };
 
   const createSectionHandler = async () => {
@@ -5032,22 +5022,22 @@ async function setupContextFeatures() {
     scheduleOnboardingRefresh(0);
   };
 
-  const renameSectionHandler = () => {
-    if (!activeContextId) {
+  const renameSectionHandler = (sectionId = activeSectionId) => {
+    if (!activeContextId || !sectionId) {
       return;
     }
 
-    const active = activeSectionRecord();
-    if (!active) {
+    const section = sectionsStore.listSections(activeContextId).find((entry) => entry.id === sectionId);
+    if (!section) {
       return;
     }
 
-    const nextName = window.prompt("Rename section:", active.name);
+    const nextName = window.prompt("Rename section:", section.name);
     if (!nextName) {
       return;
     }
 
-    const renamed = sectionsStore.renameSection(activeContextId, active.id, nextName);
+    const renamed = sectionsStore.renameSection(activeContextId, section.id, nextName);
     if (!renamed) {
       window.alert("Section name cannot be empty.");
       return;
@@ -5056,46 +5046,110 @@ async function setupContextFeatures() {
     updateContextUi();
   };
 
-  const deleteSectionHandler = async () => {
-    if (!activeContextId) {
+  const deleteSectionHandler = async (sectionId = activeSectionId) => {
+    if (!activeContextId || !sectionId || !contextWorkspaceStore) {
       return;
     }
 
-    const active = activeSectionRecord();
-    if (!active) {
+    const section = sectionsStore.listSections(activeContextId).find((entry) => entry.id === sectionId);
+    if (!section) {
       return;
     }
 
-    const confirmed = window.confirm(`Delete section "${active.name}"?`);
+    const confirmed = window.confirm(`Delete section "${section.name}"?`);
     if (!confirmed) {
       return;
     }
 
     flushWorkspacePersist();
-    const result = sectionsStore.deleteSection(activeContextId, active.id);
+    const deletingActiveSection = section.id === activeSectionId;
+    const result = sectionsStore.deleteSection(activeContextId, section.id);
     if (!result) {
       window.alert("At least one section must remain.");
       return;
     }
 
     contextWorkspaceStore.deleteWorkspace(workspaceScopeId(activeContextId, result.deletedSectionId));
-    activeSectionId = result.activeSectionId;
-    onboardingRuntimeSignals.searchOpened = false;
-    onboardingRuntimeSignals.peekActivated = false;
-    onboardingRuntimeSignals.gestureUsed = false;
-    documentManager.setContextId(workspaceScopeId());
+    if (deletingActiveSection) {
+      activeSectionId = result.activeSectionId;
+      onboardingRuntimeSignals.searchOpened = false;
+      onboardingRuntimeSignals.peekActivated = false;
+      onboardingRuntimeSignals.gestureUsed = false;
+      documentManager.setContextId(workspaceScopeId());
+      updateContextUi();
+      await restoreWorkspaceForActiveContext();
+      updateOnboardingControlsUi();
+      scheduleOnboardingRefresh(0);
+      return;
+    }
+
     updateContextUi();
-    await restoreWorkspaceForActiveContext();
-    updateOnboardingControlsUi();
-    scheduleOnboardingRefresh(0);
+    scheduleWorkspacePersist();
+  };
+
+  const openContextActions = async (contextId) => {
+    if (!contextStore) {
+      return;
+    }
+
+    const target = contextStore.getContextById(contextId);
+    if (!target) {
+      return;
+    }
+
+    const choice = window.prompt(
+      `Notebook "${target.name}" actions:\n1. Rename Notebook\n2. Delete Notebook`,
+      "1",
+    );
+    if (choice === null) {
+      return;
+    }
+
+    const normalized = choice.trim().toLowerCase();
+    if (normalized === "1" || normalized === "rename" || normalized === "r") {
+      renameContextHandler(target.id);
+      return;
+    }
+
+    if (normalized === "2" || normalized === "delete" || normalized === "d") {
+      await deleteContextHandler(target.id);
+    }
+  };
+
+  const openSectionActions = async (sectionId) => {
+    if (!activeContextId) {
+      return;
+    }
+
+    const target = sectionsStore.listSections(activeContextId).find((entry) => entry.id === sectionId);
+    if (!target) {
+      return;
+    }
+
+    const choice = window.prompt(
+      `Section "${target.name}" actions:\n1. Rename Section\n2. Delete Section`,
+      "1",
+    );
+    if (choice === null) {
+      return;
+    }
+
+    const normalized = choice.trim().toLowerCase();
+    if (normalized === "1" || normalized === "rename" || normalized === "r") {
+      renameSectionHandler(target.id);
+      return;
+    }
+
+    if (normalized === "2" || normalized === "delete" || normalized === "d") {
+      await deleteSectionHandler(target.id);
+    }
   };
 
   contextUiController = contextUiModule.createContextManagementUi({
     selectElement: contextSelect,
+    selectorContainerElement: contextPickerPill,
     activeContextOutput,
     newContextButton,
-    renameContextButton,
-    deleteContextButton,
     importContextWidgetButton,
     onSwitchContext: (nextContextId) => {
       void switchContext(nextContextId);
@@ -5103,9 +5157,8 @@ async function setupContextFeatures() {
     onCreateContext: () => {
       void createContextHandler();
     },
-    onRenameContext: renameContextHandler,
-    onDeleteContext: () => {
-      void deleteContextHandler();
+    onOpenContextActions: (contextId) => {
+      void openContextActions(contextId);
     },
     onImportContextWidgets: () => {
       void importWidgetsFromAnotherContext();
@@ -5114,20 +5167,16 @@ async function setupContextFeatures() {
 
   sectionUiController = createSectionManagementUi({
     tabsElement: sectionTabs,
-    switchElement: sectionSwitcher,
     activeSectionOutput,
     newSectionButton,
-    renameSectionButton,
-    deleteSectionButton,
     onSwitchSection: (nextSectionId) => {
       void switchSection(nextSectionId);
     },
     onCreateSection: () => {
       void createSectionHandler();
     },
-    onRenameSection: renameSectionHandler,
-    onDeleteSection: () => {
-      void deleteSectionHandler();
+    onOpenSectionActions: (sectionId) => {
+      void openSectionActions(sectionId);
     },
   });
 
@@ -5155,10 +5204,7 @@ async function bootstrap() {
   updateSnipUi({ armed: false, dragging: false });
   setWhitespaceState("idle");
   toolsPanelOpen = window.localStorage.getItem("notes-app.tools-panel.open") === "1";
-  documentSettingsOpen =
-    window.localStorage.getItem("notes-app.document-settings.open") === "1" || debugModeEnabled;
   syncToolsUi();
-  syncDocumentSettingsUi();
   syncUiModeControls();
   setPeekMode(false, "boot");
   updateInkUi({
@@ -5172,6 +5218,15 @@ async function bootstrap() {
   syncSearchIndexUi(0);
 
   await setupContextFeatures();
+  try {
+    await ensureInkFeature();
+    setInkEnabled(true);
+  } catch (error) {
+    console.error(error);
+    if (inkStateOutput) {
+      inkStateOutput.textContent = "failed";
+    }
+  }
   try {
     await ensureGestureFeatures();
   } catch (error) {

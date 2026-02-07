@@ -1,17 +1,21 @@
+const LONG_PRESS_MS = 520;
+const MOVE_THRESHOLD_PX = 10;
+
 export function createContextManagementUi({
   selectElement,
+  selectorContainerElement,
   activeContextOutput,
   newContextButton,
-  renameContextButton,
-  deleteContextButton,
   importContextWidgetButton,
   onSwitchContext,
   onCreateContext,
-  onRenameContext,
-  onDeleteContext,
+  onOpenContextActions,
   onImportContextWidgets,
 }) {
   const listeners = [];
+  let activeContextIdState = null;
+  let holdTimer = null;
+  let holdState = null;
 
   function bind(target, type, handler) {
     if (!target) {
@@ -32,20 +36,107 @@ export function createContextManagementUi({
     onCreateContext?.();
   });
 
-  bind(renameContextButton, "click", () => {
-    onRenameContext?.();
-  });
-
-  bind(deleteContextButton, "click", () => {
-    onDeleteContext?.();
-  });
-
   bind(importContextWidgetButton, "click", () => {
     onImportContextWidgets?.();
   });
 
+  function clearHoldState() {
+    if (holdTimer) {
+      window.clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+    holdState = null;
+  }
+
+  function currentContextId() {
+    if (selectElement instanceof HTMLSelectElement && typeof selectElement.value === "string" && selectElement.value.trim()) {
+      return selectElement.value;
+    }
+    return activeContextIdState;
+  }
+
+  bind(selectorContainerElement, "pointerdown", (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    if (event.pointerType !== "touch" || event.button !== 0) {
+      return;
+    }
+
+    holdState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+
+    holdTimer = window.setTimeout(() => {
+      holdTimer = null;
+      const contextId = currentContextId();
+      if (!contextId || !holdState) {
+        return;
+      }
+      onOpenContextActions?.(contextId, {
+        clientX: holdState.clientX,
+        clientY: holdState.clientY,
+      });
+      clearHoldState();
+    }, LONG_PRESS_MS);
+  });
+
+  bind(selectorContainerElement, "pointermove", (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    if (!holdState || holdState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    holdState.clientX = event.clientX;
+    holdState.clientY = event.clientY;
+
+    const moved = Math.hypot(event.clientX - holdState.startX, event.clientY - holdState.startY);
+    if (moved >= MOVE_THRESHOLD_PX) {
+      clearHoldState();
+    }
+  });
+
+  bind(window, "pointerup", (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    if (!holdState || holdState.pointerId !== event.pointerId) {
+      return;
+    }
+    clearHoldState();
+  });
+
+  bind(window, "pointercancel", (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    if (!holdState || holdState.pointerId !== event.pointerId) {
+      return;
+    }
+    clearHoldState();
+  });
+
+  bind(selectorContainerElement, "contextmenu", (event) => {
+    const contextId = currentContextId();
+    if (!contextId) {
+      return;
+    }
+    event.preventDefault();
+    onOpenContextActions?.(contextId, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+  });
+
   return {
     render(contexts, activeContextId) {
+      activeContextIdState = activeContextId ?? null;
       if (!(selectElement instanceof HTMLSelectElement)) {
         if (activeContextOutput) {
           const active = contexts.find((entry) => entry.id === activeContextId);
@@ -74,8 +165,7 @@ export function createContextManagementUi({
       const controls = [
         selectElement,
         newContextButton,
-        renameContextButton,
-        deleteContextButton,
+        selectorContainerElement,
         importContextWidgetButton,
       ];
 

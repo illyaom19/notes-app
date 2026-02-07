@@ -225,9 +225,18 @@ body[data-ui-mode="production"] .topbar h1 {
 }
 
 .controls-panel {
-  border-bottom: 1px solid var(--line);
+  position: fixed;
+  top: 5.2rem;
+  right: 0.9rem;
+  z-index: 72;
+  width: min(430px, calc(100vw - 1.2rem));
+  max-height: calc(100vh - 6.4rem);
+  overflow: auto;
+  border: 1px solid #bfd2e2;
+  border-radius: 0.88rem;
   background: var(--surface);
-  padding: 0.65rem 1rem;
+  padding: 0.65rem;
+  box-shadow: 0 18px 36px rgba(15, 23, 32, 0.2);
 }
 
 .controls-panel[hidden] {
@@ -1233,6 +1242,13 @@ body[data-ui-mode="production"] .topbar h1 {
   .section-strip {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .controls-panel {
+    top: auto;
+    right: 0.6rem;
+    bottom: 0.6rem;
+    max-height: min(78vh, 560px);
   }
 
   .section-tabs {
