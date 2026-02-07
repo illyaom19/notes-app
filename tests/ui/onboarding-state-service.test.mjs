@@ -45,3 +45,19 @@ test("onboarding service toggles hints and resets context", () => {
   assert.deepEqual(service.listHintStates("ctx-1"), []);
 });
 
+test("onboarding service does not throw when storage writes fail", () => {
+  const storage = {
+    getItem: () => null,
+    setItem: () => {
+      throw new Error("quota");
+    },
+  };
+  const service = createOnboardingStateService({ storage, profileId: "user-a" });
+
+  assert.doesNotThrow(() => {
+    service.markCompleted("ctx-1", "import-pdf");
+    service.markDismissed("ctx-1", "capture-reference");
+    service.setHintsEnabled("ctx-1", false);
+    service.resetContext("ctx-1");
+  });
+});

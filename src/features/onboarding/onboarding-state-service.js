@@ -105,6 +105,7 @@ export function createOnboardingStateService({
   profileId = DEFAULT_PROFILE_ID,
 } = {}) {
   let state = normalizeState(null);
+  let hasLoggedPersistError = false;
 
   try {
     const raw = storage.getItem(STORAGE_KEY);
@@ -116,7 +117,17 @@ export function createOnboardingStateService({
   }
 
   function persist() {
-    storage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try {
+      storage.setItem(STORAGE_KEY, JSON.stringify(state));
+      hasLoggedPersistError = false;
+      return true;
+    } catch (error) {
+      if (!hasLoggedPersistError) {
+        hasLoggedPersistError = true;
+        console.warn("Failed to persist onboarding state.", error);
+      }
+      return false;
+    }
   }
 
   function normalizeContextId(contextId) {
@@ -251,4 +262,3 @@ export function createOnboardingStateService({
     },
   };
 }
-

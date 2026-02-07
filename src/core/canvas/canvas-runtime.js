@@ -14,6 +14,8 @@ export class CanvasRuntime {
     this._touchPointers = new Map();
     this._touchGesture = null;
     this._touchInteractionPointers = new Set();
+    this._touchIgnoredPointers = new Set();
+    this._touchControllerOwner = null;
     this._inputHandlers = [];
     this._renderLayers = [];
     this._overlayLayers = [];
@@ -118,12 +120,15 @@ export class CanvasRuntime {
     }
 
     this._touchPointers.delete(pointerId);
-    this._touchInteractionPointers.add(pointerId);
-    if (this._touchPointers.size < 2) {
-      this._touchGesture = null;
-    } else {
-      this._touchGesture = this._computeTouchMetrics();
+    if (this._touchPointers.size > 0) {
+      for (const activePointerId of this._touchPointers.keys()) {
+        this._touchIgnoredPointers.add(activePointerId);
+      }
+      this._touchPointers.clear();
     }
+    this._touchInteractionPointers.add(pointerId);
+    this._touchGesture = null;
+    this._reconcileTouchControllerOwner();
     return true;
   }
 
@@ -179,15 +184,28 @@ export class CanvasRuntime {
 
     this.canvas.addEventListener("pointerdown", (event) => {
       if (event.pointerType === "touch") {
-        if (this._dispatchPointer("onPointerDown", event)) {
+        const isTouchOnWidget = Boolean(this.pickWidgetAtScreenPoint(event.offsetX, event.offsetY));
+        const canDispatchToInteraction = this._touchControllerOwner !== "camera";
+
+        if (canDispatchToInteraction && this._dispatchPointer("onPointerDown", event)) {
           event.preventDefault();
           this._touchInteractionPointers.add(event.pointerId);
+          this._reconcileTouchControllerOwner();
+          this.canvas.setPointerCapture(event.pointerId);
+          return;
+        }
+
+        if (this._touchControllerOwner === "interaction" || isTouchOnWidget) {
+          event.preventDefault();
+          this._touchIgnoredPointers.add(event.pointerId);
+          this._reconcileTouchControllerOwner();
           this.canvas.setPointerCapture(event.pointerId);
           return;
         }
 
         event.preventDefault();
         this._touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        this._reconcileTouchControllerOwner();
         this.canvas.setPointerCapture(event.pointerId);
         if (this._touchPointers.size >= 2) {
           this._touchGesture = this._computeTouchMetrics();
@@ -216,6 +234,11 @@ export class CanvasRuntime {
       if (event.pointerType === "touch" && this._touchInteractionPointers.has(event.pointerId)) {
         event.preventDefault();
         this._dispatchPointer("onPointerMove", event);
+        return;
+      }
+
+      if (event.pointerType === "touch" && this._touchIgnoredPointers.has(event.pointerId)) {
+        event.preventDefault();
         return;
       }
 
@@ -270,6 +293,16 @@ export class CanvasRuntime {
         event.preventDefault();
         this._dispatchPointer("onPointerUp", event);
         this._touchInteractionPointers.delete(event.pointerId);
+        this._reconcileTouchControllerOwner();
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+
+      if (event.pointerType === "touch" && this._touchIgnoredPointers.has(event.pointerId)) {
+        this._touchIgnoredPointers.delete(event.pointerId);
+        this._reconcileTouchControllerOwner();
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
@@ -282,6 +315,7 @@ export class CanvasRuntime {
         if (this._touchPointers.size < 2) {
           this._touchGesture = null;
         }
+        this._reconcileTouchControllerOwner();
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
@@ -310,6 +344,16 @@ export class CanvasRuntime {
         event.preventDefault();
         this._dispatchPointer("onPointerCancel", event);
         this._touchInteractionPointers.delete(event.pointerId);
+        this._reconcileTouchControllerOwner();
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+
+      if (event.pointerType === "touch" && this._touchIgnoredPointers.has(event.pointerId)) {
+        this._touchIgnoredPointers.delete(event.pointerId);
+        this._reconcileTouchControllerOwner();
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
@@ -322,6 +366,7 @@ export class CanvasRuntime {
         if (this._touchPointers.size < 2) {
           this._touchGesture = null;
         }
+        this._reconcileTouchControllerOwner();
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
@@ -563,6 +608,22 @@ export class CanvasRuntime {
       },
       distance: Math.hypot(dx, dy),
     };
+  }
+
+  _reconcileTouchControllerOwner() {
+    if (this._touchInteractionPointers.size > 0) {
+      this._touchControllerOwner = "interaction";
+      this._touchGesture = null;
+      return;
+    }
+
+    if (this._touchPointers.size > 0) {
+      this._touchControllerOwner = "camera";
+      return;
+    }
+
+    this._touchControllerOwner = null;
+    this._touchGesture = null;
   }
 
   _toCanvasPoint({ x, y }) {

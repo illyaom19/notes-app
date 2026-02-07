@@ -110,9 +110,19 @@ export function createReferenceManagerUi({
   let activeTab = "references";
   let references = [];
   let documents = [];
-  let previewOpenCount = 0;
   const previewCards = new Map();
   let dragState = null;
+  const eventDisposers = [];
+
+  function bind(target, type, handler, options) {
+    if (!target || typeof target.addEventListener !== "function") {
+      return;
+    }
+    target.addEventListener(type, handler, options);
+    eventDisposers.push(() => {
+      target.removeEventListener(type, handler, options);
+    });
+  }
 
   function setTab(nextTab) {
     activeTab = nextTab === "documents" ? "documents" : "references";
@@ -221,9 +231,19 @@ export function createReferenceManagerUi({
     card.dataset.previewId = previewId;
     card.dataset.kind = kind;
     card.dataset.entryId = entry.id;
-    card.style.left = `${PREVIEW_BASE_X + previewOpenCount * PREVIEW_STACK_OFFSET}px`;
-    card.style.top = `${PREVIEW_BASE_Y + previewOpenCount * PREVIEW_STACK_OFFSET}px`;
-    previewOpenCount += 1;
+    const stackDepth = previewCards.size;
+    const initialLeft = clamp(
+      PREVIEW_BASE_X + stackDepth * PREVIEW_STACK_OFFSET,
+      8,
+      Math.max(8, window.innerWidth - PREVIEW_MIN_WIDTH - 8),
+    );
+    const initialTop = clamp(
+      PREVIEW_BASE_Y + stackDepth * PREVIEW_STACK_OFFSET,
+      8,
+      Math.max(8, window.innerHeight - PREVIEW_MIN_HEIGHT - 8),
+    );
+    card.style.left = `${initialLeft}px`;
+    card.style.top = `${initialTop}px`;
 
     card.innerHTML = `
       <header class="reference-preview-card-header" data-drag-handle="true">
@@ -432,58 +452,68 @@ export function createReferenceManagerUi({
     }
   }
 
-  function wireStaticEvents() {
-    launcherButton.addEventListener("click", () => {
-      setOverlayOpen(!overlayOpen);
-    });
+  const onLauncherClick = () => {
+    setOverlayOpen(!overlayOpen);
+  };
 
-    closeButton?.addEventListener("click", () => {
-      setOverlayOpen(false);
-    });
+  const onCloseClick = () => {
+    setOverlayOpen(false);
+  };
 
-    overlayElement?.addEventListener("pointerdown", closeOnBackdrop);
+  const onReferencesTabClick = () => {
+    setTab("references");
+  };
 
-    referencesTabButton?.addEventListener("click", () => {
-      setTab("references");
-    });
+  const onDocumentsTabClick = () => {
+    setTab("documents");
+  };
 
-    documentsTabButton?.addEventListener("click", () => {
-      setTab("documents");
-    });
+  const onReferencesListClick = (event) => {
+    void handleListAction(event);
+  };
 
-    referencesListElement?.addEventListener("click", (event) => {
-      void handleListAction(event);
-    });
+  const onDocumentsListClick = (event) => {
+    void handleListAction(event);
+  };
 
-    documentsListElement?.addEventListener("click", (event) => {
-      void handleListAction(event);
-    });
+  const onPreviewLayerClick = (event) => {
+    void handlePreviewAction(event);
+  };
 
-    previewLayerElement?.addEventListener("click", (event) => {
-      void handlePreviewAction(event);
-    });
+  const onWindowPointerMove = (event) => {
+    nudgePreviewCardsAwayFromStylus(event);
+  };
 
-    previewLayerElement?.addEventListener("pointerdown", startPreviewDrag);
-    previewLayerElement?.addEventListener("pointermove", movePreviewDrag);
-    previewLayerElement?.addEventListener("pointerup", endPreviewDrag);
-    previewLayerElement?.addEventListener("pointercancel", endPreviewDrag);
-
-    window.addEventListener("pointermove", nudgePreviewCardsAwayFromStylus, { passive: true });
-
-    window.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        if (overlayOpen) {
-          setOverlayOpen(false);
-          return;
-        }
-
-        const previewIds = Array.from(previewCards.keys());
-        const lastPreviewId = previewIds[previewIds.length - 1] ?? null;
-        if (lastPreviewId) {
-          closePreview(lastPreviewId);
-        }
+  const onWindowKeyDown = (event) => {
+    if (event.key === "Escape") {
+      if (overlayOpen) {
+        setOverlayOpen(false);
+        return;
       }
-    });
+
+      const previewIds = Array.from(previewCards.keys());
+      const lastPreviewId = previewIds[previewIds.length - 1] ?? null;
+      if (lastPreviewId) {
+        closePreview(lastPreviewId);
+      }
+    }
+  };
+
+  function wireStaticEvents() {
+    bind(launcherButton, "click", onLauncherClick);
+    bind(closeButton, "click", onCloseClick);
+    bind(overlayElement, "pointerdown", closeOnBackdrop);
+    bind(referencesTabButton, "click", onReferencesTabClick);
+    bind(documentsTabButton, "click", onDocumentsTabClick);
+    bind(referencesListElement, "click", onReferencesListClick);
+    bind(documentsListElement, "click", onDocumentsListClick);
+    bind(previewLayerElement, "click", onPreviewLayerClick);
+    bind(previewLayerElement, "pointerdown", startPreviewDrag);
+    bind(previewLayerElement, "pointermove", movePreviewDrag);
+    bind(previewLayerElement, "pointerup", endPreviewDrag);
+    bind(previewLayerElement, "pointercancel", endPreviewDrag);
+    bind(window, "pointermove", onWindowPointerMove, { passive: true });
+    bind(window, "keydown", onWindowKeyDown);
   }
 
   wireStaticEvents();
@@ -559,6 +589,9 @@ export function createReferenceManagerUi({
     dispose() {
       for (const previewId of previewCards.keys()) {
         closePreview(previewId);
+      }
+      for (const disposeEvent of eventDisposers.splice(0, eventDisposers.length)) {
+        disposeEvent();
       }
     },
   };

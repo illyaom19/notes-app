@@ -2,6 +2,10 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+const RAIL_TOP_MIN = 8;
+const RAIL_BOTTOM_RESERVED = 40;
+const RAIL_STACK_GAP = 34;
+
 function compactLabel(suggestion) {
   const base = typeof suggestion?.label === "string" ? suggestion.label.trim() : "";
   if (!base) {
@@ -159,16 +163,12 @@ export function createSuggestionUiController({
         return;
       }
 
-      const position = railPositionForWidget(runtime, focusedWidget);
-      rootElement.style.left = `${position.left}px`;
-      rootElement.style.top = `${position.top}px`;
       rootElement.hidden = false;
       rootElement.dataset.open = "true";
       rootElement.innerHTML = "";
-      rootElement.style.left = "0px";
-      rootElement.style.top = "0px";
 
       const railLeft = railLeftForWidget(runtime, focusedWidget);
+      const maxTop = Math.max(RAIL_TOP_MIN, window.innerHeight - RAIL_BOTTOM_RESERVED);
       const entries = [
         ...proposed.slice(0, 6).map((suggestion, index) => ({
           suggestion,
@@ -184,25 +184,54 @@ export function createSuggestionUiController({
         })),
       ];
 
-      entries.sort((a, b) => {
+      const maxVisible = Math.max(1, Math.floor((maxTop - RAIL_TOP_MIN) / RAIL_STACK_GAP) + 1);
+      const visibleEntries = entries.slice(0, maxVisible);
+
+      visibleEntries.sort((a, b) => {
         if (a.desiredTop !== b.desiredTop) {
           return a.desiredTop - b.desiredTop;
         }
         return a.rank - b.rank;
       });
 
+      const topPositions = [];
       let previousTop = -Infinity;
-      for (const entry of entries) {
-        const chip = entry.chip;
-        chip.classList.add("suggestion-rail-item");
+      for (const entry of visibleEntries) {
         let top = entry.desiredTop;
         if (Number.isFinite(previousTop)) {
-          top = Math.max(top, previousTop + 34);
+          top = Math.max(top, previousTop + RAIL_STACK_GAP);
         }
-        top = clamp(top, 8, window.innerHeight - 40);
-        chip.style.left = `${railLeft}px`;
-        chip.style.top = `${top}px`;
+        topPositions.push(top);
         previousTop = top;
+      }
+
+      const lastIndex = topPositions.length - 1;
+      if (lastIndex >= 0) {
+        const overflow = topPositions[lastIndex] - maxTop;
+        if (overflow > 0) {
+          for (let index = 0; index < topPositions.length; index += 1) {
+            topPositions[index] = Math.max(RAIL_TOP_MIN, topPositions[index] - overflow);
+          }
+        }
+      }
+
+      for (let index = 1; index < topPositions.length; index += 1) {
+        topPositions[index] = Math.max(topPositions[index], topPositions[index - 1] + RAIL_STACK_GAP);
+      }
+
+      if (lastIndex >= 0 && topPositions[lastIndex] > maxTop) {
+        for (let index = lastIndex; index >= 0; index -= 1) {
+          const capped = maxTop - (lastIndex - index) * RAIL_STACK_GAP;
+          topPositions[index] = Math.min(topPositions[index], capped);
+        }
+      }
+
+      for (let index = 0; index < visibleEntries.length; index += 1) {
+        const entry = visibleEntries[index];
+        const chip = entry.chip;
+        chip.classList.add("suggestion-rail-item");
+        chip.style.left = `${railLeft}px`;
+        chip.style.top = `${clamp(topPositions[index], RAIL_TOP_MIN, maxTop)}px`;
         rootElement.append(chip);
       }
     },

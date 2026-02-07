@@ -146,6 +146,12 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
       runtime.setFocusedWidgetId(widget.id);
       runtime.setSelectedWidgetId(widget.id);
 
+      // Touch presses on widgets should not capture interaction controls so camera
+      // gesture handling can stay deterministic.
+      if (event.pointerType === "touch") {
+        return false;
+      }
+
       const flags = interactionFlags(widget);
       const point = worldPoint(event, camera);
       const rects = controlRects(widget, camera);

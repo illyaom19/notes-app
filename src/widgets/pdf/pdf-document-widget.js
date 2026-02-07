@@ -582,10 +582,10 @@ export class PdfDocumentWidget extends WidgetBase {
         }
       }
 
-      if (!isLabelOnly) {
+      if (lod === "detail") {
         const zones = this.whitespaceZones.filter((zone) => zone.pageNumber === pageEntry.pageNumber);
         for (const zone of zones) {
-          this._drawWhitespaceZone(ctx, camera, zone, { showGlyph: lod === "detail" });
+          this._drawWhitespaceZone(ctx, camera, zone, { showGlyph: true });
         }
       }
 

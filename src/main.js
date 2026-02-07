@@ -186,11 +186,34 @@ let onboardingStateService = createOnboardingStateService();
 let onboardingOverlay = null;
 let onboardingRefreshTimer = null;
 let onboardingHintVisibleId = null;
+const failedLocalStorageKeys = new Set();
 const onboardingRuntimeSignals = {
   searchOpened: false,
   peekActivated: false,
   gestureUsed: false,
 };
+
+function safeLocalStorageSetItem(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+    failedLocalStorageKeys.delete(key);
+    return true;
+  } catch (error) {
+    if (!failedLocalStorageKeys.has(key)) {
+      failedLocalStorageKeys.add(key);
+      console.warn(`Failed to persist "${key}" in localStorage.`, error);
+    }
+    return false;
+  }
+}
+
+function safeLocalStorageGetItem(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (_error) {
+    return null;
+  }
+}
 
 const registry = new WidgetRegistry();
 registry.register("expanded-area", () => import("./widgets/expanded-area/index.js"));
@@ -412,7 +435,10 @@ function loadPopupBehaviorPrefs() {
 }
 
 function savePopupBehaviorPrefs(prefs) {
-  window.localStorage.setItem(POPUP_BEHAVIOR_PREFS_KEY, JSON.stringify(normalizePopupBehaviorPrefs(prefs)));
+  safeLocalStorageSetItem(
+    POPUP_BEHAVIOR_PREFS_KEY,
+    JSON.stringify(normalizePopupBehaviorPrefs(prefs)),
+  );
 }
 
 function updatePopupBehaviorUi() {
@@ -511,7 +537,7 @@ function loadGesturePrefs() {
 }
 
 function saveGesturePrefs(prefs) {
-  window.localStorage.setItem(GESTURE_PREFS_KEY, JSON.stringify(normalizeGesturePrefs(prefs)));
+  safeLocalStorageSetItem(GESTURE_PREFS_KEY, JSON.stringify(normalizeGesturePrefs(prefs)));
 }
 
 function updateGestureUi() {
@@ -984,7 +1010,10 @@ function activeSectionRecord() {
 }
 
 function onboardingScopeId() {
-  return workspaceScopeId() ?? activeContextId;
+  if (typeof activeContextId === "string" && activeContextId.trim()) {
+    return activeContextId;
+  }
+  return null;
 }
 
 function isScopeInNotebook(scopeId, notebookId) {
@@ -4249,11 +4278,15 @@ function wireBaseEventHandlers() {
         return;
       }
 
+      const isMouseSecondaryAction = event.button === 2 || event.which === 3;
       const fromTouchInput =
         event.pointerType === "touch" ||
         event.pointerType === "pen" ||
         Boolean(event.sourceCapabilities?.firesTouchEvents);
-      const isRecentTouch = Date.now() - lastTouchLikeInteractionAt < 1200;
+      const isRecentTouch = Date.now() - lastTouchLikeInteractionAt < 700;
+      if (isMouseSecondaryAction && !fromTouchInput) {
+        return;
+      }
       if (!fromTouchInput && !isRecentTouch) {
         return;
       }
@@ -4280,13 +4313,13 @@ function wireBaseEventHandlers() {
       return;
     }
     toolsPanelOpen = false;
-    window.localStorage.setItem("notes-app.tools-panel.open", "0");
+    safeLocalStorageSetItem("notes-app.tools-panel.open", "0");
     syncToolsUi();
   };
 
   toggleToolsButton?.addEventListener("click", () => {
     toolsPanelOpen = !toolsPanelOpen;
-    window.localStorage.setItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
+    safeLocalStorageSetItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
     syncToolsUi();
   });
   snipExitButton?.addEventListener("click", () => {
@@ -4635,7 +4668,7 @@ function wireBaseEventHandlers() {
     const key = event.key.toLowerCase();
     if (key === "escape" && toolsPanelOpen) {
       toolsPanelOpen = false;
-      window.localStorage.setItem("notes-app.tools-panel.open", "0");
+      safeLocalStorageSetItem("notes-app.tools-panel.open", "0");
       syncToolsUi();
     }
 
@@ -5213,7 +5246,7 @@ async function bootstrap() {
 
   updateSnipUi({ armed: false, dragging: false });
   setWhitespaceState("idle");
-  toolsPanelOpen = window.localStorage.getItem("notes-app.tools-panel.open") === "1";
+  toolsPanelOpen = safeLocalStorageGetItem("notes-app.tools-panel.open") === "1";
   syncToolsUi();
   syncUiModeControls();
   setPeekMode(false, "boot");
