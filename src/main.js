@@ -21,6 +21,7 @@ const startWorkerButton = document.querySelector("#start-worker");
 const loadedModulesOutput = document.querySelector("#loaded-modules");
 const widgetCountOutput = document.querySelector("#widget-count");
 const referenceCountOutput = document.querySelector("#reference-count");
+const popupBehaviorOutput = document.querySelector("#popup-behavior-state");
 const snipStateOutput = document.querySelector("#snip-state");
 const whitespaceStateOutput = document.querySelector("#whitespace-state");
 const whitespaceZoneCountOutput = document.querySelector("#whitespace-zone-count");
@@ -43,6 +44,8 @@ const formulaBindingSelect = document.querySelector("#document-formula-bindings"
 const applyBindingsButton = document.querySelector("#apply-document-bindings");
 const focusBindingsButton = document.querySelector("#focus-document-bindings");
 const togglePinDocumentButton = document.querySelector("#toggle-pin-document");
+const popupAvoidStylusToggle = document.querySelector("#popup-avoid-stylus");
+const popupReducedMotionToggle = document.querySelector("#popup-reduced-motion");
 const debugOnlyControls = Array.from(document.querySelectorAll('[data-debug-only="true"]'));
 
 const contextSelect = document.querySelector("#context-select");
@@ -67,6 +70,9 @@ let detachDocumentFocusSync = null;
 let toolsPanelOpen = false;
 let pendingPdfImportIntent = null;
 let debugModeEnabled = false;
+const POPUP_BEHAVIOR_PREFS_KEY = "notes-app.popup.behavior.v1";
+const REDUCED_MOTION_MEDIA = "(prefers-reduced-motion: reduce)";
+let popupBehaviorPrefs = null;
 
 let contextStore = null;
 let contextWorkspaceStore = null;
@@ -160,8 +166,95 @@ function setDebugModeEnabled(nextEnabled) {
   syncDebugControls();
 }
 
+function systemPrefersReducedMotion() {
+  return window.matchMedia(REDUCED_MOTION_MEDIA).matches;
+}
+
+function normalizePopupBehaviorPrefs(candidate) {
+  const source = candidate && typeof candidate === "object" ? candidate : {};
+  return {
+    avoidStylus: source.avoidStylus !== false,
+    motionReduced: source.motionReduced === true,
+  };
+}
+
+function defaultPopupBehaviorPrefs() {
+  return {
+    avoidStylus: true,
+    motionReduced: systemPrefersReducedMotion(),
+  };
+}
+
+function loadPopupBehaviorPrefs() {
+  const fallback = defaultPopupBehaviorPrefs();
+
+  try {
+    const raw = window.localStorage.getItem(POPUP_BEHAVIOR_PREFS_KEY);
+    if (!raw) {
+      return fallback;
+    }
+    const parsed = JSON.parse(raw);
+    return normalizePopupBehaviorPrefs({ ...fallback, ...(parsed ?? {}) });
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function savePopupBehaviorPrefs(prefs) {
+  window.localStorage.setItem(POPUP_BEHAVIOR_PREFS_KEY, JSON.stringify(normalizePopupBehaviorPrefs(prefs)));
+}
+
+function updatePopupBehaviorUi() {
+  const prefs = normalizePopupBehaviorPrefs(popupBehaviorPrefs);
+  const systemReduced = systemPrefersReducedMotion();
+  const effectiveMotionReduced = prefs.motionReduced || systemReduced;
+
+  if (popupAvoidStylusToggle instanceof HTMLInputElement) {
+    popupAvoidStylusToggle.checked = prefs.avoidStylus;
+  }
+
+  if (popupReducedMotionToggle instanceof HTMLInputElement) {
+    popupReducedMotionToggle.checked = effectiveMotionReduced;
+    popupReducedMotionToggle.disabled = systemReduced;
+    popupReducedMotionToggle.title = systemReduced
+      ? "System reduced-motion preference is active."
+      : "";
+  }
+
+  if (popupBehaviorOutput) {
+    popupBehaviorOutput.textContent = `avoid:${prefs.avoidStylus ? "on" : "off"} motion:${effectiveMotionReduced ? "reduced" : "normal"}`;
+  }
+}
+
+function setPopupBehaviorPrefs(nextPrefs) {
+  popupBehaviorPrefs = normalizePopupBehaviorPrefs(nextPrefs);
+  savePopupBehaviorPrefs(popupBehaviorPrefs);
+  updatePopupBehaviorUi();
+}
+
 function viewportCenterAnchor() {
   return runtime.camera.screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
+}
+
+function uniqueTags(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const tags = [];
+  const seen = new Set();
+  for (const value of values) {
+    if (typeof value !== "string" || !value.trim()) {
+      continue;
+    }
+    const tag = value.trim();
+    if (seen.has(tag)) {
+      continue;
+    }
+    seen.add(tag);
+    tags.push(tag);
+  }
+  return tags;
 }
 
 function normalizeCreationIntent(intent) {
@@ -273,6 +366,80 @@ function withCreationProvenance(metadata, intent) {
     creationSourceWidgetId: normalized.sourceWidgetId,
     creationContextId: normalized.contextId,
     creationCreatedAt: nowIso(),
+  };
+}
+
+function resolvePopupSourceDocumentId(intent, fallbackDocumentId = null, useActiveFallback = true) {
+  const normalized = normalizeCreationIntent(intent);
+  if (normalized?.sourceWidgetId) {
+    const linked = documentManager.getDocumentByWidgetId(normalized.sourceWidgetId);
+    if (linked?.id) {
+      return linked.id;
+    }
+  }
+
+  if (typeof fallbackDocumentId === "string" && fallbackDocumentId.trim()) {
+    return fallbackDocumentId;
+  }
+
+  if (!useActiveFallback) {
+    return null;
+  }
+
+  const active = documentManager.getActiveDocument();
+  return active?.id ?? null;
+}
+
+function buildPopupMetadata({
+  metadata,
+  intent,
+  fallbackTitle = "Reference",
+  fallbackType = "reference-popup",
+  useActiveDocumentFallback = true,
+} = {}) {
+  const source = metadata && typeof metadata === "object" ? metadata : {};
+  const normalizedIntent = normalizeCreationIntent(intent);
+  const existingPopupMetadata =
+    source.popupMetadata && typeof source.popupMetadata === "object" ? source.popupMetadata : {};
+  const resolvedTitle =
+    typeof source.title === "string" && source.title.trim()
+      ? source.title.trim()
+      : typeof existingPopupMetadata.title === "string" && existingPopupMetadata.title.trim()
+        ? existingPopupMetadata.title.trim()
+        : fallbackTitle;
+
+  const sourceDocumentId = resolvePopupSourceDocumentId(
+    intent,
+    existingPopupMetadata.sourceDocumentId ?? null,
+    useActiveDocumentFallback,
+  );
+
+  return {
+    ...source,
+    title: resolvedTitle,
+    popupMetadata: {
+      id:
+        typeof existingPopupMetadata.id === "string" && existingPopupMetadata.id.trim()
+          ? existingPopupMetadata.id
+          : makeId("popup"),
+      title: resolvedTitle,
+      type:
+        typeof existingPopupMetadata.type === "string" && existingPopupMetadata.type.trim()
+          ? existingPopupMetadata.type
+          : fallbackType,
+      sourceDocumentId,
+      tags: uniqueTags(
+        Array.isArray(existingPopupMetadata.tags) && existingPopupMetadata.tags.length > 0
+          ? existingPopupMetadata.tags
+          : normalizedIntent?.createdFrom
+            ? [normalizedIntent.createdFrom]
+            : [],
+      ),
+      createdAt:
+        typeof existingPopupMetadata.createdAt === "string" && existingPopupMetadata.createdAt.trim()
+          ? existingPopupMetadata.createdAt
+          : nowIso(),
+    },
   };
 }
 
@@ -474,6 +641,37 @@ function syncPdfDocumentMetadata() {
     if (created) {
       widget.metadata.documentId = created.id;
     }
+  }
+}
+
+function syncReferencePopupMetadata() {
+  for (const widget of runtime.listWidgets()) {
+    if (!widget || widget.type !== "reference-popup") {
+      continue;
+    }
+
+    const currentMetadata = widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {};
+    const currentPopupMetadata =
+      currentMetadata.popupMetadata && typeof currentMetadata.popupMetadata === "object"
+        ? currentMetadata.popupMetadata
+        : null;
+
+    if (
+      currentPopupMetadata &&
+      typeof currentPopupMetadata.id === "string" &&
+      currentPopupMetadata.id.trim() &&
+      typeof currentPopupMetadata.type === "string" &&
+      currentPopupMetadata.type.trim() &&
+      Array.isArray(currentPopupMetadata.tags)
+    ) {
+      continue;
+    }
+
+    widget.metadata = buildPopupMetadata({
+      metadata: currentMetadata,
+      fallbackTitle: currentMetadata.title ?? "Reference",
+      useActiveDocumentFallback: false,
+    });
   }
 }
 
@@ -708,6 +906,7 @@ function updateWidgetUi() {
 
   pruneActiveDocuments();
   syncPdfDocumentMetadata();
+  syncReferencePopupMetadata();
   updateDocumentSwitcherUi();
 
   updateWhitespaceZoneCount();
@@ -731,6 +930,11 @@ async function ensureReferencePopupInteractions() {
   popupInteractions = popupModule.createReferencePopupInteractions({
     runtime,
     onPopupMutated: () => updateWidgetUi(),
+    getBehaviorPrefs: () => ({
+      ...popupBehaviorPrefs,
+      motionReduced:
+        normalizePopupBehaviorPrefs(popupBehaviorPrefs).motionReduced || systemPrefersReducedMotion(),
+    }),
   });
 
   return popupInteractions;
@@ -898,10 +1102,14 @@ async function createReferencePopupWidget({ definition = {}, intent = null } = {
       ),
     size: definition.size,
     metadata: withCreationProvenance(
-      {
-        title: definition.metadata?.title ?? "Reference",
-        ...(definition.metadata ?? {}),
-      },
+      buildPopupMetadata({
+        metadata: {
+          title: definition.metadata?.title ?? "Reference",
+          ...(definition.metadata ?? {}),
+        },
+        intent: normalizedIntent,
+        fallbackTitle: definition.metadata?.title ?? "Reference",
+      }),
       normalizedIntent,
     ),
     dataPayload: {
@@ -912,6 +1120,11 @@ async function createReferencePopupWidget({ definition = {}, intent = null } = {
   });
 
   runtime.addWidget(widget);
+  widget.metadata = buildPopupMetadata({
+    metadata: widget.metadata,
+    intent: normalizedIntent,
+    fallbackTitle: widget.metadata?.title ?? "Reference",
+  });
   lastReferenceWidgetId = widget.id;
 
   const sourceDocument = normalizedIntent?.sourceWidgetId
@@ -940,6 +1153,9 @@ async function createReferencePopupFromSnip({ dataUrl, width, height, intent = n
       },
       metadata: {
         title: "Reference",
+        popupMetadata: {
+          tags: ["snip"],
+        },
       },
       dataPayload: {
         imageDataUrl: dataUrl,
@@ -1404,6 +1620,11 @@ async function importWidgetsFromAnotherContext() {
 }
 
 function wireBaseEventHandlers() {
+  const reducedMotionQuery = window.matchMedia(REDUCED_MOTION_MEDIA);
+  if (typeof reducedMotionQuery.addEventListener === "function") {
+    reducedMotionQuery.addEventListener("change", () => updatePopupBehaviorUi());
+  }
+
   instantiateButton?.addEventListener("click", async () => {
     instantiateButton.disabled = true;
     instantiateButton.textContent = "Loading...";
@@ -1491,6 +1712,30 @@ function wireBaseEventHandlers() {
     toolsPanelOpen = !toolsPanelOpen;
     window.localStorage.setItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
     syncToolsUi();
+  });
+
+  popupAvoidStylusToggle?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    setPopupBehaviorPrefs({
+      ...popupBehaviorPrefs,
+      avoidStylus: target.checked,
+    });
+  });
+
+  popupReducedMotionToggle?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    setPopupBehaviorPrefs({
+      ...popupBehaviorPrefs,
+      motionReduced: target.checked,
+    });
   });
 
   detectWhitespaceButton?.addEventListener("click", async () => {
@@ -1938,6 +2183,9 @@ async function setupContextFeatures() {
 }
 
 async function bootstrap() {
+  popupBehaviorPrefs = loadPopupBehaviorPrefs();
+  updatePopupBehaviorUi();
+
   wireBaseEventHandlers();
   wireWidgetInteractionManager();
   wireWidgetCreationController();

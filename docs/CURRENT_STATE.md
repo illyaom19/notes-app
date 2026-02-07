@@ -1,8 +1,8 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 10 (`docs/SPRINT_10_Widget_Discovery_and_Intent_Creation.md`) has now been fully implemented onto current `main`.
-- Sprint 12 remains implemented; Sprint 11 remains skipped per directive.
+- Sprint 13 (`docs/SPRINT_13_Advanced_Popup_Behavior_and_Metadata.md`) has now been implemented onto current `main`.
+- Sprint 10 and Sprint 12 remain implemented; Sprint 11 remains skipped per directive.
 
 ## What Exists Today
 - Core runtime and modular widget architecture:
@@ -29,10 +29,11 @@
 
 ## In Progress
 - No active blocker.
-- Sprint 10 contextual creation pipeline is now active:
-  - Contextual creation command menu (double-tap canvas / `N` shortcut).
-  - Unified `CreationIntent` pipeline for contextual + toolbar/manual creation.
-  - Debug-only fallback create buttons hidden by default and toggleable via debug mode.
+- Sprint 13 popup behavior and metadata are now active:
+  - Popup identity metadata model persisted in widget metadata (`popupMetadata`).
+  - Header identity labels/badges rendered for reference popups.
+  - Stylus-aware avoidance nudges enabled with motion preference gating.
+  - UI toggles for `avoidStylus` and `motionReduced` persisted via local storage.
 
 ## Blockers
 - None.
@@ -66,11 +67,15 @@
   - Pin/unpin and focus-bound-widget actions.
 - Creation intents now carry provenance metadata (`createdFrom`, source/context fields) across manual, suggestion-accepted, and imported paths.
 - Whitespace-driven expanded-space creation now records `createdFrom: suggestion-accepted`.
+- Popup metadata now follows:
+  - `PopupMetadata`: `{ id, title, type, sourceDocumentId, tags[], createdAt }`
+- Popup behavior preferences now follow:
+  - `PopupBehaviorPrefs`: `{ avoidStylus, motionReduced }` (stored at `notes-app.popup.behavior.v1`)
 
 ## Next Actions
-1. Run manual QA on tablet for Sprint 10 + Sprint 12 combined flows (contextual creation, document switching, bindings).
-2. Add targeted regression tests for creation-intent provenance and document binding migration/focus behavior.
-3. Validate production/debug control visibility behavior (`notes-app.debug-controls`, `?debug=1`).
+1. Run tablet QA for Sprint 13 stylus proximity behavior and reduced-motion gating.
+2. Validate popup metadata persistence through save/restore and cross-context import flows.
+3. Add regression tests for popup metadata normalization and behavior-pref toggles.
 
 ## Verification Status
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.

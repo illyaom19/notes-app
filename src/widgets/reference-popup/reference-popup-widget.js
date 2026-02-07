@@ -9,8 +9,55 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function normalizeTags(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const tags = [];
+  const seen = new Set();
+  for (const entry of values) {
+    if (typeof entry !== "string" || !entry.trim()) {
+      continue;
+    }
+    const tag = entry.trim();
+    if (seen.has(tag)) {
+      continue;
+    }
+    seen.add(tag);
+    tags.push(tag);
+  }
+  return tags;
+}
+
+function normalizePopupMetadata(candidate, fallbackTitle) {
+  const source = candidate && typeof candidate === "object" ? candidate : {};
+  return {
+    id:
+      typeof source.id === "string" && source.id.trim()
+        ? source.id
+        : globalThis.crypto?.randomUUID?.() ?? `popup-${Date.now()}`,
+    title:
+      typeof source.title === "string" && source.title.trim() ? source.title.trim() : fallbackTitle,
+    type:
+      typeof source.type === "string" && source.type.trim() ? source.type.trim() : "reference-popup",
+    sourceDocumentId:
+      typeof source.sourceDocumentId === "string" && source.sourceDocumentId.trim()
+        ? source.sourceDocumentId
+        : null,
+    tags: normalizeTags(source.tags),
+    createdAt:
+      typeof source.createdAt === "string" && source.createdAt.trim()
+        ? source.createdAt
+        : new Date().toISOString(),
+  };
+}
+
 export class ReferencePopupWidget extends WidgetBase {
   constructor(definition) {
+    const title = definition.metadata?.title ?? "Ref";
+    const popupMetadata = normalizePopupMetadata(definition.metadata?.popupMetadata, title);
+
     super({
       ...definition,
       size: {
@@ -18,8 +65,9 @@ export class ReferencePopupWidget extends WidgetBase {
         height: Math.max(MIN_SIZE.height, definition.size?.height ?? 210),
       },
       metadata: {
-        title: definition.metadata?.title ?? "Ref",
+        title,
         minimized: Boolean(definition.metadata?.minimized),
+        popupMetadata,
       },
     });
 
@@ -140,13 +188,34 @@ export class ReferencePopupWidget extends WidgetBase {
     const width = this.size.width * camera.zoom;
     const height = this.displayHeight * camera.zoom;
     const headerHeight = HEADER_HEIGHT * camera.zoom;
+    const popupMetadata = normalizePopupMetadata(this.metadata.popupMetadata, this.metadata.title);
+    this.metadata.popupMetadata = popupMetadata;
+    this.metadata.title = popupMetadata.title;
 
     fillStrokeRoundedRect(ctx, screen.x, screen.y, width, height, 16, "#ffffff", "#6f8faa", 1.4);
     fillPill(ctx, screen.x + 10, screen.y + 6, Math.max(90, width - 88), 20 * camera.zoom, "#edf4fb");
 
+    const typeLabel = popupMetadata.type.length > 18 ? `${popupMetadata.type.slice(0, 15)}...` : popupMetadata.type;
+    const typeChipWidth = Math.max(54, Math.min(122, (typeLabel.length + 3) * 6.5 * camera.zoom));
+    fillPill(ctx, screen.x + 16, screen.y + 10 * camera.zoom, typeChipWidth, 12 * camera.zoom, "#d8e9f6");
+
+    ctx.fillStyle = "#245473";
+    ctx.font = `${Math.max(8, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.fillText(typeLabel, screen.x + 21, screen.y + 19 * camera.zoom);
+
     ctx.fillStyle = "#17354d";
     ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(this.metadata.title, screen.x + 18, screen.y + 20 * camera.zoom);
+    ctx.fillText(this.metadata.title, screen.x + 16 + typeChipWidth + 8 * camera.zoom, screen.y + 20 * camera.zoom);
+
+    if (popupMetadata.tags.length > 0) {
+      const firstTag = popupMetadata.tags[0];
+      const tagLabel = `#${firstTag}`;
+      const tagX = screen.x + width - 162 * camera.zoom;
+      fillPill(ctx, tagX, screen.y + 10 * camera.zoom, 56 * camera.zoom, 12 * camera.zoom, "#e6f0f8");
+      ctx.fillStyle = "#43637b";
+      ctx.font = `${Math.max(8, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillText(tagLabel, tagX + 6 * camera.zoom, screen.y + 19 * camera.zoom);
+    }
 
     const minimizeRect = this._minimizeButtonRect();
     const closeRect = this._closeButtonRect();
@@ -174,7 +243,7 @@ export class ReferencePopupWidget extends WidgetBase {
       ctx.drawImage(this._image, screen.x + 10, bodyY + 10, width - 20, bodyH - 20);
     } else {
       ctx.fillStyle = "#50697f";
-      ctx.fillText("v", screen.x + width / 2 - 4, bodyY + 24);
+      ctx.fillText("No capture", screen.x + 16, bodyY + 24);
     }
 
     const resizeRect = this._resizeHandleRect();

@@ -101,6 +101,37 @@ function normalizeIdList(candidate, validIds) {
   return result;
 }
 
+function normalizePopupMetadata(candidate, fallbackTitle) {
+  const source = asPlainObject(candidate);
+  const title =
+    typeof source.title === "string" && source.title.trim()
+      ? source.title.trim()
+      : typeof fallbackTitle === "string" && fallbackTitle.trim()
+        ? fallbackTitle.trim()
+        : "Reference";
+
+  return {
+    id:
+      typeof source.id === "string" && source.id.trim()
+        ? source.id
+        : globalThis.crypto?.randomUUID?.() ?? `popup-${Date.now()}`,
+    title,
+    type:
+      typeof source.type === "string" && source.type.trim()
+        ? source.type.trim()
+        : "reference-popup",
+    sourceDocumentId:
+      typeof source.sourceDocumentId === "string" && source.sourceDocumentId.trim()
+        ? source.sourceDocumentId
+        : null,
+    tags: normalizeIdList(source.tags),
+    createdAt:
+      typeof source.createdAt === "string" && source.createdAt.trim()
+        ? source.createdAt
+        : nowIso(),
+  };
+}
+
 function encodeBytes(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
     return null;
@@ -194,6 +225,8 @@ function sanitizeSerializedWidget(candidate, contextId) {
       typeof dataPayload.sourceLabel === "string" && dataPayload.sourceLabel
         ? dataPayload.sourceLabel
         : "Imported";
+    widget.metadata.popupMetadata = normalizePopupMetadata(widget.metadata.popupMetadata, widget.metadata.title);
+    widget.metadata.title = widget.metadata.popupMetadata.title;
     return widget;
   }
 
@@ -651,6 +684,21 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       clone.metadata.createdFrom = "imported";
       clone.metadata.creationContextId = targetContextId;
       clone.metadata.creationCreatedAt = nowIso();
+
+      if (clone.type === "reference-popup") {
+        const existingPopupMetadata =
+          clone.metadata.popupMetadata && typeof clone.metadata.popupMetadata === "object"
+            ? clone.metadata.popupMetadata
+            : {};
+
+        clone.metadata.popupMetadata = {
+          ...existingPopupMetadata,
+          sourceDocumentId: null,
+          tags: Array.isArray(existingPopupMetadata.tags)
+            ? Array.from(new Set([...existingPopupMetadata.tags, "imported"]))
+            : ["imported"],
+        };
+      }
 
       if (clone.type === "pdf-document") {
         clone.runtimeState = {

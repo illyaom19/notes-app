@@ -35,6 +35,14 @@
           <button id="undo-ink" type="button" disabled>Undo</button>
           <button id="redo-ink" type="button" disabled>Redo</button>
           <button id="start-worker" type="button">Start Worker</button>
+          <label class="toggle-control" for="popup-avoid-stylus">
+            <input id="popup-avoid-stylus" type="checkbox" checked />
+            <span>Avoid Stylus</span>
+          </label>
+          <label class="toggle-control" for="popup-reduced-motion">
+            <input id="popup-reduced-motion" type="checkbox" />
+            <span>Reduce Motion</span>
+          </label>
         </div>
       </section>
 
@@ -45,6 +53,7 @@
         <span><strong>Loaded Modules:</strong> <output id="loaded-modules">none</output></span>
         <span><strong>Widgets:</strong> <output id="widget-count">0</output></span>
         <span><strong>Reference Popups:</strong> <output id="reference-count">0</output></span>
+        <span><strong>Popup Behavior:</strong> <output id="popup-behavior-state">avoid:on motion:normal</output></span>
         <span><strong>Snip:</strong> <output id="snip-state">idle</output></span>
         <span><strong>Whitespace:</strong> <output id="whitespace-state">idle</output></span>
         <span><strong>Whitespace Zones:</strong> <output id="whitespace-zone-count">0</output></span>
