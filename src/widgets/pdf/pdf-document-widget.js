@@ -1,5 +1,6 @@
 import { fillPill, fillStrokeRoundedRect, strokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
+import { resolveWidgetLod, widgetTypeTitle } from "../../features/widget-system/widget-lod.js";
 import { loadPdfJs } from "./pdfjs-loader.js";
 import { PdfTileCache } from "./pdf-tile-cache.js";
 
@@ -345,11 +346,11 @@ export class PdfDocumentWidget extends WidgetBase {
 
     fillPill(ctx, screen.x + 8, screen.y + 8, badgeW, badgeH, "rgba(28, 48, 66, 0.78)");
     ctx.fillStyle = "#f2f7fb";
-    ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.font = `${Math.max(1, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
     ctx.fillText(`${pageNumber}`, screen.x + 20, screen.y + 21 * camera.zoom);
   }
 
-  _drawWhitespaceZone(ctx, camera, zone) {
+  _drawWhitespaceZone(ctx, camera, zone, { showGlyph = true } = {}) {
     const rect = this._zoneWorldRects.get(zone.id);
     if (!rect) {
       return;
@@ -371,9 +372,11 @@ export class PdfDocumentWidget extends WidgetBase {
     const chipY = screen.y + 6;
 
     fillPill(ctx, chipX, chipY, chipW, chipH, zone.collapsed ? "#2d5f84" : "#337eab");
-    ctx.fillStyle = "#f1f7fb";
-    ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(zone.collapsed ? "+" : "-", chipX + 6 * camera.zoom, chipY + 13 * camera.zoom);
+    if (showGlyph) {
+      ctx.fillStyle = "#f1f7fb";
+      ctx.font = `${Math.max(1, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillText(zone.collapsed ? "+" : "-", chipX + 6 * camera.zoom, chipY + 13 * camera.zoom);
+    }
 
     const chipWorld = camera.screenToWorld(chipX, chipY);
     this._whitespaceHitRegions.push({
@@ -472,18 +475,33 @@ export class PdfDocumentWidget extends WidgetBase {
     this._whitespaceHitRegions = [];
 
     const frame = drawFrame(ctx, camera, this);
+    const lod = resolveWidgetLod({
+      cameraZoom: camera.zoom,
+      screenWidth: frame.width,
+      screenHeight: frame.height,
+    });
+    const isLabelOnly = lod === "label-only";
+    const isCompact = lod === "compact";
 
     if (this.loading) {
       ctx.fillStyle = "#1e3548";
-      ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("Loading document...", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
+      ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillText(
+        isLabelOnly ? widgetTypeTitle(this.type) : "Loading document...",
+        frame.screen.x + 18,
+        frame.screen.y + 20 * camera.zoom,
+      );
       return;
     }
 
     if (this.loadError) {
       ctx.fillStyle = "#9b2b2b";
-      ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("Document unavailable", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
+      ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillText(
+        isLabelOnly ? widgetTypeTitle(this.type) : "Document unavailable",
+        frame.screen.x + 18,
+        frame.screen.y + 20 * camera.zoom,
+      );
       return;
     }
 
@@ -492,9 +510,13 @@ export class PdfDocumentWidget extends WidgetBase {
       return;
     }
 
-    const docLabel = `${shortName(this.metadata.title)} • ${this.pageCount} pages`;
+    const docLabel = isLabelOnly
+      ? widgetTypeTitle(this.type)
+      : isCompact
+        ? shortName(this.metadata.title)
+        : `${shortName(this.metadata.title)} • ${this.pageCount} pages`;
     ctx.fillStyle = "#1e3548";
-    ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
     ctx.fillText(docLabel, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
 
     let firstVisiblePage = null;
@@ -552,28 +574,34 @@ export class PdfDocumentWidget extends WidgetBase {
       });
 
       if (drawnTiles === 0) {
-        const screen = camera.worldToScreen(pageBounds.x, pageBounds.y);
-        ctx.fillStyle = "#5c7084";
-        ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-        ctx.fillText("...", screen.x + 12, screen.y + 18 * camera.zoom);
+        if (!isLabelOnly) {
+          const screen = camera.worldToScreen(pageBounds.x, pageBounds.y);
+          ctx.fillStyle = "#5c7084";
+          ctx.font = `${Math.max(1, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+          ctx.fillText("...", screen.x + 12, screen.y + 18 * camera.zoom);
+        }
       }
 
-      const zones = this.whitespaceZones.filter((zone) => zone.pageNumber === pageEntry.pageNumber);
-      for (const zone of zones) {
-        this._drawWhitespaceZone(ctx, camera, zone);
+      if (!isLabelOnly) {
+        const zones = this.whitespaceZones.filter((zone) => zone.pageNumber === pageEntry.pageNumber);
+        for (const zone of zones) {
+          this._drawWhitespaceZone(ctx, camera, zone, { showGlyph: lod === "detail" });
+        }
       }
 
-      this._drawPageBadge(ctx, camera, pageBounds, pageEntry.pageNumber);
+      if (!isLabelOnly) {
+        this._drawPageBadge(ctx, camera, pageBounds, pageEntry.pageNumber);
+      }
     }
 
-    if (firstVisiblePage !== null && lastVisiblePage !== null) {
+    if (!isLabelOnly && firstVisiblePage !== null && lastVisiblePage !== null) {
       const visibleLabel =
         firstVisiblePage === lastVisiblePage
           ? `Page ${firstVisiblePage}`
           : `Pages ${firstVisiblePage}-${lastVisiblePage}`;
 
       ctx.fillStyle = "#5a6f83";
-      ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.font = `${Math.max(1, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
       ctx.fillText(visibleLabel, frame.screen.x + frame.width - 72, frame.screen.y + 20 * camera.zoom);
     }
   }
@@ -583,7 +611,7 @@ export class PdfDocumentWidget extends WidgetBase {
     const frame = drawFrame(ctx, camera, this);
 
     ctx.fillStyle = "#1e3548";
-    ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
     ctx.fillText(`${shortName(this.metadata.title)} • ${this.pageCount} pages`, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
 
     const inset = 10;

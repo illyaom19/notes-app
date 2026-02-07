@@ -1193,10 +1193,9 @@ body[data-ui-mode="production"] .topbar h1 {
   color: #0f4569;
 }
 
-.creation-menu[data-mode="radial"] button:nth-child(1) { left: 50%; top: 17%; }
-.creation-menu[data-mode="radial"] button:nth-child(2) { left: 82%; top: 50%; }
-.creation-menu[data-mode="radial"] button:nth-child(3) { left: 50%; top: 83%; }
-.creation-menu[data-mode="radial"] button:nth-child(4) { left: 18%; top: 50%; }
+.creation-menu[data-mode="radial"] button:nth-child(1) { left: 50%; top: 20%; }
+.creation-menu[data-mode="radial"] button:nth-child(2) { left: 76%; top: 68%; }
+.creation-menu[data-mode="radial"] button:nth-child(3) { left: 24%; top: 68%; }
 
 @media (max-width: 940px) {
   .topbar {

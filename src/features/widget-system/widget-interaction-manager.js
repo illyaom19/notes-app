@@ -252,8 +252,12 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
 
         fillPill(ctx, collapseScreen.x, collapseScreen.y, collapseW, collapseH, "rgba(24, 78, 118, 0.9)");
         ctx.fillStyle = "#f2f8fc";
-        ctx.font = `${Math.max(10, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-        ctx.fillText(widget.collapsed ? "+" : "-", collapseScreen.x + 7 * camera.zoom, collapseScreen.y + 15 * camera.zoom);
+        ctx.font = "11px IBM Plex Sans, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(widget.collapsed ? "+" : "-", collapseScreen.x + collapseW / 2, collapseScreen.y + collapseH / 2);
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
       }
 
       if (flags.resizable) {
@@ -263,8 +267,12 @@ export function createWidgetInteractionManager({ runtime, onWidgetMutated }) {
 
         fillPill(ctx, resizeScreen.x, resizeScreen.y, resizeW, resizeH, "rgba(32, 95, 142, 0.9)");
         ctx.fillStyle = "#f0f8fd";
-        ctx.font = `${Math.max(9, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-        ctx.fillText("[]", resizeScreen.x + 4 * camera.zoom, resizeScreen.y + 14 * camera.zoom);
+        ctx.font = "10px IBM Plex Sans, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("[]", resizeScreen.x + resizeW / 2, resizeScreen.y + resizeH / 2);
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
       }
     },
   };

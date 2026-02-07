@@ -331,6 +331,7 @@ const CREATION_TYPES = new Set([
   "reference-popup",
   "library-reference",
   "pdf-document",
+  "snip",
 ]);
 
 function isFiniteNumber(value) {
@@ -3052,15 +3053,26 @@ async function ensureSnipTool() {
 
   snipTool = snipModule.createSnipTool({
     runtime,
-    onSnipReady: ({ dataUrl, width, height }) => {
+    onSnipReady: ({ dataUrl, width, height, rect }) => {
+      const hasRect =
+        rect &&
+        Number.isFinite(rect.x) &&
+        Number.isFinite(rect.y) &&
+        Number.isFinite(rect.width) &&
+        Number.isFinite(rect.height);
+      const centerX = hasRect ? rect.x + rect.width / 2 : canvas.clientWidth / 2;
+      const centerY = hasRect ? rect.y + rect.height / 2 : canvas.clientHeight / 2;
+      const anchor = runtime.camera.screenToWorld(centerX, centerY);
+      const sourceWidget = runtime.pickWidgetAtScreenPoint(centerX, centerY);
+
       void createReferencePopupFromSnip({
         dataUrl,
         width,
         height,
         intent: createCreationIntent({
           type: "reference-popup",
-          anchor: viewportCenterAnchor(),
-          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+          anchor,
+          sourceWidgetId: sourceWidget?.id ?? runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
           createdFrom: "manual",
         }),
       });
@@ -3592,6 +3604,15 @@ async function executeCreationIntent(intent) {
   if (!normalizedIntent) {
     window.alert("Unsupported widget type.");
     return false;
+  }
+
+  if (normalizedIntent.type === "snip") {
+    const tool = await ensureSnipTool();
+    if (!tool || typeof tool.arm !== "function") {
+      return false;
+    }
+    tool.arm();
+    return true;
   }
 
   if (normalizedIntent.type === "pdf-document") {

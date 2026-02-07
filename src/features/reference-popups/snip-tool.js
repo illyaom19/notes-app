@@ -104,7 +104,12 @@ export function createSnipTool({ runtime, onSnipReady, onStateChange }) {
 
       const dataUrl = captureSnipDataUrl(canvas, rect);
       if (dataUrl) {
-        onSnipReady({ dataUrl, width: rect.width, height: rect.height });
+        onSnipReady({
+          dataUrl,
+          width: rect.width,
+          height: rect.height,
+          rect,
+        });
       }
       emitState();
       return true;
