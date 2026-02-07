@@ -618,6 +618,24 @@ function sanitizeDocumentEntry(candidate, contextId, validWidgetIds) {
           ? candidate.createdAt
           : nowIso(),
     pinned: Boolean(candidate.pinned),
+    sourceDocumentId:
+      typeof candidate.sourceDocumentId === "string" && candidate.sourceDocumentId.trim()
+        ? candidate.sourceDocumentId
+        : null,
+    linkStatus: candidate.linkStatus === "linked" ? "linked" : "frozen",
+    sourceSnapshot:
+      candidate.sourceSnapshot && typeof candidate.sourceSnapshot === "object"
+        ? {
+            title:
+              typeof candidate.sourceSnapshot.title === "string" && candidate.sourceSnapshot.title.trim()
+                ? candidate.sourceSnapshot.title.trim()
+                : null,
+            sourceType:
+              typeof candidate.sourceSnapshot.sourceType === "string" && candidate.sourceSnapshot.sourceType.trim()
+                ? candidate.sourceSnapshot.sourceType.trim()
+                : null,
+          }
+        : null,
     // Keep for migration only, not part of the Sprint 12 canonical document entry.
     referenceWidgetIds: normalizeIdList(candidate.referenceWidgetIds, validWidgetIds),
   };
@@ -711,6 +729,14 @@ function sanitizeWorkspace(candidate, contextId) {
       widgetId: entry.widgetId,
       openedAt: entry.openedAt,
       pinned: entry.pinned,
+      sourceDocumentId: entry.sourceDocumentId,
+      linkStatus: entry.linkStatus,
+      sourceSnapshot: entry.sourceSnapshot
+        ? {
+            title: entry.sourceSnapshot.title,
+            sourceType: entry.sourceSnapshot.sourceType,
+          }
+        : null,
     })),
     documentBindings,
     activeWorkspaceState: {
@@ -870,6 +896,24 @@ function copyDocument(entry, contextId) {
     widgetId: entry.widgetId,
     openedAt: entry.openedAt,
     pinned: Boolean(entry.pinned),
+    sourceDocumentId:
+      typeof entry.sourceDocumentId === "string" && entry.sourceDocumentId.trim()
+        ? entry.sourceDocumentId
+        : null,
+    linkStatus: entry.linkStatus === "linked" ? "linked" : "frozen",
+    sourceSnapshot:
+      entry.sourceSnapshot && typeof entry.sourceSnapshot === "object"
+        ? {
+            title:
+              typeof entry.sourceSnapshot.title === "string" && entry.sourceSnapshot.title.trim()
+                ? entry.sourceSnapshot.title.trim()
+                : null,
+            sourceType:
+              typeof entry.sourceSnapshot.sourceType === "string" && entry.sourceSnapshot.sourceType.trim()
+                ? entry.sourceSnapshot.sourceType.trim()
+                : null,
+          }
+        : null,
   };
 }
 

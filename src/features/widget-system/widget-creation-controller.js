@@ -1,5 +1,5 @@
 const HOLD_TO_OPEN_MS = 420;
-const MOVE_THRESHOLD_PX = 16;
+const MOVE_THRESHOLD_PX = 8;
 
 export function createWidgetCreationController({
   runtime,
@@ -14,10 +14,17 @@ export function createWidgetCreationController({
 
   let holdTimer = null;
   let pointerState = null;
+  const activeTouchPointerIds = new Set();
   let menuPointerId = null;
   let pendingAnchor = null;
   let pendingSourceWidgetId = null;
   let activeCreateType = null;
+  let lastPointerDown = {
+    pointerType: null,
+    pointerId: null,
+    button: null,
+    at: 0,
+  };
 
   function clearHoldTimer() {
     if (holdTimer) {
@@ -109,9 +116,43 @@ export function createWidgetCreationController({
     setActiveButton(buttonAtClientPoint(event.clientX, event.clientY));
   }
 
+  function openFromContextMenu(event, camera) {
+    const rect = canvas.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
+    const widget = runtime.pickWidgetAtScreenPoint(offsetX, offsetY);
+    const anchor = camera.screenToWorld(offsetX, offsetY);
+
+    openMenuAt({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      anchor,
+      sourceWidgetId: widget?.id ?? null,
+      pointerId: null,
+    });
+    setActiveButton(buttonAtClientPoint(event.clientX, event.clientY));
+  }
+
   const inputManager = {
     onPointerDown(event, { camera }) {
+      lastPointerDown = {
+        pointerType: event.pointerType ?? null,
+        pointerId: event.pointerId ?? null,
+        button: typeof event.button === "number" ? event.button : null,
+        at: Date.now(),
+      };
+
       if (event.pointerType !== "touch") {
+        return false;
+      }
+
+      activeTouchPointerIds.add(event.pointerId);
+      if (activeTouchPointerIds.size > 1) {
+        clearHoldTimer();
+        pointerState = null;
+        if (menuElement.dataset.open === "true") {
+          closeMenu();
+        }
         return false;
       }
 
@@ -167,6 +208,10 @@ export function createWidgetCreationController({
     },
 
     onPointerUp(event) {
+      if (event.pointerType === "touch") {
+        activeTouchPointerIds.delete(event.pointerId);
+      }
+
       if (!pointerState || pointerState.pointerId !== event.pointerId) {
         return false;
       }
@@ -196,6 +241,10 @@ export function createWidgetCreationController({
     },
 
     onPointerCancel(event) {
+      if (event.pointerType === "touch") {
+        activeTouchPointerIds.delete(event.pointerId);
+      }
+
       if (!pointerState || pointerState.pointerId !== event.pointerId) {
         return false;
       }
@@ -252,7 +301,26 @@ export function createWidgetCreationController({
     }
   };
 
+  const onCanvasContextMenu = (event) => {
+    const pointerType = event.pointerType ?? null;
+    const fromMousePointer = pointerType === "mouse";
+    const recentMouseRightClick =
+      Date.now() - lastPointerDown.at < 700 &&
+      lastPointerDown.pointerType === "mouse" &&
+      lastPointerDown.button === 2;
+
+    if (!fromMousePointer && !recentMouseRightClick) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeMenu();
+    openFromContextMenu(event, runtime.camera);
+  };
+
   menuElement.addEventListener("click", onMenuClick);
+  canvas.addEventListener("contextmenu", onCanvasContextMenu);
   window.addEventListener("pointerdown", onWindowPointerDown);
   window.addEventListener("keydown", onWindowKeyDown);
   window.addEventListener("resize", closeMenu);
@@ -263,6 +331,7 @@ export function createWidgetCreationController({
     dispose() {
       detachInput();
       menuElement.removeEventListener("click", onMenuClick);
+      canvas.removeEventListener("contextmenu", onCanvasContextMenu);
       window.removeEventListener("pointerdown", onWindowPointerDown);
       window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("resize", closeMenu);

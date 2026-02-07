@@ -31,6 +31,7 @@
   - Context metadata store: `src/features/contexts/context-store.js`
   - Context-scoped workspace persistence: `src/features/contexts/context-workspace-store.js`
   - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
+  - Notebook document source library store: `src/features/notebooks/notebook-document-library-store.js`
 
 ## In Progress
 - No active blocker.
@@ -61,14 +62,14 @@
   - PDF layer strokes stay attached to PDF widgets.
   - Widget layer strokes stay attached to widgets and collapse with collapsed widget bounds.
 - Document registry is now independent from runtime widgets and persisted with explicit bindings:
-  - `DocumentEntry`: `{ id, contextId, title, sourceType, widgetId, openedAt, pinned }`
+  - `DocumentEntry`: `{ id, contextId, title, sourceType, widgetId, openedAt, pinned, sourceDocumentId?, linkStatus, sourceSnapshot? }`
   - `DocumentBindings`: `{ documentId, defaultReferenceIds, formulaSheetIds }`
 - Active document focus brings the document widget plus its bound references/formula widgets to front.
 - Workspace schema now persists `documentBindings` with backward compatibility migration from legacy `referenceWidgetIds`.
 - UI now includes:
-  - Open-document tab strip and list switcher.
   - Document settings panel for reference/formula binding assignment.
   - Pin/unpin and focus-bound-widget actions.
+  - Open-document strip internals remain wired, but strip visibility is now suppressed in UX (`.documents-strip { display: none; }`).
 - Creation intents now carry provenance metadata (`createdFrom`, source/context fields) across manual, suggestion-accepted, and imported paths.
 - Whitespace-driven expanded-space creation now records `createdFrom: suggestion-accepted`.
 - Popup metadata now follows:
@@ -111,9 +112,22 @@
   - Creation menu includes notebook-library insertion (`library-reference`).
 - Notebook library now follows:
   - Shared notebook reference library store at `notes-app.notebook.library.v1`.
+  - Shared notebook document source library store at `notes-app.notebook.documents.v1`.
   - Reference popup long-press menu supports `Save Ref To Notebook`.
   - Linked instances carry `metadata.librarySourceId` and sync metadata-only from the notebook library.
-  - Notebook deletion now clears associated library and section metadata records.
+  - PDF creation flow now offers:
+    - Import new PDF into notebook source library, then instantiate in current section.
+    - Instantiate linked section instance from notebook source.
+    - Instantiate frozen section instance from notebook source.
+  - Linked section instances reconcile at restore time; missing/deleted sources auto-freeze.
+  - Notebook deletion now clears associated reference-library, document-library, and section metadata records.
+- Touch/selection UX hardening now follows:
+  - Touch-origin `contextmenu` is globally suppressed for non-editable targets to prevent native long-press action sheets.
+  - UI text selection/callout is disabled by default, with explicit allow-list for text entry controls (`input`, `textarea`, `select`, contenteditable).
+- Radial creation intent recognition now follows:
+  - Touch radial menu opens only from a long stationary single-touch press.
+  - Multi-touch immediately cancels hold-to-open, preventing pinch/pan false positives.
+  - Desktop right-click opens radial menu for mouse pointers only; stylus-origin context menus are excluded.
 - Search UX now follows:
   - Search results are grouped by current section and other sections in the active notebook.
   - Search panel supports non-selectable group headers.
@@ -139,6 +153,8 @@
 - `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed.
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src /home/illya/io_dev/notes-app/tests | rg '\\.(js|mjs)$'); do node --check \"$f\" || exit 1; done` passed.
 - `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (including new `tests/ui/notebook-sections-store.test.mjs` and `tests/ui/notebook-library-store.test.mjs`).
+- `for f in src/main.js src/features/notebooks/notebook-document-library-store.js src/features/documents/document-manager.js src/features/contexts/context-workspace-store.js tests/ui/notebook-document-library-store.test.mjs tests/ui/document-manager.test.mjs; do node --check \"$f\"; done` passed.
+- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (including new `tests/ui/notebook-document-library-store.test.mjs` and `tests/ui/document-manager.test.mjs`).
 
 ## Last Updated
 - 2026-02-07 (local environment time)

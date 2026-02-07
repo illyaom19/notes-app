@@ -20,6 +20,7 @@ import { createWidgetCreationController } from "./features/widget-system/widget-
 import { createWidgetInteractionManager } from "./features/widget-system/widget-interaction-manager.js";
 import { createNotebookSectionsStore } from "./features/sections/notebook-sections-store.js";
 import { createNotebookLibraryStore } from "./features/notebooks/notebook-library-store.js";
+import { createNotebookDocumentLibraryStore } from "./features/notebooks/notebook-document-library-store.js";
 import { createSectionManagementUi } from "./features/sections/section-management-ui.js";
 
 const importPdfButton = document.querySelector("#import-pdf");
@@ -160,6 +161,7 @@ let contextUiController = null;
 let sectionUiController = null;
 let sectionsStore = createNotebookSectionsStore();
 const notebookLibraryStore = createNotebookLibraryStore();
+const notebookDocumentLibraryStore = createNotebookDocumentLibraryStore();
 
 let activeContextId = null;
 let activeSectionId = null;
@@ -223,6 +225,37 @@ function nowIso() {
 
 function makeId(prefix) {
   return globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+}
+
+function encodeBytesToBase64(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
+    return null;
+  }
+
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return window.btoa(binary);
+}
+
+function decodeBase64ToBytes(base64Value) {
+  if (typeof base64Value !== "string" || !base64Value.trim()) {
+    return null;
+  }
+
+  try {
+    const binary = window.atob(base64Value.trim());
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  } catch (_error) {
+    return null;
+  }
 }
 
 function workspaceScopeId(notebookId = activeContextId, sectionId = activeSectionId) {
@@ -1316,11 +1349,21 @@ function pruneActiveDocuments() {
   documentManager.pruneForWidgets(existingWidgetIds);
 }
 
-function createDocumentEntryForPdf({ title, widgetId }) {
+function createDocumentEntryForPdf({
+  title,
+  widgetId,
+  sourceType = "pdf",
+  sourceDocumentId = null,
+  linkStatus = "frozen",
+  sourceSnapshot = null,
+}) {
   return documentManager.openDocument({
     title,
     widgetId,
-    sourceType: "pdf",
+    sourceType,
+    sourceDocumentId,
+    linkStatus,
+    sourceSnapshot,
   });
 }
 
@@ -1413,6 +1456,84 @@ function setActiveDocument(documentId, { focus = true } = {}) {
   return true;
 }
 
+function syncLinkedNotebookDocumentInstances({ sourceDocumentId = null } = {}) {
+  if (!activeContextId) {
+    return false;
+  }
+
+  const notebookSources = notebookDocumentLibraryStore.listDocuments(activeContextId, { includeDeleted: true });
+  const sourceById = new Map(notebookSources.map((entry) => [entry.id, entry]));
+  const documents = documentManager.listDocuments();
+  let changed = false;
+
+  for (const entry of documents) {
+    const linkedSourceId = entry.sourceDocumentId;
+    if (!linkedSourceId) {
+      continue;
+    }
+    if (sourceDocumentId && linkedSourceId !== sourceDocumentId) {
+      continue;
+    }
+
+    const source = sourceById.get(linkedSourceId);
+    const sourceIsActive = Boolean(source && source.status !== "deleted");
+    const shouldRemainLinked = entry.linkStatus === "linked" && sourceIsActive;
+
+    if (shouldRemainLinked) {
+      const nextTitle = source.title;
+      const nextSourceType = source.sourceType;
+      const nextSnapshot = {
+        title: source.title,
+        sourceType: source.sourceType,
+      };
+
+      documentManager.setDocumentSourceState(entry.id, {
+        sourceDocumentId: source.id,
+        linkStatus: "linked",
+        sourceSnapshot: nextSnapshot,
+        title: nextTitle,
+        sourceType: nextSourceType,
+      });
+
+      const widget = runtime.getWidgetById(entry.widgetId);
+      if (widget?.type === "pdf-document") {
+        widget.metadata = {
+          ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+          title: nextTitle,
+          sourceDocumentId: source.id,
+        };
+      }
+      changed = true;
+      continue;
+    }
+
+    if (entry.linkStatus === "linked" && !sourceIsActive) {
+      const frozenSnapshot = {
+        title: source?.title ?? entry.sourceSnapshot?.title ?? entry.title,
+        sourceType: source?.sourceType ?? entry.sourceSnapshot?.sourceType ?? entry.sourceType,
+      };
+      documentManager.setDocumentSourceState(entry.id, {
+        linkStatus: "frozen",
+        sourceSnapshot: frozenSnapshot,
+        title: frozenSnapshot.title,
+        sourceType: frozenSnapshot.sourceType,
+      });
+
+      const widget = runtime.getWidgetById(entry.widgetId);
+      if (widget?.type === "pdf-document") {
+        widget.metadata = {
+          ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+          title: frozenSnapshot.title,
+          sourceDocumentId: linkedSourceId,
+        };
+      }
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 function syncPdfDocumentMetadata() {
   const documents = documentManager.listDocuments();
   const documentByWidgetId = new Map(documents.map((entry) => [entry.widgetId, entry]));
@@ -1425,6 +1546,10 @@ function syncPdfDocumentMetadata() {
     const linked = documentByWidgetId.get(widget.id);
     if (linked) {
       widget.metadata.documentId = linked.id;
+      widget.metadata.sourceDocumentId = linked.sourceDocumentId ?? null;
+      if (linked.linkStatus === "linked" && typeof linked.title === "string" && linked.title.trim()) {
+        widget.metadata.title = linked.title;
+      }
       continue;
     }
 
@@ -2405,7 +2530,18 @@ async function createDummyWidget(definition = {}, intent = null) {
   return widget;
 }
 
-async function createPdfWidgetFromFile(file, definition = {}, intent = null) {
+async function createPdfWidgetFromBytes({
+  bytes,
+  fileName,
+  definition = {},
+  intent = null,
+  sourceDocument = null,
+  linkStatus = "frozen",
+} = {}) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
+    throw new Error("PDF bytes are unavailable.");
+  }
+
   const normalizedIntent = normalizeCreationIntent(intent);
   const placement = resolvePlacementForCreation({
     type: "pdf-document",
@@ -2415,18 +2551,37 @@ async function createPdfWidgetFromFile(file, definition = {}, intent = null) {
   });
   const finalPosition = definition.position ?? placement.position;
   const finalPlacement = { ...placement, position: finalPosition };
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  const source =
+    sourceDocument && typeof sourceDocument === "object"
+      ? sourceDocument
+      : null;
+  const resolvedTitle =
+    typeof definition.metadata?.title === "string" && definition.metadata.title.trim()
+      ? definition.metadata.title.trim()
+      : typeof source?.title === "string" && source.title.trim()
+        ? source.title.trim()
+        : typeof fileName === "string" && fileName.trim()
+          ? fileName.trim()
+          : "Document";
+  const resolvedFileName =
+    typeof source?.fileName === "string" && source.fileName.trim()
+      ? source.fileName.trim()
+      : typeof fileName === "string" && fileName.trim()
+        ? fileName.trim()
+        : "document.pdf";
+
   const widget = await registry.instantiate("pdf-document", {
     id: definition.id ?? makeId("pdf"),
     position: finalPosition,
     size: placement.size,
     metadata: withCreationProvenance({
-      title: definition.metadata?.title ?? file.name,
+      title: resolvedTitle,
+      sourceDocumentId: source?.id ?? null,
       ...(definition.metadata ?? {}),
     }, normalizedIntent, finalPlacement, "pdf-document"),
     dataPayload: {
       bytes,
-      fileName: file.name,
+      fileName: resolvedFileName,
     },
     collapsed: definition.collapsed,
   });
@@ -2435,15 +2590,71 @@ async function createPdfWidgetFromFile(file, definition = {}, intent = null) {
   lastPdfWidgetId = widget.id;
 
   const documentEntry = createDocumentEntryForPdf({
-    title: widget.metadata?.title ?? file.name,
+    title: resolvedTitle,
     widgetId: widget.id,
+    sourceType: source?.sourceType ?? "pdf",
+    sourceDocumentId: source?.id ?? null,
+    linkStatus: source ? (linkStatus === "linked" ? "linked" : "frozen") : "frozen",
+    sourceSnapshot: source
+      ? {
+          title: source.title,
+          sourceType: source.sourceType,
+        }
+      : null,
   });
   if (documentEntry) {
     widget.metadata.documentId = documentEntry.id;
+    widget.metadata.sourceDocumentId = documentEntry.sourceDocumentId ?? null;
     focusDocumentWidgets(documentEntry.id, { selectPrimary: true });
   }
 
   updateWidgetUi();
+  return widget;
+}
+
+async function createPdfWidgetFromFile(
+  file,
+  definition = {},
+  intent = null,
+  { linkStatus = "linked", sourceDocumentId = null } = {},
+) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let sourceDocument = null;
+
+  if (activeContextId) {
+    const bytesBase64 = encodeBytesToBase64(bytes);
+    if (bytesBase64) {
+      const candidate = {
+        title:
+          typeof definition.metadata?.title === "string" && definition.metadata.title.trim()
+            ? definition.metadata.title.trim()
+            : file.name,
+        sourceType: "pdf",
+        fileName: file.name,
+        bytesBase64,
+        status: "active",
+        tags: ["pdf"],
+      };
+      if (typeof sourceDocumentId === "string" && sourceDocumentId.trim()) {
+        candidate.id = sourceDocumentId.trim();
+      }
+      sourceDocument = notebookDocumentLibraryStore.upsertDocument(activeContextId, candidate);
+    }
+  }
+
+  const widget = await createPdfWidgetFromBytes({
+    bytes,
+    fileName: file.name,
+    definition,
+    intent,
+    sourceDocument,
+    linkStatus,
+  });
+
+  if (sourceDocument) {
+    syncLinkedNotebookDocumentInstances({ sourceDocumentId: sourceDocument.id });
+  }
+
   return widget;
 }
 
@@ -2543,7 +2754,125 @@ async function createReferencePopupFromSnip({ dataUrl, width, height, intent = n
   });
 }
 
-function openPdfPickerForIntent(intent) {
+function listActiveNotebookDocuments() {
+  if (!activeContextId) {
+    return [];
+  }
+  return notebookDocumentLibraryStore.listDocuments(activeContextId);
+}
+
+function promptForNotebookSourceDocument() {
+  const documents = listActiveNotebookDocuments();
+  if (documents.length < 1) {
+    return null;
+  }
+
+  const options = documents.map((entry, index) => `${index + 1}. ${entry.title}`).join("\n");
+  const choice = window.prompt(`Choose notebook document:\n${options}`, "1");
+  if (choice === null) {
+    return null;
+  }
+
+  const index = Number.parseInt(choice, 10) - 1;
+  if (!Number.isFinite(index) || index < 0 || index >= documents.length) {
+    return null;
+  }
+
+  return documents[index];
+}
+
+function resolvePdfCreationFlow() {
+  if (!activeContextId) {
+    return {
+      type: "import-file",
+      linkStatus: "frozen",
+      sourceDocumentId: null,
+      sourceDocument: null,
+    };
+  }
+
+  const notebookDocuments = listActiveNotebookDocuments();
+  if (notebookDocuments.length < 1) {
+    return {
+      type: "import-file",
+      linkStatus: "linked",
+      sourceDocumentId: null,
+      sourceDocument: null,
+    };
+  }
+
+  const choice = window.prompt(
+    [
+      "Choose PDF action:",
+      "1. Import New PDF (save to notebook library)",
+      "2. Place Linked Notebook Document",
+      "3. Place Frozen Notebook Document",
+    ].join("\n"),
+    "1",
+  );
+  if (choice === null) {
+    return null;
+  }
+
+  const selected = Number.parseInt(choice, 10);
+  if (selected === 1) {
+    return {
+      type: "import-file",
+      linkStatus: "linked",
+      sourceDocumentId: null,
+      sourceDocument: null,
+    };
+  }
+
+  if (selected === 2 || selected === 3) {
+    const sourceDocument = promptForNotebookSourceDocument();
+    if (!sourceDocument) {
+      return null;
+    }
+
+    return {
+      type: "instantiate-source",
+      linkStatus: selected === 2 ? "linked" : "frozen",
+      sourceDocumentId: sourceDocument.id,
+      sourceDocument,
+    };
+  }
+
+  return null;
+}
+
+async function createPdfWidgetFromNotebookSource(sourceDocument, intent = null, { linkStatus = "linked" } = {}) {
+  if (!sourceDocument || typeof sourceDocument !== "object") {
+    return null;
+  }
+
+  const bytes = decodeBase64ToBytes(sourceDocument.bytesBase64);
+  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
+    window.alert(`Notebook document "${sourceDocument.title}" is missing PDF bytes.`);
+    return null;
+  }
+
+  const widget = await createPdfWidgetFromBytes({
+    bytes,
+    fileName: sourceDocument.fileName ?? `${sourceDocument.title}.pdf`,
+    definition: {
+      metadata: {
+        title: sourceDocument.title,
+      },
+    },
+    intent,
+    sourceDocument,
+    linkStatus,
+  });
+
+  if (linkStatus === "linked") {
+    syncLinkedNotebookDocumentInstances({ sourceDocumentId: sourceDocument.id });
+  }
+
+  return widget;
+}
+
+function openPdfPickerForIntent(intent, { linkStatus = "linked", sourceDocumentId = null } = {}) {
   if (!(pdfFileInput instanceof HTMLInputElement)) {
     window.alert("PDF input is unavailable.");
     return false;
@@ -2554,7 +2883,14 @@ function openPdfPickerForIntent(intent) {
     return false;
   }
 
-  pendingPdfImportIntent = normalizedIntent;
+  pendingPdfImportIntent = {
+    intent: normalizedIntent,
+    linkStatus: linkStatus === "frozen" ? "frozen" : "linked",
+    sourceDocumentId:
+      typeof sourceDocumentId === "string" && sourceDocumentId.trim()
+        ? sourceDocumentId.trim()
+        : null,
+  };
   pdfFileInput.value = "";
   pdfFileInput.click();
   return true;
@@ -2568,7 +2904,22 @@ async function executeCreationIntent(intent) {
   }
 
   if (normalizedIntent.type === "pdf-document") {
-    return openPdfPickerForIntent(normalizedIntent);
+    const flow = resolvePdfCreationFlow();
+    if (!flow) {
+      return false;
+    }
+
+    if (flow.type === "instantiate-source") {
+      const created = await createPdfWidgetFromNotebookSource(flow.sourceDocument, normalizedIntent, {
+        linkStatus: flow.linkStatus,
+      });
+      return Boolean(created);
+    }
+
+    return openPdfPickerForIntent(normalizedIntent, {
+      linkStatus: flow.linkStatus,
+      sourceDocumentId: flow.sourceDocumentId,
+    });
   }
 
   if (normalizedIntent.type === "dummy") {
@@ -2833,6 +3184,7 @@ async function restoreWorkspaceForActiveContext() {
 
     pruneActiveDocuments();
     syncPdfDocumentMetadata();
+    syncLinkedNotebookDocumentInstances();
     const activeDocument = documentManager.getActiveDocument();
     if (activeDocument) {
       focusDocumentWidgets(activeDocument.id, { selectPrimary: true });
@@ -3203,6 +3555,50 @@ function wireBaseEventHandlers() {
     reducedMotionQuery.addEventListener("change", () => updatePopupBehaviorUi());
   }
 
+  let lastTouchLikeInteractionAt = 0;
+  const markTouchLikeInteraction = () => {
+    lastTouchLikeInteractionAt = Date.now();
+  };
+
+  window.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (event.pointerType === "touch" || event.pointerType === "pen") {
+        markTouchLikeInteraction();
+      }
+    },
+    { capture: true, passive: true },
+  );
+  window.addEventListener(
+    "touchstart",
+    () => {
+      markTouchLikeInteraction();
+    },
+    { capture: true, passive: true },
+  );
+  window.addEventListener(
+    "contextmenu",
+    (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (isTypingTarget(target)) {
+        return;
+      }
+
+      const fromTouchInput =
+        event.pointerType === "touch" ||
+        event.pointerType === "pen" ||
+        Boolean(event.sourceCapabilities?.firesTouchEvents);
+      const isRecentTouch = Date.now() - lastTouchLikeInteractionAt < 1200;
+      if (!fromTouchInput && !isRecentTouch) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    { capture: true },
+  );
+
   instantiateButton?.addEventListener("click", async () => {
     instantiateButton.disabled = true;
     instantiateButton.textContent = "Loading...";
@@ -3535,7 +3931,16 @@ function wireBaseEventHandlers() {
         sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
         createdFrom: "manual",
       });
-      await createPdfWidgetFromFile(file, {}, pendingPdfImportIntent ?? fallbackIntent);
+      const pending = pendingPdfImportIntent;
+      await createPdfWidgetFromFile(
+        file,
+        {},
+        pending?.intent ?? fallbackIntent,
+        {
+          linkStatus: pending?.linkStatus ?? "linked",
+          sourceDocumentId: pending?.sourceDocumentId ?? null,
+        },
+      );
     } catch (error) {
       console.error(error);
       window.alert(`PDF import failed: ${error.message}`);
@@ -3939,6 +4344,7 @@ async function setupContextFeatures() {
     }
     sectionsStore.deleteNotebook(result.deletedContextId);
     notebookLibraryStore.deleteNotebook(result.deletedContextId);
+    notebookDocumentLibraryStore.deleteNotebook(result.deletedContextId);
     activeContextId = result.activeContextId;
     sectionsStore.ensureNotebook(activeContextId);
     activeSectionId = sectionsStore.getActiveSectionId(activeContextId);

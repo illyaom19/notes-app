@@ -18,6 +18,20 @@ body {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--text);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+[contenteditable="plaintext-only"] {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .app-shell {
@@ -290,7 +304,7 @@ body[data-ui-mode="production"] .topbar h1 {
 }
 
 .documents-strip {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 0.6rem;
 }
@@ -721,6 +735,9 @@ body[data-ui-mode="production"] .topbar h1 {
   height: 100%;
   display: block;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   background:
     radial-gradient(circle at 20% 20%, #ffffff, #eef3f7 60%, #e4ebf1 100%);
 }

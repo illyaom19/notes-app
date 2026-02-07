@@ -47,6 +47,24 @@ function sanitizeDocument(entry, contextId) {
     widgetId,
     openedAt: typeof entry.openedAt === "string" ? entry.openedAt : nowIso(),
     pinned: Boolean(entry.pinned),
+    sourceDocumentId:
+      typeof entry.sourceDocumentId === "string" && entry.sourceDocumentId.trim()
+        ? entry.sourceDocumentId
+        : null,
+    linkStatus: entry.linkStatus === "linked" ? "linked" : "frozen",
+    sourceSnapshot:
+      entry.sourceSnapshot && typeof entry.sourceSnapshot === "object"
+        ? {
+            title:
+              typeof entry.sourceSnapshot.title === "string" && entry.sourceSnapshot.title.trim()
+                ? entry.sourceSnapshot.title.trim()
+                : null,
+            sourceType:
+              typeof entry.sourceSnapshot.sourceType === "string" && entry.sourceSnapshot.sourceType.trim()
+                ? entry.sourceSnapshot.sourceType.trim()
+                : null,
+          }
+        : null,
   };
 }
 
@@ -166,7 +184,15 @@ export function createDocumentManager() {
       : sanitized[0]?.id ?? null;
   };
 
-  const openDocument = ({ title, sourceType = "pdf", widgetId, pinned = false } = {}) => {
+  const openDocument = ({
+    title,
+    sourceType = "pdf",
+    widgetId,
+    pinned = false,
+    sourceDocumentId = null,
+    linkStatus = "frozen",
+    sourceSnapshot = null,
+  } = {}) => {
     if (!widgetId) {
       return null;
     }
@@ -176,6 +202,22 @@ export function createDocumentManager() {
       existing.title = title ?? existing.title;
       existing.sourceType = sourceType ?? existing.sourceType;
       existing.pinned = Boolean(existing.pinned || pinned);
+      existing.sourceDocumentId =
+        typeof sourceDocumentId === "string" && sourceDocumentId.trim() ? sourceDocumentId : existing.sourceDocumentId;
+      existing.linkStatus = linkStatus === "linked" ? "linked" : existing.linkStatus;
+      existing.sourceSnapshot =
+        sourceSnapshot && typeof sourceSnapshot === "object"
+          ? {
+              title:
+                typeof sourceSnapshot.title === "string" && sourceSnapshot.title.trim()
+                  ? sourceSnapshot.title.trim()
+                  : existing.sourceSnapshot?.title ?? null,
+              sourceType:
+                typeof sourceSnapshot.sourceType === "string" && sourceSnapshot.sourceType.trim()
+                  ? sourceSnapshot.sourceType.trim()
+                  : existing.sourceSnapshot?.sourceType ?? null,
+            }
+          : existing.sourceSnapshot;
       activeDocumentId = existing.id;
       ensureBinding(existing.id);
       return { ...existing };
@@ -189,6 +231,22 @@ export function createDocumentManager() {
       widgetId,
       openedAt: nowIso(),
       pinned: Boolean(pinned),
+      sourceDocumentId:
+        typeof sourceDocumentId === "string" && sourceDocumentId.trim() ? sourceDocumentId.trim() : null,
+      linkStatus: linkStatus === "linked" ? "linked" : "frozen",
+      sourceSnapshot:
+        sourceSnapshot && typeof sourceSnapshot === "object"
+          ? {
+              title:
+                typeof sourceSnapshot.title === "string" && sourceSnapshot.title.trim()
+                  ? sourceSnapshot.title.trim()
+                  : null,
+              sourceType:
+                typeof sourceSnapshot.sourceType === "string" && sourceSnapshot.sourceType.trim()
+                  ? sourceSnapshot.sourceType.trim()
+                  : null,
+            }
+          : null,
     };
     documents.push(entry);
     activeDocumentId = entry.id;
@@ -219,12 +277,28 @@ export function createDocumentManager() {
     return { ...normalized };
   };
 
-  const ensureDocumentForWidget = ({ widgetId, title, sourceType = "pdf", pinned = false } = {}) => {
+  const ensureDocumentForWidget = ({
+    widgetId,
+    title,
+    sourceType = "pdf",
+    pinned = false,
+    sourceDocumentId = null,
+    linkStatus = "frozen",
+    sourceSnapshot = null,
+  } = {}) => {
     const existing = documents.find((entry) => entry.widgetId === widgetId);
     if (existing) {
       return { ...existing };
     }
-    return openDocument({ widgetId, title, sourceType, pinned });
+    return openDocument({
+      widgetId,
+      title,
+      sourceType,
+      pinned,
+      sourceDocumentId,
+      linkStatus,
+      sourceSnapshot,
+    });
   };
 
   const pruneForWidgets = (validWidgetIds) => {
@@ -306,6 +380,60 @@ export function createDocumentManager() {
 
   const getDocumentByWidgetId = (widgetId) => documents.find((entry) => entry.widgetId === widgetId) ?? null;
 
+  const setDocumentSourceState = (
+    documentId,
+    { sourceDocumentId = null, linkStatus = null, sourceSnapshot = null, title = null, sourceType = null } = {},
+  ) => {
+    const target = documents.find((entry) => entry.id === documentId);
+    if (!target) {
+      return false;
+    }
+
+    if (typeof sourceDocumentId === "string" && sourceDocumentId.trim()) {
+      target.sourceDocumentId = sourceDocumentId.trim();
+    } else if (sourceDocumentId === null) {
+      target.sourceDocumentId = null;
+    }
+
+    if (linkStatus === "linked" || linkStatus === "frozen") {
+      target.linkStatus = linkStatus;
+    }
+
+    if (sourceSnapshot && typeof sourceSnapshot === "object") {
+      target.sourceSnapshot = {
+        title:
+          typeof sourceSnapshot.title === "string" && sourceSnapshot.title.trim()
+            ? sourceSnapshot.title.trim()
+            : target.sourceSnapshot?.title ?? null,
+        sourceType:
+          typeof sourceSnapshot.sourceType === "string" && sourceSnapshot.sourceType.trim()
+            ? sourceSnapshot.sourceType.trim()
+            : target.sourceSnapshot?.sourceType ?? null,
+      };
+    } else if (sourceSnapshot === null && linkStatus === "linked") {
+      target.sourceSnapshot = null;
+    }
+
+    if (typeof title === "string" && title.trim()) {
+      target.title = title.trim();
+    }
+    if (typeof sourceType === "string" && sourceType.trim()) {
+      target.sourceType = sourceType.trim();
+    }
+
+    return true;
+  };
+
+  const listLinkedDocumentsBySource = (sourceDocumentId) => {
+    if (typeof sourceDocumentId !== "string" || !sourceDocumentId.trim()) {
+      return [];
+    }
+
+    return documents
+      .filter((entry) => entry.sourceDocumentId === sourceDocumentId)
+      .map((entry) => ({ ...entry }));
+  };
+
   return {
     setContextId,
     reset,
@@ -326,6 +454,8 @@ export function createDocumentManager() {
     },
     getDocumentById,
     getDocumentByWidgetId,
+    setDocumentSourceState,
+    listLinkedDocumentsBySource,
     getBindings(documentId) {
       return { ...(ensureBinding(documentId) ?? null) };
     },
