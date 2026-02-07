@@ -27,28 +27,43 @@ export function createHintOverlay({
   onReset,
 } = {}) {
   let currentHintId = null;
+  const listeners = [];
+  const bind = (target, type, handler) => {
+    if (!target || typeof target.addEventListener !== "function") {
+      return;
+    }
+    target.addEventListener(type, handler);
+    listeners.push(() => {
+      target.removeEventListener(type, handler);
+    });
+  };
 
-  actionButton?.addEventListener("click", () => {
+  const onActionClick = () => {
     if (!currentHintId) {
       return;
     }
     onAction?.(currentHintId);
-  });
+  };
 
-  dismissButton?.addEventListener("click", () => {
+  const onDismissClick = () => {
     if (!currentHintId) {
       return;
     }
     onDismiss?.(currentHintId);
-  });
+  };
 
-  toggleHintsButton?.addEventListener("click", () => {
+  const onToggleHintsClick = () => {
     onToggleHints?.();
-  });
+  };
 
-  resetButton?.addEventListener("click", () => {
+  const onResetClick = () => {
     onReset?.();
-  });
+  };
+
+  bind(actionButton, "click", onActionClick);
+  bind(dismissButton, "click", onDismissClick);
+  bind(toggleHintsButton, "click", onToggleHintsClick);
+  bind(resetButton, "click", onResetClick);
 
   return {
     show({
@@ -82,6 +97,13 @@ export function createHintOverlay({
         toggleHintsButton.textContent = enabled ? "Disable Hints" : "Enable Hints";
       }
     },
+
+    dispose() {
+      for (const cleanup of listeners.splice(0, listeners.length)) {
+        cleanup();
+      }
+      currentHintId = null;
+      setHidden(rootElement, true);
+    },
   };
 }
-

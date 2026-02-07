@@ -5,7 +5,10 @@ import { resolveWidgetLod, widgetTypeTitle } from "../../features/widget-system/
 const HEADER_HEIGHT = 34;
 const MIN_BODY_HEIGHT = 90;
 const MIN_SIZE = { width: 180, height: 120 };
-const SOURCE_BUTTON_SIZE = { width: 90, height: 18 };
+const SOURCE_BUTTON_SIZE = { width: 100, height: 24 };
+const CONTROL_SIZE_WORLD = 22;
+const CONTROL_PAD_WORLD = 8;
+const CONTROL_GAP_WORLD = 6;
 
 function formatPopupTypeLabel(type) {
   if (type === "definition-citation") {
@@ -246,7 +249,7 @@ export class ReferencePopupWidget extends WidgetBase {
   }
 
   _resizeHandleRect() {
-    const handleSize = 18;
+    const handleSize = CONTROL_SIZE_WORLD;
     return {
       x: this.position.x + this.size.width - handleSize,
       y: this.position.y + this.displayHeight - handleSize,
@@ -256,20 +259,21 @@ export class ReferencePopupWidget extends WidgetBase {
   }
 
   _minimizeButtonRect() {
+    const closeX = this.position.x + this.size.width - CONTROL_PAD_WORLD - CONTROL_SIZE_WORLD;
     return {
-      x: this.position.x + this.size.width - 52,
-      y: this.position.y + 8,
-      width: 16,
-      height: 16,
+      x: closeX - CONTROL_GAP_WORLD - CONTROL_SIZE_WORLD,
+      y: this.position.y + CONTROL_PAD_WORLD,
+      width: CONTROL_SIZE_WORLD,
+      height: CONTROL_SIZE_WORLD,
     };
   }
 
   _closeButtonRect() {
     return {
-      x: this.position.x + this.size.width - 28,
-      y: this.position.y + 8,
-      width: 16,
-      height: 16,
+      x: this.position.x + this.size.width - CONTROL_PAD_WORLD - CONTROL_SIZE_WORLD,
+      y: this.position.y + CONTROL_PAD_WORLD,
+      width: CONTROL_SIZE_WORLD,
+      height: CONTROL_SIZE_WORLD,
     };
   }
 
@@ -392,21 +396,21 @@ export class ReferencePopupWidget extends WidgetBase {
       const closeRect = this._closeButtonRect();
       const minimizeScreen = camera.worldToScreen(minimizeRect.x, minimizeRect.y);
       const closeScreen = camera.worldToScreen(closeRect.x, closeRect.y);
-      const iconSize = 16 * camera.zoom;
+      const iconSize = CONTROL_SIZE_WORLD * camera.zoom;
 
       fillPill(ctx, minimizeScreen.x, minimizeScreen.y, iconSize, iconSize, "#dce7f1");
       fillPill(ctx, closeScreen.x, closeScreen.y, iconSize, iconSize, "#dce7f1");
       ctx.fillStyle = "#284760";
-      ctx.font = `${Math.max(1, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("-", minimizeScreen.x + 6 * camera.zoom, minimizeScreen.y + 12 * camera.zoom);
-      ctx.fillText("x", closeScreen.x + 4 * camera.zoom, closeScreen.y + 12 * camera.zoom);
+      ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillText("-", minimizeScreen.x + 8 * camera.zoom, minimizeScreen.y + 16 * camera.zoom);
+      ctx.fillText("x", closeScreen.x + 6 * camera.zoom, closeScreen.y + 16 * camera.zoom);
 
       const resizeRect = this._resizeHandleRect();
       const resizeScreen = camera.worldToScreen(resizeRect.x, resizeRect.y);
-      const handleSize = 18 * camera.zoom;
+      const handleSize = CONTROL_SIZE_WORLD * camera.zoom;
       fillPill(ctx, resizeScreen.x, resizeScreen.y, handleSize, handleSize, "#7e9db7");
       ctx.fillStyle = "#f2f8fc";
-      ctx.fillText("[]", resizeScreen.x + 3 * camera.zoom, resizeScreen.y + 12 * camera.zoom);
+      ctx.fillText("[]", resizeScreen.x + 5 * camera.zoom, resizeScreen.y + 16 * camera.zoom);
       return;
     }
 
@@ -444,15 +448,15 @@ export class ReferencePopupWidget extends WidgetBase {
     const closeRect = this._closeButtonRect();
     const minimizeScreen = camera.worldToScreen(minimizeRect.x, minimizeRect.y);
     const closeScreen = camera.worldToScreen(closeRect.x, closeRect.y);
-    const iconSize = 16 * camera.zoom;
+    const iconSize = CONTROL_SIZE_WORLD * camera.zoom;
 
     fillPill(ctx, minimizeScreen.x, minimizeScreen.y, iconSize, iconSize, "#dce7f1");
     fillPill(ctx, closeScreen.x, closeScreen.y, iconSize, iconSize, "#dce7f1");
 
     ctx.fillStyle = "#284760";
-    ctx.font = `${Math.max(1, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText("-", minimizeScreen.x + 6 * camera.zoom, minimizeScreen.y + 12 * camera.zoom);
-    ctx.fillText("x", closeScreen.x + 4 * camera.zoom, closeScreen.y + 12 * camera.zoom);
+    ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.fillText("-", minimizeScreen.x + 8 * camera.zoom, minimizeScreen.y + 16 * camera.zoom);
+    ctx.fillText("x", closeScreen.x + 6 * camera.zoom, closeScreen.y + 16 * camera.zoom);
 
     if (this.metadata.minimized) {
       return;

@@ -130,10 +130,17 @@
         Library
       </button>
 
-      <section id="reference-manager-overlay" class="reference-manager-overlay" hidden aria-label="Reference manager">
-        <div id="reference-manager-panel" class="reference-manager-panel">
+      <section id="reference-manager-overlay" class="reference-manager-overlay" hidden aria-hidden="true">
+        <div
+          id="reference-manager-panel"
+          class="reference-manager-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reference-manager-title"
+          tabindex="-1"
+        >
           <header class="reference-manager-header">
-            <h2>Notebook Library</h2>
+            <h2 id="reference-manager-title">Notebook Library</h2>
             <button id="reference-manager-close" type="button">Close</button>
           </header>
           <div class="reference-manager-tabs">

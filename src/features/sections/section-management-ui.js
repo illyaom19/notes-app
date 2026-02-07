@@ -159,6 +159,46 @@ export function createSectionManagementUi({
     onSwitchSection?.(sectionId);
   });
 
+  bind(tabsElement, "keydown", (event) => {
+    if (!(event instanceof KeyboardEvent) || !(tabsElement instanceof HTMLElement)) {
+      return;
+    }
+
+    const buttons = Array.from(tabsElement.querySelectorAll("button[data-section-id]"))
+      .filter((entry) => entry instanceof HTMLButtonElement);
+    if (buttons.length < 1) {
+      return;
+    }
+
+    const activeElement = document.activeElement;
+    const currentIndex = buttons.findIndex((entry) => entry === activeElement);
+    if (currentIndex < 0) {
+      return;
+    }
+
+    let nextIndex = currentIndex;
+    const key = event.key;
+    if (key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % buttons.length;
+    } else if (key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+    } else if (key === "Home") {
+      nextIndex = 0;
+    } else if (key === "End") {
+      nextIndex = buttons.length - 1;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    const target = buttons[nextIndex];
+    target.focus();
+    const sectionId = target.dataset.sectionId;
+    if (sectionId) {
+      onSwitchSection?.(sectionId);
+    }
+  });
+
   return {
     render(sections, activeSectionId) {
       const safeSections = Array.isArray(sections) ? sections : [];
@@ -171,6 +211,9 @@ export function createSectionManagementUi({
           button.className = "section-tab";
           button.dataset.sectionId = section.id;
           button.dataset.active = section.id === activeSectionId ? "true" : "false";
+          button.setAttribute("role", "tab");
+          button.setAttribute("aria-selected", section.id === activeSectionId ? "true" : "false");
+          button.setAttribute("tabindex", section.id === activeSectionId ? "0" : "-1");
           button.textContent = section.name;
           tabsElement.append(button);
         }

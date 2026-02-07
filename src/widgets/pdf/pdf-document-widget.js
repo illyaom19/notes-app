@@ -366,16 +366,16 @@ export class PdfDocumentWidget extends WidgetBase {
       strokeRoundedRect(ctx, screen.x + 4, screen.y + 2, Math.max(10, screenW - 8), Math.max(10, screenH - 4), 10, "rgba(52, 123, 175, 0.72)", 1.2);
     }
 
-    const chipW = Math.max(18, 20 * camera.zoom);
-    const chipH = Math.max(18, 20 * camera.zoom);
+    const chipW = Math.max(34, 26 * camera.zoom);
+    const chipH = Math.max(34, 26 * camera.zoom);
     const chipX = screen.x + 10;
     const chipY = screen.y + 6;
 
     fillPill(ctx, chipX, chipY, chipW, chipH, zone.collapsed ? "#2d5f84" : "#337eab");
     if (showGlyph) {
       ctx.fillStyle = "#f1f7fb";
-      ctx.font = `${Math.max(1, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText(zone.collapsed ? "+" : "-", chipX + 6 * camera.zoom, chipY + 13 * camera.zoom);
+      ctx.font = `${Math.max(1, 14 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillText(zone.collapsed ? "+" : "-", chipX + 10 * camera.zoom, chipY + 21 * camera.zoom);
     }
 
     const chipWorld = camera.screenToWorld(chipX, chipY);

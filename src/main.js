@@ -215,6 +215,322 @@ function safeLocalStorageGetItem(key) {
   }
 }
 
+let activeAppDialog = null;
+
+function closeActiveAppDialog() {
+  if (activeAppDialog instanceof HTMLDialogElement && activeAppDialog.open) {
+    activeAppDialog.close("cancel");
+  }
+  activeAppDialog = null;
+}
+
+function showAppDialog({
+  title = "",
+  message = "",
+  actions = [],
+  buildBody = null,
+  closeOnCancel = true,
+} = {}) {
+  return new Promise((resolve) => {
+    closeActiveAppDialog();
+
+    const dialog = document.createElement("dialog");
+    dialog.className = "app-modal";
+    activeAppDialog = dialog;
+
+    const form = document.createElement("form");
+    form.method = "dialog";
+    form.className = "app-modal__body";
+
+    if (title) {
+      const titleElement = document.createElement("h2");
+      titleElement.className = "app-modal__title";
+      titleElement.textContent = title;
+      form.append(titleElement);
+    }
+
+    if (message) {
+      const messageElement = document.createElement("p");
+      messageElement.className = "app-modal__message";
+      messageElement.textContent = message;
+      form.append(messageElement);
+    }
+
+    if (typeof buildBody === "function") {
+      buildBody(form);
+    }
+
+    const actionsRow = document.createElement("div");
+    actionsRow.className = "app-modal__actions";
+
+    const normalizedActions = actions.length > 0
+      ? actions
+      : [{ id: "ok", label: "OK", variant: "primary" }];
+
+    for (const action of normalizedActions) {
+      const button = document.createElement("button");
+      button.type = "submit";
+      button.className = "app-modal__button";
+      if (action.variant === "primary") {
+        button.classList.add("app-modal__button--primary");
+      } else if (action.variant === "danger") {
+        button.classList.add("app-modal__button--danger");
+      }
+      button.value = action.id;
+      button.textContent = action.label;
+      actionsRow.append(button);
+    }
+
+    form.append(actionsRow);
+    dialog.append(form);
+
+    const cleanup = (result = null) => {
+      dialog.removeEventListener("cancel", onCancel);
+      dialog.removeEventListener("close", onClose);
+      dialog.remove();
+      if (activeAppDialog === dialog) {
+        activeAppDialog = null;
+      }
+      resolve(result);
+    };
+
+    const onCancel = (event) => {
+      if (!closeOnCancel) {
+        event.preventDefault();
+      }
+    };
+
+    const onClose = () => {
+      cleanup(dialog.returnValue || null);
+    };
+
+    dialog.addEventListener("cancel", onCancel);
+    dialog.addEventListener("close", onClose);
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+}
+
+async function showNoticeDialog(message, { title = "Notice", buttonLabel = "OK" } = {}) {
+  await showAppDialog({
+    title,
+    message,
+    actions: [{ id: "ok", label: buttonLabel, variant: "primary" }],
+  });
+}
+
+async function showConfirmDialog({
+  title = "Confirm",
+  message = "",
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  danger = false,
+} = {}) {
+  const result = await showAppDialog({
+    title,
+    message,
+    actions: [
+      { id: "cancel", label: cancelLabel },
+      { id: "confirm", label: confirmLabel, variant: danger ? "danger" : "primary" },
+    ],
+  });
+  return result === "confirm";
+}
+
+async function showTextPromptDialog({
+  title = "Enter value",
+  message = "",
+  label = "Value",
+  defaultValue = "",
+  placeholder = "",
+  confirmLabel = "Save",
+} = {}) {
+  let input = null;
+  const result = await showAppDialog({
+    title,
+    message,
+    actions: [
+      { id: "cancel", label: "Cancel" },
+      { id: "confirm", label: confirmLabel, variant: "primary" },
+    ],
+    buildBody: (root) => {
+      const field = document.createElement("label");
+      field.className = "app-modal__field";
+
+      const fieldLabel = document.createElement("span");
+      fieldLabel.className = "app-modal__field-label";
+      fieldLabel.textContent = label;
+
+      input = document.createElement("input");
+      input.type = "text";
+      input.className = "app-modal__field-input";
+      input.value = defaultValue;
+      input.placeholder = placeholder;
+      input.autocomplete = "off";
+
+      field.append(fieldLabel, input);
+      root.append(field);
+
+      queueMicrotask(() => {
+        input?.focus();
+        input?.select();
+      });
+    },
+  });
+
+  if (result !== "confirm" || !(input instanceof HTMLInputElement)) {
+    return null;
+  }
+  const value = input.value.trim();
+  return value || null;
+}
+
+async function showActionDialog({
+  title = "",
+  message = "",
+  actions = [],
+  cancelLabel = "Cancel",
+} = {}) {
+  if (!Array.isArray(actions) || actions.length < 1) {
+    return null;
+  }
+  const normalizedActions = actions.map((action) => ({
+    id: action.id,
+    label: action.label,
+    variant: action.variant ?? "primary",
+  }));
+  normalizedActions.push({ id: "cancel", label: cancelLabel });
+
+  const result = await showAppDialog({
+    title,
+    message,
+    actions: normalizedActions,
+  });
+  return result === "cancel" ? null : result;
+}
+
+async function showSelectDialog({
+  title = "",
+  message = "",
+  label = "Select an option",
+  options = [],
+  confirmLabel = "Select",
+  defaultOptionId = null,
+} = {}) {
+  if (!Array.isArray(options) || options.length < 1) {
+    return null;
+  }
+
+  let select = null;
+  const result = await showAppDialog({
+    title,
+    message,
+    actions: [
+      { id: "cancel", label: "Cancel" },
+      { id: "confirm", label: confirmLabel, variant: "primary" },
+    ],
+    buildBody: (root) => {
+      const field = document.createElement("label");
+      field.className = "app-modal__field";
+
+      const fieldLabel = document.createElement("span");
+      fieldLabel.className = "app-modal__field-label";
+      fieldLabel.textContent = label;
+
+      select = document.createElement("select");
+      select.className = "app-modal__field-select";
+
+      for (const option of options) {
+        const element = document.createElement("option");
+        element.value = option.id;
+        element.textContent = option.label;
+        select.append(element);
+      }
+
+      if (typeof defaultOptionId === "string" && defaultOptionId.trim()) {
+        select.value = defaultOptionId;
+      }
+
+      field.append(fieldLabel, select);
+      root.append(field);
+
+      queueMicrotask(() => {
+        select?.focus();
+      });
+    },
+  });
+
+  if (result !== "confirm" || !(select instanceof HTMLSelectElement)) {
+    return null;
+  }
+
+  return options.find((option) => option.id === select.value) ?? null;
+}
+
+async function showMultiSelectDialog({
+  title = "",
+  message = "",
+  options = [],
+  confirmLabel = "Apply",
+} = {}) {
+  if (!Array.isArray(options) || options.length < 1) {
+    return [];
+  }
+
+  const checkedById = new Map(options.map((option) => [option.id, false]));
+  const result = await showAppDialog({
+    title,
+    message,
+    actions: [
+      { id: "cancel", label: "Cancel" },
+      { id: "confirm", label: confirmLabel, variant: "primary" },
+    ],
+    buildBody: (root) => {
+      const list = document.createElement("div");
+      list.className = "app-modal__choice-list";
+
+      for (const option of options) {
+        const label = document.createElement("label");
+        label.className = "app-modal__choice-item";
+
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.className = "app-modal__choice-input";
+        input.addEventListener("change", () => {
+          checkedById.set(option.id, input.checked);
+        });
+
+        const text = document.createElement("span");
+        text.className = "app-modal__choice-label";
+        text.textContent = option.label;
+
+        label.append(input, text);
+        list.append(label);
+      }
+
+      root.append(list);
+    },
+  });
+
+  if (result !== "confirm") {
+    return [];
+  }
+
+  return options
+    .map((option) => option.id)
+    .filter((id) => checkedById.get(id) === true);
+}
+
+function formatErrorMessage(error, fallback = "Unknown error.") {
+  if (error instanceof Error && typeof error.message === "string" && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  return fallback;
+}
+
 const registry = new WidgetRegistry();
 registry.register("expanded-area", () => import("./widgets/expanded-area/index.js"));
 registry.register("pdf-document", () => import("./widgets/pdf/index.js"));
@@ -1790,7 +2106,7 @@ async function copyWidgetFromContextMenu(widget) {
   return false;
 }
 
-function renameWidgetFromContextMenu(widget) {
+async function renameWidgetFromContextMenu(widget) {
   if (!widget) {
     return false;
   }
@@ -1803,8 +2119,13 @@ function renameWidgetFromContextMenu(widget) {
         : widget.type === "reference-popup"
           ? "Reference"
           : "Document";
-  const nextTitle = window.prompt("Rename:", currentTitle);
-  if (!nextTitle || !nextTitle.trim()) {
+  const nextTitle = await showTextPromptDialog({
+    title: "Rename Widget",
+    label: "Widget name",
+    defaultValue: currentTitle,
+    confirmLabel: "Rename",
+  });
+  if (!nextTitle) {
     return false;
   }
 
@@ -2097,12 +2418,17 @@ async function createPdfWidgetFromLibraryEntry(sourceDocument, { linkStatus = "l
   });
 }
 
-function renameNotebookReferenceFromManager(entry) {
+async function renameNotebookReferenceFromManager(entry) {
   if (!activeContextId || !entry) {
     return false;
   }
 
-  const nextTitle = window.prompt("Rename notebook reference:", entry.title);
+  const nextTitle = await showTextPromptDialog({
+    title: "Rename Notebook Reference",
+    label: "Reference name",
+    defaultValue: entry.title,
+    confirmLabel: "Rename",
+  });
   if (!nextTitle) {
     return false;
   }
@@ -2116,12 +2442,17 @@ function renameNotebookReferenceFromManager(entry) {
   return true;
 }
 
-function deleteNotebookReferenceFromManager(entry) {
+async function deleteNotebookReferenceFromManager(entry) {
   if (!activeContextId || !entry) {
     return false;
   }
 
-  const confirmed = window.confirm(`Delete notebook reference \"${entry.title}\"?`);
+  const confirmed = await showConfirmDialog({
+    title: "Delete Notebook Reference",
+    message: `Delete notebook reference "${entry.title}"?`,
+    confirmLabel: "Delete",
+    danger: true,
+  });
   if (!confirmed) {
     return false;
   }
@@ -2135,12 +2466,17 @@ function deleteNotebookReferenceFromManager(entry) {
   return true;
 }
 
-function renameNotebookDocumentFromManager(entry) {
+async function renameNotebookDocumentFromManager(entry) {
   if (!activeContextId || !entry) {
     return false;
   }
 
-  const nextTitle = window.prompt("Rename notebook document:", entry.title);
+  const nextTitle = await showTextPromptDialog({
+    title: "Rename Notebook Document",
+    label: "Document name",
+    defaultValue: entry.title,
+    confirmLabel: "Rename",
+  });
   if (!nextTitle) {
     return false;
   }
@@ -2155,12 +2491,17 @@ function renameNotebookDocumentFromManager(entry) {
   return true;
 }
 
-function deleteNotebookDocumentFromManager(entry) {
+async function deleteNotebookDocumentFromManager(entry) {
   if (!activeContextId || !entry) {
     return false;
   }
 
-  const confirmed = window.confirm(`Delete notebook document \"${entry.title}\" from library?`);
+  const confirmed = await showConfirmDialog({
+    title: "Delete Notebook Document",
+    message: `Delete notebook document "${entry.title}" from library?`,
+    confirmLabel: "Delete",
+    danger: true,
+  });
   if (!confirmed) {
     return false;
   }
@@ -2182,7 +2523,9 @@ async function createReferencePopupFromNotebookLibrary(intent) {
 
   const references = notebookLibraryStore.listReferences(activeContextId);
   if (references.length < 1) {
-    window.alert("Notebook library is empty. Save a reference popup first.");
+    await showNoticeDialog("Notebook library is empty. Save a reference first.", {
+      title: "Notebook Library",
+    });
     return false;
   }
 
@@ -2191,14 +2534,24 @@ async function createReferencePopupFromNotebookLibrary(intent) {
     return true;
   }
 
-  const options = references.map((entry, index) => `${index + 1}. ${entry.title}`).join("\n");
-  const choice = window.prompt(`Choose notebook reference:\n${options}`, "1");
-  const index = Number.parseInt(choice ?? "", 10) - 1;
-  if (!Number.isFinite(index) || index < 0 || index >= references.length) {
+  const selected = await showSelectDialog({
+    title: "Import Notebook Reference",
+    message: "Choose a reference to place on the canvas.",
+    label: "Notebook reference",
+    confirmLabel: "Import",
+    options: references.map((entry) => ({
+      id: entry.id,
+      label: entry.title,
+    })),
+  });
+  if (!selected) {
     return false;
   }
 
-  const source = references[index];
+  const source = references.find((entry) => entry.id === selected.id);
+  if (!source) {
+    return false;
+  }
   await createReferencePopupFromLibraryEntry(source, {
     linkStatus: "linked",
     intent: normalizeCreationIntent(intent),
@@ -2522,7 +2875,9 @@ function persistActiveWorkspace() {
 
   if (!hasShownWorkspaceStorageWarning) {
     hasShownWorkspaceStorageWarning = true;
-    window.alert("Storage is full. Recent PDF/widget changes may not persist until space is freed.");
+    void showNoticeDialog("Storage is full. Recent PDF/widget changes may not persist until space is freed.", {
+      title: "Storage",
+    });
   }
 }
 
@@ -3464,27 +3819,30 @@ function listActiveNotebookDocuments() {
   return notebookDocumentLibraryStore.listDocuments(activeContextId);
 }
 
-function promptForNotebookSourceDocument() {
+async function promptForNotebookSourceDocument() {
   const documents = listActiveNotebookDocuments();
   if (documents.length < 1) {
     return null;
   }
 
-  const options = documents.map((entry, index) => `${index + 1}. ${entry.title}`).join("\n");
-  const choice = window.prompt(`Choose notebook document:\n${options}`, "1");
-  if (choice === null) {
+  const selected = await showSelectDialog({
+    title: "Choose Notebook Document",
+    message: "Pick a notebook document to place.",
+    label: "Notebook document",
+    confirmLabel: "Select",
+    options: documents.map((entry) => ({
+      id: entry.id,
+      label: entry.title,
+    })),
+  });
+  if (!selected) {
     return null;
   }
 
-  const index = Number.parseInt(choice, 10) - 1;
-  if (!Number.isFinite(index) || index < 0 || index >= documents.length) {
-    return null;
-  }
-
-  return documents[index];
+  return documents.find((entry) => entry.id === selected.id) ?? null;
 }
 
-function resolvePdfCreationFlow() {
+async function resolvePdfCreationFlow() {
   if (!activeContextId) {
     return {
       type: "import-file",
@@ -3504,21 +3862,20 @@ function resolvePdfCreationFlow() {
     };
   }
 
-  const choice = window.prompt(
-    [
-      "Choose PDF action:",
-      "1. Import New PDF (save to notebook library)",
-      "2. Place Linked Notebook Document",
-      "3. Place Frozen Notebook Document",
-    ].join("\n"),
-    "1",
-  );
-  if (choice === null) {
+  const choice = await showActionDialog({
+    title: "Add PDF",
+    message: "Choose how to add a PDF widget.",
+    actions: [
+      { id: "import-new", label: "Import New PDF", variant: "primary" },
+      { id: "linked", label: "Place Linked Notebook Document", variant: "primary" },
+      { id: "frozen", label: "Place Frozen Notebook Document", variant: "primary" },
+    ],
+  });
+  if (!choice) {
     return null;
   }
 
-  const selected = Number.parseInt(choice, 10);
-  if (selected === 1) {
+  if (choice === "import-new") {
     return {
       type: "import-file",
       linkStatus: "linked",
@@ -3527,15 +3884,15 @@ function resolvePdfCreationFlow() {
     };
   }
 
-  if (selected === 2 || selected === 3) {
-    const sourceDocument = promptForNotebookSourceDocument();
+  if (choice === "linked" || choice === "frozen") {
+    const sourceDocument = await promptForNotebookSourceDocument();
     if (!sourceDocument) {
       return null;
     }
 
     return {
       type: "instantiate-source",
-      linkStatus: selected === 2 ? "linked" : "frozen",
+      linkStatus: choice === "linked" ? "linked" : "frozen",
       sourceDocumentId: sourceDocument.id,
       sourceDocument,
     };
@@ -3553,7 +3910,9 @@ async function createPdfWidgetFromNotebookSource(sourceDocument, intent = null, 
     ? notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, sourceDocument.id)
     : decodeBase64ToBytes(sourceDocument.bytesBase64);
   if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
-    window.alert(`Notebook document "${sourceDocument.title}" is missing PDF bytes.`);
+    await showNoticeDialog(`Notebook document "${sourceDocument.title}" is missing PDF bytes.`, {
+      title: "PDF Import",
+    });
     return null;
   }
 
@@ -3577,9 +3936,9 @@ async function createPdfWidgetFromNotebookSource(sourceDocument, intent = null, 
   return widget;
 }
 
-function openPdfPickerForIntent(intent, { linkStatus = "linked", sourceDocumentId = null } = {}) {
+async function openPdfPickerForIntent(intent, { linkStatus = "linked", sourceDocumentId = null } = {}) {
   if (!(pdfFileInput instanceof HTMLInputElement)) {
-    window.alert("PDF input is unavailable.");
+    await showNoticeDialog("PDF input is unavailable.", { title: "PDF Import" });
     return false;
   }
 
@@ -3604,7 +3963,7 @@ function openPdfPickerForIntent(intent, { linkStatus = "linked", sourceDocumentI
 async function executeCreationIntent(intent) {
   const normalizedIntent = normalizeCreationIntent(intent);
   if (!normalizedIntent) {
-    window.alert("Unsupported widget type.");
+    await showNoticeDialog("Unsupported widget type.", { title: "Widget Creation" });
     return false;
   }
 
@@ -3618,7 +3977,7 @@ async function executeCreationIntent(intent) {
   }
 
   if (normalizedIntent.type === "pdf-document") {
-    const flow = resolvePdfCreationFlow();
+    const flow = await resolvePdfCreationFlow();
     if (!flow) {
       return false;
     }
@@ -3661,7 +4020,9 @@ async function executeCreationIntent(intent) {
     return createReferencePopupFromNotebookLibrary(normalizedIntent);
   }
 
-  window.alert(`Unsupported widget type: ${normalizedIntent.type}`);
+  await showNoticeDialog(`Unsupported widget type: ${normalizedIntent.type}`, {
+    title: "Widget Creation",
+  });
   return false;
 }
 
@@ -3778,7 +4139,9 @@ async function restoreWorkspaceForActiveContext() {
         const migrated = contextWorkspaceStore.saveWorkspace(workspace);
         if (!migrated && !hasShownWorkspaceStorageWarning) {
           hasShownWorkspaceStorageWarning = true;
-          window.alert("Storage is full. Recent PDF/widget changes may not persist until space is freed.");
+          void showNoticeDialog("Storage is full. Recent PDF/widget changes may not persist until space is freed.", {
+            title: "Storage",
+          });
         }
       }
     }
@@ -3952,23 +4315,6 @@ async function switchSection(nextSectionId) {
   }
 }
 
-function parseSelectionInput(input, maxCount) {
-  const pieces = String(input ?? "")
-    .split(",")
-    .map((entry) => Number.parseInt(entry.trim(), 10))
-    .filter((entry) => Number.isFinite(entry));
-
-  const picked = new Set();
-  for (const value of pieces) {
-    if (value < 1 || value > maxCount) {
-      continue;
-    }
-    picked.add(value - 1);
-  }
-
-  return Array.from(picked).sort((a, b) => a - b);
-}
-
 function selectedMultiValueIds(selectElement) {
   if (!(selectElement instanceof HTMLSelectElement)) {
     return [];
@@ -4034,58 +4380,75 @@ async function importWidgetsFromAnotherContext() {
 
   const candidates = contextStore.list().filter((entry) => entry.id !== activeContextId);
   if (candidates.length < 1) {
-    window.alert("No other notebooks exist yet.");
+    await showNoticeDialog("No other notebooks exist yet.", { title: "Import Widgets" });
     return;
   }
 
-  const contextPrompt = candidates.map((entry, index) => `${index + 1}. ${entry.name}`).join("\n");
-  const contextChoice = window.prompt(`Choose source notebook:\n${contextPrompt}`, "1");
-  const contextIndex = Number.parseInt(contextChoice ?? "", 10) - 1;
-  if (!Number.isFinite(contextIndex) || contextIndex < 0 || contextIndex >= candidates.length) {
+  const selectedContext = await showSelectDialog({
+    title: "Import Widgets",
+    message: "Choose the source notebook.",
+    label: "Notebook",
+    confirmLabel: "Continue",
+    options: candidates.map((entry) => ({
+      id: entry.id,
+      label: entry.name,
+    })),
+  });
+  if (!selectedContext) {
     return;
   }
 
-  const sourceContext = candidates[contextIndex];
+  const sourceContext = candidates.find((entry) => entry.id === selectedContext.id);
+  if (!sourceContext) {
+    return;
+  }
   const sourceSections = sectionsStore.listSections(sourceContext.id);
   if (sourceSections.length < 1) {
-    window.alert("Source notebook has no sections.");
+    await showNoticeDialog("Source notebook has no sections.", { title: "Import Widgets" });
     return;
   }
 
-  const sourceSectionPrompt = sourceSections.map((entry, index) => `${index + 1}. ${entry.name}`).join("\n");
-  const sourceSectionChoice = window.prompt(`Choose source section:\n${sourceSectionPrompt}`, "1");
-  const sourceSectionIndex = Number.parseInt(sourceSectionChoice ?? "", 10) - 1;
-  if (
-    !Number.isFinite(sourceSectionIndex) ||
-    sourceSectionIndex < 0 ||
-    sourceSectionIndex >= sourceSections.length
-  ) {
+  const selectedSection = await showSelectDialog({
+    title: "Import Widgets",
+    message: `Notebook "${sourceContext.name}" selected. Choose a section.`,
+    label: "Section",
+    confirmLabel: "Continue",
+    options: sourceSections.map((entry) => ({
+      id: entry.id,
+      label: entry.name,
+    })),
+  });
+  if (!selectedSection) {
     return;
   }
 
-  const sourceSection = sourceSections[sourceSectionIndex];
+  const sourceSection = sourceSections.find((entry) => entry.id === selectedSection.id);
+  if (!sourceSection) {
+    return;
+  }
   const sourceScopeId = workspaceScopeId(sourceContext.id, sourceSection.id);
   const sourceWorkspace = contextWorkspaceStore.loadWorkspace(sourceScopeId);
   if (sourceWorkspace.widgets.length < 1) {
-    window.alert("Source notebook section has no widgets to import.");
+    await showNoticeDialog("Source notebook section has no widgets to import.", {
+      title: "Import Widgets",
+    });
     return;
   }
 
-  const widgetPrompt = sourceWorkspace.widgets
-    .map((entry, index) => `${index + 1}. ${entry.type} - ${widgetTitle(entry)}`)
-    .join("\n");
-
-  const widgetChoice = window.prompt(
-    `Choose widget numbers to import (comma separated):\n${widgetPrompt}`,
-    "1",
-  );
-
-  const pickedIndexes = parseSelectionInput(widgetChoice, sourceWorkspace.widgets.length);
-  if (pickedIndexes.length < 1) {
+  const selectedWidgetIds = await showMultiSelectDialog({
+    title: "Import Widgets",
+    message: "Select one or more widgets to import.",
+    confirmLabel: "Import",
+    options: sourceWorkspace.widgets.map((entry) => ({
+      id: entry.id,
+      label: `${entry.type} - ${widgetTitle(entry)}`,
+    })),
+  });
+  if (selectedWidgetIds.length < 1) {
     return;
   }
 
-  const selectedWidgets = pickedIndexes.map((index) => sourceWorkspace.widgets[index]);
+  const selectedWidgets = sourceWorkspace.widgets.filter((entry) => selectedWidgetIds.includes(entry.id));
   const selectedTypes = new Set(selectedWidgets.map((entry) => entry.type));
 
   if (selectedTypes.has("reference-popup")) {
@@ -4238,8 +4601,9 @@ async function importWidgetsFromAnotherContext() {
 
   updateWidgetUi();
 
-  window.alert(
+  await showNoticeDialog(
     `Imported ${importedWidgets.length} widget(s) from "${sourceContext.name}" / "${sourceSection.name}".`,
+    { title: "Import Widgets" },
   );
 }
 
@@ -4375,7 +4739,9 @@ function wireBaseEventHandlers() {
       panel.toggle();
     } catch (error) {
       console.error(error);
-      window.alert(`Research panel failed: ${error.message}`);
+      await showNoticeDialog(`Research panel failed: ${formatErrorMessage(error)}`, {
+        title: "Research",
+      });
     } finally {
       toggleResearchPanelButton.disabled = false;
     }
@@ -4390,7 +4756,9 @@ function wireBaseEventHandlers() {
       scheduleOnboardingRefresh(40);
     } catch (error) {
       console.error(error);
-      window.alert(`Search panel failed: ${error.message}`);
+      await showNoticeDialog(`Search panel failed: ${formatErrorMessage(error)}`, {
+        title: "Search",
+      });
     } finally {
       toggleSearchPanelButton.disabled = false;
     }
@@ -4522,7 +4890,9 @@ function wireBaseEventHandlers() {
       );
     } catch (error) {
       console.error(error);
-      window.alert(`PDF import failed: ${error.message}`);
+      await showNoticeDialog(`PDF import failed: ${formatErrorMessage(error)}`, {
+        title: "PDF Import",
+      });
     } finally {
       pendingPdfImportIntent = null;
       event.target.value = "";
@@ -4547,7 +4917,9 @@ function wireBaseEventHandlers() {
       if (workerStateOutput) {
         workerStateOutput.textContent = "failed";
       }
-      window.alert(`Worker startup failed: ${error.message}`);
+      await showNoticeDialog(`Worker startup failed: ${formatErrorMessage(error)}`, {
+        title: "Worker",
+      });
     } finally {
       startWorkerButton.disabled = false;
       startWorkerButton.textContent = "Start Worker";
@@ -4573,7 +4945,9 @@ function wireBaseEventHandlers() {
       if (inkStateOutput) {
         inkStateOutput.textContent = "failed";
       }
-      window.alert(`Ink initialization failed: ${error.message}`);
+      await showNoticeDialog(`Ink initialization failed: ${formatErrorMessage(error)}`, {
+        title: "Ink",
+      });
     } finally {
       enableInkButton.disabled = false;
       if (enableInkButton instanceof HTMLButtonElement && !inkFeature) {
@@ -4666,6 +5040,10 @@ function wireBaseEventHandlers() {
 
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
+    if (referenceManagerUiController?.isOpen?.()) {
+      return;
+    }
+
     if (key === "escape" && toolsPanelOpen) {
       toolsPanelOpen = false;
       safeLocalStorageSetItem("notes-app.tools-panel.open", "0");
@@ -4692,7 +5070,9 @@ function wireBaseEventHandlers() {
         })
         .catch((error) => {
           console.error(error);
-          window.alert(`Search panel failed: ${error.message}`);
+          void showNoticeDialog(`Search panel failed: ${formatErrorMessage(error)}`, {
+            title: "Search",
+          });
         });
       return;
     }
@@ -4767,8 +5147,8 @@ function wireContextMenu() {
     onCopyWidget: (widget) => copyWidgetFromContextMenu(widget),
     onRenameWidget: (widget) => renameWidgetFromContextMenu(widget),
     onToggleLibrary: (widget) => toggleWidgetLibraryFromContextMenu(widget),
-    onShowWidgetInfo: (widget) => {
-      window.alert(formatWidgetInfo(widget));
+    onShowWidgetInfo: async (widget) => {
+      await showNoticeDialog(formatWidgetInfo(widget), { title: "Widget Info" });
     },
     onWidgetMutated: () => updateWidgetUi(),
   });
@@ -4840,17 +5220,17 @@ function wireReferenceManagerUi() {
       });
       updateWidgetUi();
     },
-    onRenameReference: (entry) => {
-      renameNotebookReferenceFromManager(entry);
+    onRenameReference: async (entry) => {
+      await renameNotebookReferenceFromManager(entry);
     },
-    onDeleteReference: (entry) => {
-      deleteNotebookReferenceFromManager(entry);
+    onDeleteReference: async (entry) => {
+      await deleteNotebookReferenceFromManager(entry);
     },
-    onRenameDocument: (entry) => {
-      renameNotebookDocumentFromManager(entry);
+    onRenameDocument: async (entry) => {
+      await renameNotebookDocumentFromManager(entry);
     },
-    onDeleteDocument: (entry) => {
-      deleteNotebookDocumentFromManager(entry);
+    onDeleteDocument: async (entry) => {
+      await deleteNotebookDocumentFromManager(entry);
     },
   });
 
@@ -4881,7 +5261,9 @@ function wireWidgetCreationController() {
     onCreateIntent: (intent) => {
       void executeCreationIntent(intent).catch((error) => {
         console.error(error);
-        window.alert(`Widget creation failed: ${error.message}`);
+        void showNoticeDialog(`Widget creation failed: ${formatErrorMessage(error)}`, {
+          title: "Widget Creation",
+        });
       });
     },
   });
@@ -4934,7 +5316,12 @@ async function setupContextFeatures() {
   documentManager.setContextId(workspaceScopeId());
 
   const createContextHandler = async () => {
-    const name = window.prompt("Notebook name:", "New Notebook");
+    const name = await showTextPromptDialog({
+      title: "Create Notebook",
+      label: "Notebook name",
+      defaultValue: "New Notebook",
+      confirmLabel: "Create",
+    });
     if (!name) {
       return;
     }
@@ -4943,7 +5330,7 @@ async function setupContextFeatures() {
 
     const created = contextStore.createContext(name, "notebook");
     if (!created) {
-      window.alert("Notebook name cannot be empty.");
+      await showNoticeDialog("Notebook name cannot be empty.", { title: "Notebook" });
       return;
     }
 
@@ -4960,7 +5347,7 @@ async function setupContextFeatures() {
     scheduleOnboardingRefresh(0);
   };
 
-  const renameContextHandler = (contextId = activeContextId) => {
+  const renameContextHandler = async (contextId = activeContextId) => {
     if (!contextStore || !contextId) {
       return;
     }
@@ -4970,14 +5357,19 @@ async function setupContextFeatures() {
       return;
     }
 
-    const nextName = window.prompt("Rename notebook:", target.name);
+    const nextName = await showTextPromptDialog({
+      title: "Rename Notebook",
+      label: "Notebook name",
+      defaultValue: target.name,
+      confirmLabel: "Rename",
+    });
     if (!nextName) {
       return;
     }
 
     const renamed = contextStore.renameContext(target.id, nextName);
     if (!renamed) {
-      window.alert("Notebook name cannot be empty.");
+      await showNoticeDialog("Notebook name cannot be empty.", { title: "Notebook" });
       return;
     }
 
@@ -4995,7 +5387,12 @@ async function setupContextFeatures() {
       return;
     }
 
-    const confirmed = window.confirm(`Delete notebook "${target.name}"?`);
+    const confirmed = await showConfirmDialog({
+      title: "Delete Notebook",
+      message: `Delete notebook "${target.name}"?`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
     if (!confirmed) {
       return;
     }
@@ -5006,7 +5403,7 @@ async function setupContextFeatures() {
 
     const result = contextStore.deleteContext(target.id);
     if (!result) {
-      window.alert("At least one notebook must remain.");
+      await showNoticeDialog("At least one notebook must remain.", { title: "Notebook" });
       return;
     }
 
@@ -5042,7 +5439,12 @@ async function setupContextFeatures() {
     }
 
     const defaultName = `Section ${sectionsStore.listSections(activeContextId).length + 1}`;
-    const name = window.prompt("Section name:", defaultName);
+    const name = await showTextPromptDialog({
+      title: "Create Section",
+      label: "Section name",
+      defaultValue: defaultName,
+      confirmLabel: "Create",
+    });
     if (!name) {
       return;
     }
@@ -5050,7 +5452,7 @@ async function setupContextFeatures() {
     flushWorkspacePersist();
     const created = sectionsStore.createSection(activeContextId, name);
     if (!created) {
-      window.alert("Section name cannot be empty.");
+      await showNoticeDialog("Section name cannot be empty.", { title: "Section" });
       return;
     }
 
@@ -5065,7 +5467,7 @@ async function setupContextFeatures() {
     scheduleOnboardingRefresh(0);
   };
 
-  const renameSectionHandler = (sectionId = activeSectionId) => {
+  const renameSectionHandler = async (sectionId = activeSectionId) => {
     if (!activeContextId || !sectionId) {
       return;
     }
@@ -5075,14 +5477,19 @@ async function setupContextFeatures() {
       return;
     }
 
-    const nextName = window.prompt("Rename section:", section.name);
+    const nextName = await showTextPromptDialog({
+      title: "Rename Section",
+      label: "Section name",
+      defaultValue: section.name,
+      confirmLabel: "Rename",
+    });
     if (!nextName) {
       return;
     }
 
     const renamed = sectionsStore.renameSection(activeContextId, section.id, nextName);
     if (!renamed) {
-      window.alert("Section name cannot be empty.");
+      await showNoticeDialog("Section name cannot be empty.", { title: "Section" });
       return;
     }
 
@@ -5099,7 +5506,12 @@ async function setupContextFeatures() {
       return;
     }
 
-    const confirmed = window.confirm(`Delete section "${section.name}"?`);
+    const confirmed = await showConfirmDialog({
+      title: "Delete Section",
+      message: `Delete section "${section.name}"?`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
     if (!confirmed) {
       return;
     }
@@ -5108,7 +5520,7 @@ async function setupContextFeatures() {
     const deletingActiveSection = section.id === activeSectionId;
     const result = sectionsStore.deleteSection(activeContextId, section.id);
     if (!result) {
-      window.alert("At least one section must remain.");
+      await showNoticeDialog("At least one section must remain.", { title: "Section" });
       return;
     }
 
@@ -5140,21 +5552,24 @@ async function setupContextFeatures() {
       return;
     }
 
-    const choice = window.prompt(
-      `Notebook "${target.name}" actions:\n1. Rename Notebook\n2. Delete Notebook`,
-      "1",
-    );
-    if (choice === null) {
+    const action = await showActionDialog({
+      title: `Notebook: ${target.name}`,
+      message: "Choose an action.",
+      actions: [
+        { id: "rename", label: "Rename Notebook", variant: "primary" },
+        { id: "delete", label: "Delete Notebook", variant: "danger" },
+      ],
+    });
+    if (!action) {
       return;
     }
 
-    const normalized = choice.trim().toLowerCase();
-    if (normalized === "1" || normalized === "rename" || normalized === "r") {
-      renameContextHandler(target.id);
+    if (action === "rename") {
+      await renameContextHandler(target.id);
       return;
     }
 
-    if (normalized === "2" || normalized === "delete" || normalized === "d") {
+    if (action === "delete") {
       await deleteContextHandler(target.id);
     }
   };
@@ -5169,21 +5584,24 @@ async function setupContextFeatures() {
       return;
     }
 
-    const choice = window.prompt(
-      `Section "${target.name}" actions:\n1. Rename Section\n2. Delete Section`,
-      "1",
-    );
-    if (choice === null) {
+    const action = await showActionDialog({
+      title: `Section: ${target.name}`,
+      message: "Choose an action.",
+      actions: [
+        { id: "rename", label: "Rename Section", variant: "primary" },
+        { id: "delete", label: "Delete Section", variant: "danger" },
+      ],
+    });
+    if (!action) {
       return;
     }
 
-    const normalized = choice.trim().toLowerCase();
-    if (normalized === "1" || normalized === "rename" || normalized === "r") {
-      renameSectionHandler(target.id);
+    if (action === "rename") {
+      await renameSectionHandler(target.id);
       return;
     }
 
-    if (normalized === "2" || normalized === "delete" || normalized === "d") {
+    if (action === "delete") {
       await deleteSectionHandler(target.id);
     }
   };

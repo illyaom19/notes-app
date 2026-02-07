@@ -117,6 +117,7 @@ export function createSearchPanelController({
       if (entry?.kind === "group-header") {
         const heading = document.createElement("p");
         heading.className = "search-group-heading";
+        heading.setAttribute("role", "presentation");
         heading.textContent = safeLabel(entry.title, "Group");
         resultsContainer.append(heading);
         continue;
@@ -127,6 +128,8 @@ export function createSearchPanelController({
       item.className = "search-result-item";
       item.dataset.active = index === activeIndex ? "true" : "false";
       item.dataset.resultIndex = String(index);
+      item.setAttribute("role", "option");
+      item.setAttribute("aria-selected", index === activeIndex ? "true" : "false");
 
       const title = document.createElement("span");
       title.className = "search-result-title";
@@ -285,12 +288,6 @@ export function createSearchPanelController({
 
   const onWindowKeyDown = (event) => {
     const key = event.key.toLowerCase();
-
-    if ((event.metaKey || event.ctrlKey) && key === "f") {
-      event.preventDefault();
-      updateOpenState(!open);
-      return;
-    }
 
     if (!open) {
       return;

@@ -102,6 +102,7 @@ export function createReferenceManagerUi({
       open: () => {},
       close: () => {},
       toggle: () => {},
+      isOpen: () => false,
       dispose: () => {},
     };
   }
@@ -112,6 +113,7 @@ export function createReferenceManagerUi({
   let documents = [];
   const previewCards = new Map();
   let dragState = null;
+  let lastFocusedBeforeOverlay = null;
   const eventDisposers = [];
 
   function bind(target, type, handler, options) {
@@ -142,13 +144,51 @@ export function createReferenceManagerUi({
   }
 
   function setOverlayOpen(nextOpen) {
+    const wasOpen = overlayOpen;
     overlayOpen = Boolean(nextOpen);
     if (overlayElement instanceof HTMLElement) {
       overlayElement.hidden = !overlayOpen;
       overlayElement.dataset.open = overlayOpen ? "true" : "false";
+      overlayElement.setAttribute("aria-hidden", overlayOpen ? "false" : "true");
     }
     launcherButton.dataset.open = overlayOpen ? "true" : "false";
     launcherButton.setAttribute("aria-expanded", overlayOpen ? "true" : "false");
+
+    if (overlayOpen) {
+      const active = document.activeElement;
+      lastFocusedBeforeOverlay = active instanceof HTMLElement ? active : null;
+      queueMicrotask(() => {
+        const focusables = getOverlayFocusables();
+        const initialTarget = focusables[0] ?? panelElement;
+        if (initialTarget instanceof HTMLElement) {
+          initialTarget.focus();
+        }
+      });
+      return;
+    }
+
+    if (wasOpen) {
+      const restoreTarget =
+        lastFocusedBeforeOverlay instanceof HTMLElement &&
+        document.contains(lastFocusedBeforeOverlay)
+          ? lastFocusedBeforeOverlay
+          : launcherButton;
+      queueMicrotask(() => {
+        restoreTarget.focus();
+      });
+    }
+    lastFocusedBeforeOverlay = null;
+  }
+
+  function getOverlayFocusables() {
+    if (!(panelElement instanceof HTMLElement)) {
+      return [];
+    }
+    return Array.from(
+      panelElement.querySelectorAll(
+        "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+      ),
+    ).filter((entry) => entry instanceof HTMLElement && !entry.hasAttribute("hidden"));
   }
 
   function findEntry(kind, entryId) {
@@ -485,8 +525,29 @@ export function createReferenceManagerUi({
   };
 
   const onWindowKeyDown = (event) => {
+    if (overlayOpen && event.key === "Tab") {
+      const focusables = getOverlayFocusables();
+      if (focusables.length > 0) {
+        const active = document.activeElement;
+        const currentIndex = focusables.findIndex((entry) => entry === active);
+        const nextIndex = event.shiftKey
+          ? currentIndex <= 0
+            ? focusables.length - 1
+            : currentIndex - 1
+          : currentIndex >= focusables.length - 1
+            ? 0
+            : currentIndex + 1;
+        event.preventDefault();
+        event.stopPropagation();
+        focusables[nextIndex]?.focus();
+        return;
+      }
+    }
+
     if (event.key === "Escape") {
       if (overlayOpen) {
+        event.preventDefault();
+        event.stopPropagation();
         setOverlayOpen(false);
         return;
       }
@@ -584,6 +645,10 @@ export function createReferenceManagerUi({
         setTab(tab);
       }
       setOverlayOpen(!overlayOpen);
+    },
+
+    isOpen() {
+      return overlayOpen;
     },
 
     dispose() {
