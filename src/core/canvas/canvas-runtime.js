@@ -112,6 +112,21 @@ export class CanvasRuntime {
     };
   }
 
+  captureTouchPointer(pointerId) {
+    if (!this._touchPointers.has(pointerId)) {
+      return false;
+    }
+
+    this._touchPointers.delete(pointerId);
+    this._touchInteractionPointers.add(pointerId);
+    if (this._touchPointers.size < 2) {
+      this._touchGesture = null;
+    } else {
+      this._touchGesture = this._computeTouchMetrics();
+    }
+    return true;
+  }
+
   setSelectedWidgetId(widgetId) {
     if (!widgetId || !this.getWidgetById(widgetId)) {
       this._selectedWidgetId = null;
@@ -262,6 +277,7 @@ export class CanvasRuntime {
       }
 
       if (event.pointerType === "touch" && this._touchPointers.has(event.pointerId)) {
+        this._dispatchPointer("onPointerUp", event);
         this._touchPointers.delete(event.pointerId);
         if (this._touchPointers.size < 2) {
           this._touchGesture = null;
@@ -301,6 +317,7 @@ export class CanvasRuntime {
       }
 
       if (event.pointerType === "touch" && this._touchPointers.has(event.pointerId)) {
+        this._dispatchPointer("onPointerCancel", event);
         this._touchPointers.delete(event.pointerId);
         if (this._touchPointers.size < 2) {
           this._touchGesture = null;

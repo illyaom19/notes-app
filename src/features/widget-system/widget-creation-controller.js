@@ -1,14 +1,5 @@
-const DOUBLE_TAP_MS = 320;
-const DOUBLE_TAP_DISTANCE_PX = 24;
-
-function isTypingTarget(target) {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement ||
-    (target instanceof HTMLElement && target.isContentEditable)
-  );
-}
+const HOLD_TO_OPEN_MS = 420;
+const MOVE_THRESHOLD_PX = 16;
 
 export function createWidgetCreationController({
   runtime,
@@ -21,72 +12,196 @@ export function createWidgetCreationController({
     return { dispose: () => {} };
   }
 
-  let lastTap = null;
+  let holdTimer = null;
+  let pointerState = null;
+  let menuPointerId = null;
   let pendingAnchor = null;
   let pendingSourceWidgetId = null;
+  let activeCreateType = null;
 
-  const closeMenu = () => {
+  function clearHoldTimer() {
+    if (holdTimer) {
+      window.clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+  }
+
+  function closeMenu() {
+    clearHoldTimer();
+    menuPointerId = null;
+    pointerState = null;
     pendingAnchor = null;
     pendingSourceWidgetId = null;
+    activeCreateType = null;
     menuElement.dataset.open = "false";
     menuElement.style.left = "-9999px";
     menuElement.style.top = "-9999px";
-  };
 
-  const openMenuAt = ({ screenX, screenY, anchor, sourceWidgetId }) => {
+    for (const button of menuElement.querySelectorAll("button[data-create-type]")) {
+      if (button instanceof HTMLButtonElement) {
+        button.dataset.active = "false";
+      }
+    }
+  }
+
+  function buttonAtClientPoint(clientX, clientY) {
+    const element = document.elementFromPoint(clientX, clientY);
+    if (!(element instanceof HTMLElement)) {
+      return null;
+    }
+
+    const button = element.closest("button[data-create-type]");
+    return button instanceof HTMLButtonElement ? button : null;
+  }
+
+  function setActiveButton(button) {
+    const nextType = button?.dataset.createType ?? null;
+    activeCreateType = nextType;
+
+    for (const entry of menuElement.querySelectorAll("button[data-create-type]")) {
+      if (!(entry instanceof HTMLButtonElement)) {
+        continue;
+      }
+
+      entry.dataset.active = entry === button ? "true" : "false";
+    }
+  }
+
+  function openMenuAt({ clientX, clientY, anchor, sourceWidgetId, pointerId }) {
     pendingAnchor = {
       x: anchor.x,
       y: anchor.y,
     };
     pendingSourceWidgetId = sourceWidgetId ?? null;
+    menuPointerId = pointerId;
 
-    const maxX = window.innerWidth - 260;
-    const maxY = window.innerHeight - 220;
-    const nextX = Math.max(10, Math.min(screenX + 10, maxX));
-    const nextY = Math.max(10, Math.min(screenY + 10, maxY));
+    menuElement.dataset.mode = "radial";
+    menuElement.dataset.open = "true";
 
+    // Keep menu centered around hold point, then clamp inside viewport.
+    const diameter = 248;
+    const nextX = Math.max(12, Math.min(clientX - diameter / 2, window.innerWidth - diameter - 12));
+    const nextY = Math.max(12, Math.min(clientY - diameter / 2, window.innerHeight - diameter - 12));
     menuElement.style.left = `${nextX}px`;
     menuElement.style.top = `${nextY}px`;
-    menuElement.dataset.open = "true";
-  };
+  }
+
+  function openFromPointer(event, camera) {
+    if (!pointerState) {
+      return;
+    }
+
+    if (typeof runtime.captureTouchPointer === "function") {
+      runtime.captureTouchPointer(event.pointerId);
+    }
+
+    const widget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
+    const anchor = camera.screenToWorld(event.offsetX, event.offsetY);
+
+    openMenuAt({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      anchor,
+      sourceWidgetId: widget?.id ?? null,
+      pointerId: event.pointerId,
+    });
+
+    setActiveButton(buttonAtClientPoint(event.clientX, event.clientY));
+  }
 
   const inputManager = {
     onPointerDown(event, { camera }) {
-      if (event.pointerType === "pen") {
+      if (event.pointerType !== "touch") {
         return false;
       }
 
-      if (event.button !== 0) {
-        return false;
+      if (menuElement.dataset.open === "true") {
+        return true;
       }
 
-      const now = performance.now();
-      const currentTap = {
-        at: now,
-        x: event.clientX,
-        y: event.clientY,
+      pointerState = {
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        lastClientX: event.clientX,
+        lastClientY: event.clientY,
+        camera,
       };
 
-      const isSecondTap =
-        lastTap &&
-        now - lastTap.at <= DOUBLE_TAP_MS &&
-        Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) <= DOUBLE_TAP_DISTANCE_PX;
+      clearHoldTimer();
+      holdTimer = window.setTimeout(() => {
+        holdTimer = null;
+        if (!pointerState || pointerState.pointerId !== event.pointerId) {
+          return;
+        }
+        openFromPointer(event, camera);
+      }, HOLD_TO_OPEN_MS);
 
-      lastTap = currentTap;
+      return false;
+    },
 
-      if (!isSecondTap) {
+    onPointerMove(event) {
+      if (!pointerState || pointerState.pointerId !== event.pointerId) {
         return false;
       }
 
-      const widget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
-      const anchor = camera.screenToWorld(event.offsetX, event.offsetY);
-      openMenuAt({
-        screenX: event.clientX,
-        screenY: event.clientY,
-        anchor,
-        sourceWidgetId: widget?.id ?? null,
-      });
-      return true;
+      pointerState.lastClientX = event.clientX;
+      pointerState.lastClientY = event.clientY;
+
+      const moved = Math.hypot(
+        pointerState.lastClientX - pointerState.startClientX,
+        pointerState.lastClientY - pointerState.startClientY,
+      );
+
+      if (menuElement.dataset.open === "true") {
+        setActiveButton(buttonAtClientPoint(event.clientX, event.clientY));
+        return true;
+      }
+
+      if (moved >= MOVE_THRESHOLD_PX) {
+        clearHoldTimer();
+        pointerState = null;
+      }
+
+      return false;
+    },
+
+    onPointerUp(event) {
+      if (!pointerState || pointerState.pointerId !== event.pointerId) {
+        return false;
+      }
+
+      clearHoldTimer();
+
+      if (menuElement.dataset.open === "true") {
+        const button = buttonAtClientPoint(event.clientX, event.clientY);
+        const type = button?.dataset.createType ?? activeCreateType;
+
+        if (type && pendingAnchor) {
+          onCreateIntent?.({
+            type,
+            anchor: { ...pendingAnchor },
+            sourceWidgetId: pendingSourceWidgetId,
+            contextId: getActiveContextId?.() ?? null,
+            createdFrom: "manual",
+          });
+        }
+
+        closeMenu();
+        return true;
+      }
+
+      pointerState = null;
+      return false;
+    },
+
+    onPointerCancel(event) {
+      if (!pointerState || pointerState.pointerId !== event.pointerId) {
+        return false;
+      }
+
+      closeMenu();
+      return false;
     },
   };
 
@@ -119,12 +234,12 @@ export function createWidgetCreationController({
       return;
     }
 
-    const target = event.target;
-    if (target instanceof Node && menuElement.contains(target)) {
+    if (menuPointerId === event.pointerId) {
       return;
     }
 
-    if (target === canvas) {
+    const target = event.target;
+    if (target instanceof Node && menuElement.contains(target)) {
       return;
     }
 
@@ -134,26 +249,7 @@ export function createWidgetCreationController({
   const onWindowKeyDown = (event) => {
     if (event.key === "Escape") {
       closeMenu();
-      return;
     }
-
-    if (event.key.toLowerCase() !== "n") {
-      return;
-    }
-
-    if (isTypingTarget(event.target)) {
-      return;
-    }
-
-    event.preventDefault();
-    const widgetId = runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null;
-    const anchor = runtime.camera.screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
-    openMenuAt({
-      screenX: canvas.getBoundingClientRect().left + canvas.clientWidth / 2,
-      screenY: canvas.getBoundingClientRect().top + canvas.clientHeight / 2,
-      anchor,
-      sourceWidgetId: widgetId,
-    });
   };
 
   menuElement.addEventListener("click", onMenuClick);

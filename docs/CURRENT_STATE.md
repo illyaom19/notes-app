@@ -3,6 +3,7 @@
 ## Current Sprint
 - Sprint 18 (`docs/SPRINT_18_Production_UI_Minimalism_and_Onboarding.md`) has now been implemented onto current `main`.
 - Sprint 10 and Sprint 12 remain implemented; Sprint 11 remains skipped per directive.
+- UX flow refactor pass (Notebook + Section composition, radial creation, grouped search, notebook library linking) has been integrated on top of Sprint 18.
 
 ## What Exists Today
 - Core runtime and modular widget architecture:
@@ -99,16 +100,45 @@
     - `{ hintId, dismissedAt, completionState }`
   - Onboarding hint overlays are lazy-loaded and non-blocking.
   - Users can disable/re-enable or reset hints without leaving the canvas workflow.
+- Notebook/Section composition now follows:
+  - Existing context model is treated as notebook scope in UX.
+  - New section state is stored per notebook at `notes-app.notebook.sections.v1`.
+  - Active workspace persistence uses scope key composition `<notebookId>::<sectionId>`.
+  - Legacy notebook-only workspace payloads are migrated lazily into the active section on first load.
+- Creation UX now follows:
+  - Touch-and-hold radial creation is primary (`src/features/widget-system/widget-creation-controller.js`).
+  - Creation menu supports drag-to-highlight and release-to-select.
+  - Creation menu includes notebook-library insertion (`library-reference`).
+- Notebook library now follows:
+  - Shared notebook reference library store at `notes-app.notebook.library.v1`.
+  - Reference popup long-press menu supports `Save Ref To Notebook`.
+  - Linked instances carry `metadata.librarySourceId` and sync metadata-only from the notebook library.
+  - Notebook deletion now clears associated library and section metadata records.
+- Search UX now follows:
+  - Search results are grouped by current section and other sections in the active notebook.
+  - Search panel supports non-selectable group headers.
+  - Result navigation routes across notebook/section scope before focusing target widget.
+- Production-shell adjustments now follow:
+  - Section strip is the persistent interaction rail in production.
+  - Notebook management and gesture settings are exposed via the menu panel (hamburger-like `Menu` button).
+  - Onboarding hint catalog is reduced to three task hints (PDF import, radial create, search/peek).
+- Popup clutter handling now follows:
+  - Reference popup overflow (>3) is auto-minimized and dock-stacked along the viewport edge.
+- Research flow policy (current):
+  - Research panel code remains present for compatibility, but active UX emphasis has shifted to notebook/section/radial/search flows and research remains deferred for future re-introduction.
 
 ## Next Actions
-1. Run tablet-focused usability QA for production mode (tap targets, compact panel behavior, hint visibility while writing).
-2. Validate onboarding progression quality with mixed workflows (direct PDF import, context switching, search-first usage).
-3. Expand UI-mode coverage to additional optional panes (research/search default-open policies by mode).
+1. Run tablet-first UX QA on radial hold creation (hold threshold, accidental activation, drag-release selection confidence).
+2. Validate section migration behavior from legacy context-only payloads across multi-notebook workspaces.
+3. Add explicit notebook-library editing UI (list/manage entries without requiring widget context menu save path).
+4. Decide whether to fully remove hidden/deferred research panel wiring or retain compatibility mode.
 
 ## Verification Status
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.
 - `node --test tests/storage/*.test.mjs` passed.
 - `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed.
+- `for f in $(rg --files /home/illya/io_dev/notes-app/src /home/illya/io_dev/notes-app/tests | rg '\\.(js|mjs)$'); do node --check \"$f\" || exit 1; done` passed.
+- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (including new `tests/ui/notebook-sections-store.test.mjs` and `tests/ui/notebook-library-store.test.mjs`).
 
 ## Last Updated
 - 2026-02-07 (local environment time)

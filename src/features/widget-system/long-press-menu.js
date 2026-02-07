@@ -6,6 +6,7 @@ export function createWidgetContextMenu({
   menuElement,
   runtime,
   onCreateExpanded,
+  onSaveReferenceToLibrary,
   onWidgetMutated,
 }) {
   if (!menuElement) {
@@ -18,6 +19,7 @@ export function createWidgetContextMenu({
   let activeWidgetId = null;
 
   const createButton = menuElement.querySelector('[data-action="create-expanded"]');
+  const saveReferenceButton = menuElement.querySelector('[data-action="save-reference-library"]');
   const toggleButton = menuElement.querySelector('[data-action="toggle-collapse"]');
   const removeButton = menuElement.querySelector('[data-action="remove-widget"]');
 
@@ -39,9 +41,13 @@ export function createWidgetContextMenu({
     activeWidgetId = widget?.id ?? null;
 
     const canActOnWidget = Boolean(widget);
+    const canSaveReference = widget?.type === "reference-popup";
     if (toggleButton) {
       toggleButton.disabled = !canActOnWidget;
       toggleButton.textContent = widget?.collapsed ? "Expand Widget" : "Collapse Widget";
+    }
+    if (saveReferenceButton) {
+      saveReferenceButton.disabled = !canSaveReference;
     }
     if (removeButton) {
       removeButton.disabled = !canActOnWidget;
@@ -67,7 +73,7 @@ export function createWidgetContextMenu({
   };
 
   const startLongPress = (event) => {
-    if (event.pointerType === "pen") {
+    if (event.pointerType !== "mouse") {
       return;
     }
 
@@ -135,6 +141,12 @@ export function createWidgetContextMenu({
     if (action === "toggle-collapse" && activeWidget) {
       activeWidget.setCollapsed(!activeWidget.collapsed);
       onWidgetMutated();
+      closeMenu();
+      return;
+    }
+
+    if (action === "save-reference-library" && activeWidget?.type === "reference-popup") {
+      await onSaveReferenceToLibrary?.(activeWidget);
       closeMenu();
       return;
     }

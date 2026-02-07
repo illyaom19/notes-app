@@ -246,6 +246,18 @@ export function createSearchIndex() {
       return total;
     },
 
+    snapshotEntries() {
+      return Array.from(entriesByWidgetId.values()).map((entry) => ({
+        id: entry.id,
+        contextId: entry.contextId,
+        widgetId: entry.widgetId,
+        fields: {
+          ...entry.fields,
+        },
+        updatedAt: entry.updatedAt,
+      }));
+    },
+
     reindexNow({ runtime, contextId } = {}) {
       if (!runtime || typeof runtime.listWidgets !== "function") {
         return { totalEntries: entriesByWidgetId.size, changed: 0, removed: 0 };

@@ -18,6 +18,9 @@ import { createOnboardingStateService } from "./features/onboarding/onboarding-s
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 import { createWidgetCreationController } from "./features/widget-system/widget-creation-controller.js";
 import { createWidgetInteractionManager } from "./features/widget-system/widget-interaction-manager.js";
+import { createNotebookSectionsStore } from "./features/sections/notebook-sections-store.js";
+import { createNotebookLibraryStore } from "./features/notebooks/notebook-library-store.js";
+import { createSectionManagementUi } from "./features/sections/section-management-ui.js";
 
 const importPdfButton = document.querySelector("#import-pdf");
 const toggleUiModeButton = document.querySelector("#toggle-ui-mode");
@@ -47,6 +50,7 @@ const peekStateOutput = document.querySelector("#peek-state");
 const whitespaceZoneCountOutput = document.querySelector("#whitespace-zone-count");
 const graphCountOutput = document.querySelector("#graph-count");
 const activeContextOutput = document.querySelector("#active-context");
+const activeSectionOutput = document.querySelector("#active-section");
 const documentCountOutput = document.querySelector("#document-count");
 const inkStateOutput = document.querySelector("#ink-state");
 const inkToolOutput = document.querySelector("#ink-tool");
@@ -63,6 +67,11 @@ const researchPanel = document.querySelector("#research-panel");
 const searchPanel = document.querySelector("#search-panel");
 const documentTabs = document.querySelector("#document-tabs");
 const documentSwitcher = document.querySelector("#document-switcher");
+const sectionTabs = document.querySelector("#section-tabs");
+const sectionSwitcher = document.querySelector("#section-switcher");
+const newSectionButton = document.querySelector("#new-section");
+const renameSectionButton = document.querySelector("#rename-section");
+const deleteSectionButton = document.querySelector("#delete-section");
 const documentSettingsHint = document.querySelector("#document-settings-hint");
 const referenceBindingSelect = document.querySelector("#document-reference-bindings");
 const formulaBindingSelect = document.querySelector("#document-formula-bindings");
@@ -148,8 +157,12 @@ let peekModeHoldPointer = false;
 let contextStore = null;
 let contextWorkspaceStore = null;
 let contextUiController = null;
+let sectionUiController = null;
+let sectionsStore = createNotebookSectionsStore();
+const notebookLibraryStore = createNotebookLibraryStore();
 
 let activeContextId = null;
+let activeSectionId = null;
 const documentManager = createDocumentManager();
 let lastPdfWidgetId = null;
 let lastReferenceWidgetId = null;
@@ -212,6 +225,35 @@ function makeId(prefix) {
   return globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 }
 
+function workspaceScopeId(notebookId = activeContextId, sectionId = activeSectionId) {
+  if (
+    typeof notebookId === "string" &&
+    notebookId.trim() &&
+    typeof sectionId === "string" &&
+    sectionId.trim()
+  ) {
+    return `${notebookId}::${sectionId}`;
+  }
+
+  if (typeof notebookId === "string" && notebookId.trim()) {
+    return notebookId;
+  }
+
+  return null;
+}
+
+function parseWorkspaceScopeId(scopeId) {
+  if (typeof scopeId !== "string" || !scopeId.trim()) {
+    return { notebookId: null, sectionId: null };
+  }
+
+  const [notebookId, sectionId] = scopeId.split("::");
+  return {
+    notebookId: notebookId || null,
+    sectionId: sectionId || null,
+  };
+}
+
 function defaultPlacement(baseX, baseY, stepX, stepY) {
   return {
     x: baseX + runtime.getWidgetCount() * stepX,
@@ -224,6 +266,7 @@ const CREATION_TYPES = new Set([
   "expanded-area",
   "graph-widget",
   "reference-popup",
+  "library-reference",
   "pdf-document",
 ]);
 
@@ -244,12 +287,17 @@ function syncDebugControls() {
 }
 
 function syncDocumentSettingsUi() {
+  if (documentsPanel instanceof HTMLElement) {
+    const showDocuments = !isProductionUi() || documentSettingsOpen || debugModeEnabled;
+    documentsPanel.hidden = !showDocuments;
+  }
+
   if (documentSettingsPanel instanceof HTMLElement) {
     documentSettingsPanel.hidden = !documentSettingsOpen;
   }
 
   if (toggleDocumentSettingsButton instanceof HTMLButtonElement) {
-    toggleDocumentSettingsButton.textContent = documentSettingsOpen ? "Hide Doc Settings" : "Doc Settings";
+    toggleDocumentSettingsButton.textContent = documentSettingsOpen ? "Hide Doc Panel" : "Doc Panel";
   }
 }
 
@@ -581,7 +629,7 @@ function normalizeCreationIntent(intent) {
   const contextId =
     typeof intent.contextId === "string" && intent.contextId.trim()
       ? intent.contextId
-      : activeContextId ?? null;
+      : workspaceScopeId();
 
   return {
     type,
@@ -603,7 +651,7 @@ function createCreationIntent({ type, anchor, sourceWidgetId, contextId, created
     type,
     anchor,
     sourceWidgetId,
-    contextId: contextId ?? activeContextId ?? null,
+    contextId: contextId ?? workspaceScopeId(),
     createdFrom: createdFrom ?? "manual",
   });
 }
@@ -858,7 +906,7 @@ function normalizeResearchCapture(candidate) {
     contextId:
       typeof candidate.contextId === "string" && candidate.contextId.trim()
         ? candidate.contextId
-        : activeContextId ?? null,
+        : workspaceScopeId(),
     contentType,
     content,
     citation,
@@ -906,6 +954,32 @@ function activeContextRecord() {
     return null;
   }
   return contextStore.getContextById(activeContextId);
+}
+
+function activeSectionRecord() {
+  if (!sectionsStore || !activeContextId || !activeSectionId) {
+    return null;
+  }
+
+  return sectionsStore
+    .listSections(activeContextId)
+    .find((entry) => entry.id === activeSectionId) ?? null;
+}
+
+function onboardingScopeId() {
+  return workspaceScopeId() ?? activeContextId;
+}
+
+function isScopeInNotebook(scopeId, notebookId) {
+  if (typeof scopeId !== "string" || !scopeId.trim() || typeof notebookId !== "string" || !notebookId.trim()) {
+    return false;
+  }
+
+  if (scopeId === notebookId) {
+    return true;
+  }
+
+  return scopeId.startsWith(`${notebookId}::`);
 }
 
 function updateInkUi(state) {
@@ -968,7 +1042,7 @@ function syncSearchIndexUi(indexedCount = null) {
     Number.isFinite(indexedCount) && indexedCount >= 0
       ? indexedCount
       : searchIndex
-        ? searchIndex.getEntryCount(activeContextId)
+        ? searchIndex.getEntryCount(workspaceScopeId())
         : 0;
   searchIndexCountOutput.textContent = String(count);
 
@@ -996,27 +1070,24 @@ function updateSnipUi({ armed, dragging }) {
 function syncToolsUi() {
   if (controlsPanel instanceof HTMLElement) {
     controlsPanel.hidden = !toolsPanelOpen;
-    controlsPanel.setAttribute("aria-label", isProductionUi() ? "Quick Actions" : "Prototype Controls");
+    controlsPanel.setAttribute("aria-label", isProductionUi() ? "Menu" : "Prototype Controls");
   }
 
   if (toggleToolsButton instanceof HTMLButtonElement) {
-    const labelPrefix = isProductionUi() ? "Quick Actions" : "Tools";
-    toggleToolsButton.textContent = toolsPanelOpen ? `Hide ${labelPrefix}` : `Show ${labelPrefix}`;
+    toggleToolsButton.textContent = toolsPanelOpen ? "Close Menu" : "Menu";
   }
 }
 
 function onboardingHintsCatalog() {
   const widgets = runtime.listWidgets();
   const hasPdf = widgets.some((widget) => widget.type === "pdf-document");
-  const hasReference = widgets.some((widget) => widget.type === "reference-popup");
-  const hasInkFeature = Boolean(inkFeature) && inkStateSnapshot.enabled !== false;
-  const hasInkStrokes = Number.isFinite(inkStateSnapshot.completedStrokes) && inkStateSnapshot.completedStrokes > 0;
+  const hasCreatedWidget = widgets.some((widget) => widget.type !== "pdf-document");
 
   return [
     {
       id: "import-pdf",
       title: "Start With A PDF",
-      body: "Import your source document first. Widgets and references can then stay linked to the right context.",
+      body: "Import your source document into this section to start writing immediately.",
       actionLabel: "Import PDF",
       shouldShow: () => !hasPdf,
       completeWhen: () => hasPdf,
@@ -1025,26 +1096,14 @@ function onboardingHintsCatalog() {
       },
     },
     {
-      id: "capture-reference",
-      title: "Capture A Reference",
-      body: "Tap Start Snip, drag over the PDF, and the reference popup will be created beside your work.",
-      actionLabel: "Start Snip",
-      shouldShow: () => hasPdf && !hasReference,
-      completeWhen: () => hasReference,
+      id: "radial-create",
+      title: "Use Hold Radial Create",
+      body: "Touch-and-hold with your finger on the canvas, then drag to a radial option and release to create.",
+      actionLabel: "Got It",
+      shouldShow: () => hasPdf && !hasCreatedWidget,
+      completeWhen: () => hasCreatedWidget,
       onAction: () => {
-        startSnipButton?.click();
-      },
-    },
-    {
-      id: "ink-with-stylus",
-      title: "Write With Stylus Ink",
-      body: "Ink is stylus-only. Enable ink, then write directly on the canvas or attached widget surfaces.",
-      actionLabel: hasInkFeature ? "Ink Ready" : "Enable Ink",
-      shouldShow: () => widgets.length > 0 && !hasInkStrokes,
-      completeWhen: () => hasInkFeature || hasInkStrokes,
-      onAction: async () => {
-        await ensureInkFeature();
-        setInkEnabled(true);
+        onboardingRuntimeSignals.gestureUsed = true;
       },
     },
     {
@@ -1104,7 +1163,8 @@ async function ensureOnboardingOverlay() {
 }
 
 async function refreshOnboardingHints() {
-  if (!activeContextId) {
+  const scopeId = onboardingScopeId();
+  if (!scopeId) {
     return;
   }
 
@@ -1113,7 +1173,7 @@ async function refreshOnboardingHints() {
     return;
   }
 
-  const hintsEnabled = onboardingStateService.isHintsEnabled(activeContextId);
+  const hintsEnabled = onboardingStateService.isHintsEnabled(scopeId);
   overlay.setHintsEnabled(hintsEnabled);
 
   if (!isProductionUi() || !hintsEnabled) {
@@ -1125,14 +1185,14 @@ async function refreshOnboardingHints() {
   const hints = onboardingHintsCatalog();
   for (let index = 0; index < hints.length; index += 1) {
     const hint = hints[index];
-    const state = onboardingStateService.getHintState(activeContextId, hint.id);
+    const state = onboardingStateService.getHintState(scopeId, hint.id);
     if (state?.completionState === "dismissed") {
       continue;
     }
 
     if (hint.completeWhen()) {
       if (state?.completionState !== "completed") {
-        onboardingStateService.markCompleted(activeContextId, hint.id);
+        onboardingStateService.markCompleted(scopeId, hint.id);
       }
       continue;
     }
@@ -1169,7 +1229,7 @@ function scheduleOnboardingRefresh(delayMs = 50) {
 }
 
 async function handleOnboardingAction(hintId) {
-  if (!activeContextId) {
+  if (!onboardingScopeId()) {
     return;
   }
 
@@ -1188,27 +1248,30 @@ async function handleOnboardingAction(hintId) {
 }
 
 function dismissOnboardingHint(hintId) {
-  if (!activeContextId || !hintId) {
+  const scopeId = onboardingScopeId();
+  if (!scopeId || !hintId) {
     return;
   }
-  onboardingStateService.markDismissed(activeContextId, hintId);
+  onboardingStateService.markDismissed(scopeId, hintId);
   scheduleOnboardingRefresh(0);
 }
 
 function toggleOnboardingHints() {
-  if (!activeContextId) {
+  const scopeId = onboardingScopeId();
+  if (!scopeId) {
     return;
   }
-  const current = onboardingStateService.isHintsEnabled(activeContextId);
-  onboardingStateService.setHintsEnabled(activeContextId, !current);
+  const current = onboardingStateService.isHintsEnabled(scopeId);
+  onboardingStateService.setHintsEnabled(scopeId, !current);
   scheduleOnboardingRefresh(0);
 }
 
 function resetOnboardingHints() {
-  if (!activeContextId) {
+  const scopeId = onboardingScopeId();
+  if (!scopeId) {
     return;
   }
-  onboardingStateService.resetContext(activeContextId);
+  onboardingStateService.resetContext(scopeId);
   onboardingRuntimeSignals.searchOpened = false;
   onboardingRuntimeSignals.peekActivated = false;
   onboardingRuntimeSignals.gestureUsed = false;
@@ -1216,11 +1279,12 @@ function resetOnboardingHints() {
 }
 
 function updateOnboardingControlsUi() {
-  if (!activeContextId) {
+  const scopeId = onboardingScopeId();
+  if (!scopeId) {
     return;
   }
 
-  const hintsEnabled = onboardingStateService.isHintsEnabled(activeContextId);
+  const hintsEnabled = onboardingStateService.isHintsEnabled(scopeId);
   if (toggleOnboardingHintsButton instanceof HTMLButtonElement) {
     toggleOnboardingHintsButton.textContent = hintsEnabled ? "Disable Hints" : "Enable Hints";
   }
@@ -1405,6 +1469,180 @@ function syncReferencePopupMetadata() {
   }
 }
 
+function referenceLibraryEntryFromWidget(widget) {
+  if (!widget || widget.type !== "reference-popup") {
+    return null;
+  }
+
+  const metadata = widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {};
+  const popupMetadata =
+    metadata.popupMetadata && typeof metadata.popupMetadata === "object" ? metadata.popupMetadata : {};
+  const sourceId =
+    typeof metadata.librarySourceId === "string" && metadata.librarySourceId.trim()
+      ? metadata.librarySourceId
+      : null;
+
+  return {
+    id: sourceId ?? makeId("lib-ref"),
+    title: typeof metadata.title === "string" && metadata.title.trim() ? metadata.title.trim() : "Reference",
+    sourceLabel:
+      typeof widget.sourceLabel === "string" && widget.sourceLabel.trim()
+        ? widget.sourceLabel.trim()
+        : "Notebook Reference",
+    popupMetadata: {
+      ...popupMetadata,
+      title:
+        typeof popupMetadata.title === "string" && popupMetadata.title.trim()
+          ? popupMetadata.title.trim()
+          : typeof metadata.title === "string" && metadata.title.trim()
+            ? metadata.title.trim()
+            : "Reference",
+      tags: Array.isArray(popupMetadata.tags)
+        ? popupMetadata.tags.filter((entry) => typeof entry === "string" && entry.trim())
+        : [],
+    },
+  };
+}
+
+async function saveReferenceWidgetToNotebookLibrary(widget) {
+  if (!widget || widget.type !== "reference-popup" || !activeContextId) {
+    return false;
+  }
+
+  const entry = referenceLibraryEntryFromWidget(widget);
+  if (!entry) {
+    return false;
+  }
+
+  const saved = notebookLibraryStore.upsertReference(activeContextId, entry);
+  if (!saved) {
+    return false;
+  }
+
+  widget.metadata = {
+    ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+    title: saved.title,
+    librarySourceId: saved.id,
+    popupMetadata: {
+      ...saved.popupMetadata,
+      title: saved.title,
+    },
+  };
+  return true;
+}
+
+function syncLinkedLibraryMetadata() {
+  if (!activeContextId) {
+    return;
+  }
+
+  for (const widget of runtime.listWidgets()) {
+    if (!widget || widget.type !== "reference-popup") {
+      continue;
+    }
+
+    const sourceId =
+      typeof widget.metadata?.librarySourceId === "string" && widget.metadata.librarySourceId.trim()
+        ? widget.metadata.librarySourceId
+        : null;
+    if (!sourceId) {
+      continue;
+    }
+
+    const source = notebookLibraryStore.getReference(activeContextId, sourceId);
+    if (!source) {
+      continue;
+    }
+
+    widget.metadata = {
+      ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+      title: source.title,
+      librarySourceId: source.id,
+      popupMetadata: {
+        ...source.popupMetadata,
+        title: source.title,
+      },
+    };
+    widget.sourceLabel = source.sourceLabel;
+  }
+}
+
+function applyPopupAutoDocking() {
+  const popups = runtime.listWidgets().filter((widget) => widget?.type === "reference-popup");
+  if (popups.length <= 3) {
+    return;
+  }
+
+  const viewportTopLeft = runtime.camera.screenToWorld(0, 0);
+  const viewportBottomRight = runtime.camera.screenToWorld(canvas.clientWidth, canvas.clientHeight);
+  const minX = Math.min(viewportTopLeft.x, viewportBottomRight.x);
+  const maxX = Math.max(viewportTopLeft.x, viewportBottomRight.x);
+  const minY = Math.min(viewportTopLeft.y, viewportBottomRight.y);
+
+  const dockX = maxX - 220;
+  const dockY = minY + 24;
+  const dockSpacing = 54;
+
+  const overflow = popups.slice(3);
+  for (let index = 0; index < overflow.length; index += 1) {
+    const popup = overflow[index];
+    const targetX = Math.max(minX + 24, dockX);
+    const targetY = dockY + index * dockSpacing;
+
+    if (typeof popup.setMinimized === "function") {
+      popup.setMinimized(true);
+    } else {
+      popup.metadata = {
+        ...(popup.metadata && typeof popup.metadata === "object" ? popup.metadata : {}),
+        minimized: true,
+      };
+    }
+
+    popup.position.x = targetX;
+    popup.position.y = targetY;
+  }
+}
+
+async function createReferencePopupFromNotebookLibrary(intent) {
+  if (!activeContextId) {
+    return false;
+  }
+
+  const references = notebookLibraryStore.listReferences(activeContextId);
+  if (references.length < 1) {
+    window.alert("Notebook library is empty. Save a reference popup first.");
+    return false;
+  }
+
+  const options = references.map((entry, index) => `${index + 1}. ${entry.title}`).join("\n");
+  const choice = window.prompt(`Choose notebook reference:\n${options}`, "1");
+  const index = Number.parseInt(choice ?? "", 10) - 1;
+  if (!Number.isFinite(index) || index < 0 || index >= references.length) {
+    return false;
+  }
+
+  const source = references[index];
+  await createReferencePopupWidget({
+    intent: normalizeCreationIntent(intent),
+    definition: {
+      metadata: {
+        title: source.title,
+        librarySourceId: source.id,
+        popupMetadata: {
+          ...source.popupMetadata,
+          title: source.title,
+          tags: Array.from(new Set([...(source.popupMetadata.tags ?? []), "linked"])),
+        },
+      },
+      dataPayload: {
+        sourceLabel: source.sourceLabel,
+      },
+    },
+  });
+
+  return true;
+}
+
 function widgetDisplayLabel(widget) {
   if (widget.type === "reference-popup") {
     const source = typeof widget.sourceLabel === "string" && widget.sourceLabel.trim() ? widget.sourceLabel : "Ref";
@@ -1568,15 +1806,22 @@ function preferredPdfWidget() {
 }
 
 function updateContextUi() {
-  if (!contextStore || !contextUiController) {
-    return;
+  if (contextStore && contextUiController) {
+    const contexts = contextStore.list();
+    contextUiController.render(contexts, activeContextId);
   }
-  const contexts = contextStore.list();
-  contextUiController.render(contexts, activeContextId);
+
+  if (sectionsStore && sectionUiController && activeContextId) {
+    const sections = sectionsStore.listSections(activeContextId);
+    sectionUiController.render(sections, activeSectionId);
+  } else if (activeSectionOutput instanceof HTMLElement) {
+    activeSectionOutput.textContent = "none";
+  }
 }
 
 function persistActiveWorkspace() {
-  if (!contextWorkspaceStore || !contextStore || !activeContextId || restoringContext) {
+  const scopeId = workspaceScopeId();
+  if (!contextWorkspaceStore || !contextStore || !scopeId || restoringContext) {
     return;
   }
 
@@ -1585,7 +1830,7 @@ function persistActiveWorkspace() {
   const persisted = documentManager.toPersistencePayload();
 
   contextWorkspaceStore.saveFromRuntime({
-    contextId: activeContextId,
+    contextId: scopeId,
     runtime,
     researchCaptures,
     documents: persisted.documents,
@@ -1606,7 +1851,7 @@ function flushWorkspacePersist() {
 }
 
 function scheduleWorkspacePersist() {
-  if (!contextWorkspaceStore || !contextStore || !activeContextId || restoringContext) {
+  if (!contextWorkspaceStore || !contextStore || !workspaceScopeId() || restoringContext) {
     return;
   }
 
@@ -1638,14 +1883,16 @@ function updateWidgetUi() {
   pruneActiveDocuments();
   syncPdfDocumentMetadata();
   syncReferencePopupMetadata();
+  syncLinkedLibraryMetadata();
+  applyPopupAutoDocking();
   updateDocumentSwitcherUi();
 
   updateWhitespaceZoneCount();
   updateContextUi();
-  if (searchIndex && activeContextId) {
+  if (searchIndex && workspaceScopeId()) {
     searchIndex.scheduleReindex({
       runtime,
-      contextId: activeContextId,
+      contextId: workspaceScopeId(),
     });
   } else {
     syncSearchIndexUi(0);
@@ -1656,10 +1903,12 @@ function updateWidgetUi() {
 }
 
 function setContextControlsBusy(nextBusy) {
-  if (!contextUiController) {
-    return;
+  if (contextUiController) {
+    contextUiController.setControlsDisabled(nextBusy);
   }
-  contextUiController.setControlsDisabled(nextBusy);
+  if (sectionUiController) {
+    sectionUiController.setControlsDisabled(nextBusy);
+  }
 }
 
 function centerCameraOnWidget(widget) {
@@ -1684,12 +1933,14 @@ async function jumpToSearchResult(result) {
     return false;
   }
 
-  if (
-    typeof result.contextId === "string" &&
-    result.contextId.trim() &&
-    result.contextId !== activeContextId
-  ) {
-    await switchContext(result.contextId);
+  if (typeof result.contextId === "string" && result.contextId.trim()) {
+    const scope = parseWorkspaceScopeId(result.contextId);
+    if (scope.notebookId && scope.notebookId !== activeContextId) {
+      await switchContext(scope.notebookId);
+    }
+    if (scope.sectionId && scope.sectionId !== activeSectionId) {
+      await switchSection(scope.sectionId);
+    }
   }
 
   const widget = runtime.getWidgetById(result.widgetId);
@@ -1727,8 +1978,8 @@ async function ensureSearchFeatures() {
     });
   }
 
-  if (activeContextId) {
-    searchIndex.reindexNow({ runtime, contextId: activeContextId });
+  if (workspaceScopeId()) {
+    searchIndex.reindexNow({ runtime, contextId: workspaceScopeId() });
   }
 
   searchPanelController = panelModule.createSearchPanelController({
@@ -1739,21 +1990,70 @@ async function ensureSearchFeatures() {
         return { results: [], indexedCount: 0 };
       }
 
-      if (activeContextId) {
-        searchIndex.reindexNow({ runtime, contextId: activeContextId });
+      const scopeId = workspaceScopeId();
+      if (scopeId) {
+        searchIndex.reindexNow({ runtime, contextId: scopeId });
       }
 
-      const contextLabel = activeContextRecord()?.name ?? "Current Context";
-      const results = searchIndex
-        .query(query, { contextId: activeContextId, limit: 140 })
-        .map((entry) => ({
-          ...entry,
-          contextLabel,
-        }));
+      const notebookName = activeContextRecord()?.name ?? "Notebook";
+      const sectionName = activeSectionRecord()?.name ?? "Section";
+
+      const sectionResults = scopeId
+        ? searchIndex
+            .query(query, { contextId: scopeId, limit: 80 })
+            .map((entry) => ({
+              ...entry,
+              contextLabel: `${notebookName} / ${sectionName}`,
+              scopeGroup: "section",
+            }))
+        : [];
+
+      const notebookResults = searchIndex
+        .query(query, { contextId: null, limit: 260 })
+        .filter((entry) => entry.contextId !== scopeId && isScopeInNotebook(entry.contextId, activeContextId))
+        .slice(0, 80)
+        .map((entry) => {
+          const parsed = parseWorkspaceScopeId(entry.contextId);
+          const sectionLabel =
+            parsed.sectionId && sectionsStore && parsed.notebookId
+              ? sectionsStore
+                  .listSections(parsed.notebookId)
+                  .find((item) => item.id === parsed.sectionId)?.name ?? "Section"
+              : "Notebook";
+          return {
+            ...entry,
+            contextLabel: `${notebookName} / ${sectionLabel}`,
+            scopeGroup: "notebook",
+          };
+        });
+
+      const results = [];
+      if (sectionResults.length > 0) {
+        results.push({
+          id: "group-current-section",
+          kind: "group-header",
+          title: "Current Section",
+          typeLabel: "",
+          snippet: "",
+        });
+        results.push(...sectionResults);
+      }
+      if (notebookResults.length > 0) {
+        results.push({
+          id: "group-notebook",
+          kind: "group-header",
+          title: "Other Notebook Sections",
+          typeLabel: "",
+          snippet: "",
+        });
+        results.push(...notebookResults);
+      }
 
       return {
         results,
-        indexedCount: searchIndex.getEntryCount(activeContextId),
+        indexedCount: searchIndex
+          .snapshotEntries()
+          .filter((entry) => isScopeInNotebook(entry.contextId, activeContextId)).length,
       };
     },
     onActivateResult: async (result) => {
@@ -1764,7 +2064,7 @@ async function ensureSearchFeatures() {
     },
   });
 
-  syncSearchIndexUi(searchIndex.getEntryCount(activeContextId));
+  syncSearchIndexUi(searchIndex.getEntryCount(workspaceScopeId()));
   return searchPanelController;
 }
 
@@ -1781,7 +2081,7 @@ async function ensureInkFeature() {
 
   inkFeature = inkModule.createInkFeature({
     runtime,
-    getActiveContextId: () => activeContextId,
+    getActiveContextId: () => workspaceScopeId(),
     onStateChange: (state) => updateInkUi(state),
   });
 
@@ -2034,7 +2334,7 @@ async function ensureResearchPanel() {
   researchPanelController = researchModule.createResearchPanelController({
     panelElement: researchPanel,
     toggleButton: toggleResearchPanelButton,
-    getActiveContextId: () => activeContextId,
+    getActiveContextId: () => workspaceScopeId(),
     getActiveSourceWidgetId: () => runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
     onCapture: async (capture) => {
       const intent = createCreationIntent({
@@ -2302,6 +2602,10 @@ async function executeCreationIntent(intent) {
     return true;
   }
 
+  if (normalizedIntent.type === "library-reference") {
+    return createReferencePopupFromNotebookLibrary(normalizedIntent);
+  }
+
   window.alert(`Unsupported widget type: ${normalizedIntent.type}`);
   return false;
 }
@@ -2393,7 +2697,8 @@ async function createGraphWidget(definition = {}, intent = null) {
 }
 
 async function restoreWorkspaceForActiveContext() {
-  if (!contextWorkspaceStore || !activeContextId) {
+  const scopeId = workspaceScopeId();
+  if (!contextWorkspaceStore || !scopeId) {
     return;
   }
 
@@ -2403,7 +2708,7 @@ async function restoreWorkspaceForActiveContext() {
   try {
     clearRuntimeWidgets();
     documentManager.reset({
-      contextId: activeContextId,
+      contextId: scopeId,
       documents: [],
       documentBindings: [],
       activeDocumentId: null,
@@ -2413,9 +2718,31 @@ async function restoreWorkspaceForActiveContext() {
     lastPdfWidgetId = null;
     lastReferenceWidgetId = null;
 
-    const workspace = contextWorkspaceStore.loadWorkspace(activeContextId);
+    let workspace = contextWorkspaceStore.loadWorkspace(scopeId);
+    if (
+      activeContextId &&
+      activeSectionId &&
+      workspace.widgets.length < 1 &&
+      workspace.documents.length < 1 &&
+      workspace.researchCaptures.length < 1
+    ) {
+      const legacyWorkspace = contextWorkspaceStore.loadWorkspace(activeContextId);
+      if (
+        legacyWorkspace.widgets.length > 0 ||
+        legacyWorkspace.documents.length > 0 ||
+        legacyWorkspace.researchCaptures.length > 0
+      ) {
+        workspace = {
+          ...legacyWorkspace,
+          contextId: scopeId,
+        };
+
+        contextWorkspaceStore.saveWorkspace(workspace);
+      }
+    }
+
     documentManager.reset({
-      contextId: activeContextId,
+      contextId: scopeId,
       documents: workspace.documents,
       documentBindings: workspace.documentBindings,
       activeDocumentId: workspace.activeWorkspaceState.activeDocumentId,
@@ -2493,7 +2820,7 @@ async function restoreWorkspaceForActiveContext() {
           typeof widget.researchCaptureId === "string" && widget.researchCaptureId.trim()
             ? widget.researchCaptureId
             : makeId("capture"),
-        contextId: activeContextId,
+        contextId: scopeId,
         contentType,
         content,
         citation: widget.citation,
@@ -2510,8 +2837,8 @@ async function restoreWorkspaceForActiveContext() {
     if (activeDocument) {
       focusDocumentWidgets(activeDocument.id, { selectPrimary: true });
     }
-    if (searchIndex && activeContextId) {
-      searchIndex.reindexNow({ runtime, contextId: activeContextId });
+    if (searchIndex && scopeId) {
+      searchIndex.reindexNow({ runtime, contextId: scopeId });
     }
     updateWidgetUi();
   } finally {
@@ -2532,10 +2859,41 @@ async function switchContext(nextContextId) {
   }
 
   activeContextId = nextContextId;
+  sectionsStore.ensureNotebook(activeContextId);
+  activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
   onboardingRuntimeSignals.searchOpened = false;
   onboardingRuntimeSignals.peekActivated = false;
   onboardingRuntimeSignals.gestureUsed = false;
-  documentManager.setContextId(activeContextId);
+  documentManager.setContextId(workspaceScopeId());
+  updateContextUi();
+  await restoreWorkspaceForActiveContext();
+  updateOnboardingControlsUi();
+  scheduleOnboardingRefresh(0);
+  if (searchPanelController && typeof searchPanelController.runQuery === "function") {
+    void searchPanelController.runQuery();
+  }
+}
+
+async function switchSection(nextSectionId) {
+  if (
+    !sectionsStore ||
+    !activeContextId ||
+    !nextSectionId ||
+    nextSectionId === activeSectionId
+  ) {
+    return;
+  }
+
+  flushWorkspacePersist();
+  if (!sectionsStore.setActiveSection(activeContextId, nextSectionId)) {
+    return;
+  }
+
+  activeSectionId = nextSectionId;
+  onboardingRuntimeSignals.searchOpened = false;
+  onboardingRuntimeSignals.peekActivated = false;
+  onboardingRuntimeSignals.gestureUsed = false;
+  documentManager.setContextId(workspaceScopeId());
   updateContextUi();
   await restoreWorkspaceForActiveContext();
   updateOnboardingControlsUi();
@@ -2605,7 +2963,7 @@ function cloneImportedDocument(sourceDocument, sourceBinding, idMap) {
   return {
     document: {
       id: makeId("doc"),
-      contextId: activeContextId,
+      contextId: workspaceScopeId(),
       title: sourceDocument.title,
       sourceType: sourceDocument.sourceType,
       widgetId: mappedWidgetId,
@@ -2621,27 +2979,46 @@ function cloneImportedDocument(sourceDocument, sourceBinding, idMap) {
 }
 
 async function importWidgetsFromAnotherContext() {
-  if (!contextStore || !contextWorkspaceStore || !activeContextId) {
+  if (!contextStore || !contextWorkspaceStore || !activeContextId || !workspaceScopeId()) {
     return;
   }
 
   const candidates = contextStore.list().filter((entry) => entry.id !== activeContextId);
   if (candidates.length < 1) {
-    window.alert("No other contexts exist yet.");
+    window.alert("No other notebooks exist yet.");
     return;
   }
 
   const contextPrompt = candidates.map((entry, index) => `${index + 1}. ${entry.name}`).join("\n");
-  const contextChoice = window.prompt(`Choose source context:\n${contextPrompt}`, "1");
+  const contextChoice = window.prompt(`Choose source notebook:\n${contextPrompt}`, "1");
   const contextIndex = Number.parseInt(contextChoice ?? "", 10) - 1;
   if (!Number.isFinite(contextIndex) || contextIndex < 0 || contextIndex >= candidates.length) {
     return;
   }
 
   const sourceContext = candidates[contextIndex];
-  const sourceWorkspace = contextWorkspaceStore.loadWorkspace(sourceContext.id);
+  const sourceSections = sectionsStore.listSections(sourceContext.id);
+  if (sourceSections.length < 1) {
+    window.alert("Source notebook has no sections.");
+    return;
+  }
+
+  const sourceSectionPrompt = sourceSections.map((entry, index) => `${index + 1}. ${entry.name}`).join("\n");
+  const sourceSectionChoice = window.prompt(`Choose source section:\n${sourceSectionPrompt}`, "1");
+  const sourceSectionIndex = Number.parseInt(sourceSectionChoice ?? "", 10) - 1;
+  if (
+    !Number.isFinite(sourceSectionIndex) ||
+    sourceSectionIndex < 0 ||
+    sourceSectionIndex >= sourceSections.length
+  ) {
+    return;
+  }
+
+  const sourceSection = sourceSections[sourceSectionIndex];
+  const sourceScopeId = workspaceScopeId(sourceContext.id, sourceSection.id);
+  const sourceWorkspace = contextWorkspaceStore.loadWorkspace(sourceScopeId);
   if (sourceWorkspace.widgets.length < 1) {
-    window.alert("Source context has no widgets to import.");
+    window.alert("Source notebook section has no widgets to import.");
     return;
   }
 
@@ -2671,9 +3048,10 @@ async function importWidgetsFromAnotherContext() {
 
   const idMap = new Map();
   const importedWidgets = [];
+  const targetScopeId = workspaceScopeId();
 
   for (const sourceWidget of selectedWidgets) {
-    const cloned = contextWorkspaceStore.cloneForImport(sourceWidget, activeContextId);
+    const cloned = contextWorkspaceStore.cloneForImport(sourceWidget, targetScopeId);
     if (!cloned) {
       continue;
     }
@@ -2753,7 +3131,7 @@ async function importWidgetsFromAnotherContext() {
           const importedCapture = upsertResearchCapture({
             ...sourceCapture,
             id: makeId("capture"),
-            contextId: activeContextId,
+            contextId: targetScopeId,
           });
           if (importedCapture) {
             mappedCaptureId = importedCapture.id;
@@ -2794,7 +3172,7 @@ async function importWidgetsFromAnotherContext() {
             : "";
       const importedCapture = upsertResearchCapture({
         id: makeId("capture"),
-        contextId: activeContextId,
+        contextId: targetScopeId,
         contentType,
         content,
         citation: widget.citation,
@@ -2814,7 +3192,9 @@ async function importWidgetsFromAnotherContext() {
 
   updateWidgetUi();
 
-  window.alert(`Imported ${importedWidgets.length} widget(s) from "${sourceContext.name}".`);
+  window.alert(
+    `Imported ${importedWidgets.length} widget(s) from "${sourceContext.name}" / "${sourceSection.name}".`,
+  );
 }
 
 function wireBaseEventHandlers() {
@@ -3398,6 +3778,14 @@ function wireContextMenu() {
           createdFrom: "manual",
         }),
       ),
+    onSaveReferenceToLibrary: async (widget) => {
+      const saved = await saveReferenceWidgetToNotebookLibrary(widget);
+      if (!saved) {
+        window.alert("Only reference popups can be saved to the notebook library.");
+      } else {
+        updateWidgetUi();
+      }
+    },
     onWidgetMutated: () => updateWidgetUi(),
   });
 }
@@ -3422,7 +3810,7 @@ function wireWidgetCreationController() {
     runtime,
     canvas,
     menuElement: creationCommandMenu,
-    getActiveContextId: () => activeContextId,
+    getActiveContextId: () => workspaceScopeId(),
     onCreateIntent: (intent) => {
       void executeCreationIntent(intent).catch((error) => {
         console.error(error);
@@ -3474,27 +3862,31 @@ async function setupContextFeatures() {
   contextStore = contextStoreModule.createContextStore();
   contextWorkspaceStore = contextWorkspaceModule.createContextWorkspaceStore();
   activeContextId = contextStore.getActiveContextId();
-  documentManager.setContextId(activeContextId);
+  sectionsStore.ensureNotebook(activeContextId);
+  activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
+  documentManager.setContextId(workspaceScopeId());
 
   const createContextHandler = async () => {
-    const name = window.prompt("Context name:", "New Context");
+    const name = window.prompt("Notebook name:", "New Notebook");
     if (!name) {
       return;
     }
 
     flushWorkspacePersist();
 
-    const created = contextStore.createContext(name, "general");
+    const created = contextStore.createContext(name, "notebook");
     if (!created) {
-      window.alert("Context name cannot be empty.");
+      window.alert("Notebook name cannot be empty.");
       return;
     }
 
     activeContextId = created.id;
+    sectionsStore.ensureNotebook(activeContextId);
+    activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
     onboardingRuntimeSignals.searchOpened = false;
     onboardingRuntimeSignals.peekActivated = false;
     onboardingRuntimeSignals.gestureUsed = false;
-    documentManager.setContextId(activeContextId);
+    documentManager.setContextId(workspaceScopeId());
     updateContextUi();
     await restoreWorkspaceForActiveContext();
     updateOnboardingControlsUi();
@@ -3507,14 +3899,14 @@ async function setupContextFeatures() {
       return;
     }
 
-    const nextName = window.prompt("Rename context:", active.name);
+    const nextName = window.prompt("Rename notebook:", active.name);
     if (!nextName) {
       return;
     }
 
     const renamed = contextStore.renameContext(active.id, nextName);
     if (!renamed) {
-      window.alert("Context name cannot be empty.");
+      window.alert("Notebook name cannot be empty.");
       return;
     }
 
@@ -3528,25 +3920,119 @@ async function setupContextFeatures() {
       return;
     }
 
-    const confirmed = window.confirm(`Delete context "${active.name}"?`);
+    const confirmed = window.confirm(`Delete notebook "${active.name}"?`);
     if (!confirmed) {
       return;
     }
 
     flushWorkspacePersist();
+    const activeSections = sectionsStore.listSections(active.id);
 
     const result = contextStore.deleteContext(active.id);
     if (!result) {
-      window.alert("At least one context must remain.");
+      window.alert("At least one notebook must remain.");
       return;
     }
 
-    contextWorkspaceStore.deleteWorkspace(result.deletedContextId);
+    for (const section of activeSections) {
+      contextWorkspaceStore.deleteWorkspace(workspaceScopeId(result.deletedContextId, section.id));
+    }
+    sectionsStore.deleteNotebook(result.deletedContextId);
+    notebookLibraryStore.deleteNotebook(result.deletedContextId);
     activeContextId = result.activeContextId;
+    sectionsStore.ensureNotebook(activeContextId);
+    activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
     onboardingRuntimeSignals.searchOpened = false;
     onboardingRuntimeSignals.peekActivated = false;
     onboardingRuntimeSignals.gestureUsed = false;
-    documentManager.setContextId(activeContextId);
+    documentManager.setContextId(workspaceScopeId());
+    updateContextUi();
+    await restoreWorkspaceForActiveContext();
+    updateOnboardingControlsUi();
+    scheduleOnboardingRefresh(0);
+  };
+
+  const createSectionHandler = async () => {
+    if (!activeContextId) {
+      return;
+    }
+
+    const defaultName = `Section ${sectionsStore.listSections(activeContextId).length + 1}`;
+    const name = window.prompt("Section name:", defaultName);
+    if (!name) {
+      return;
+    }
+
+    flushWorkspacePersist();
+    const created = sectionsStore.createSection(activeContextId, name);
+    if (!created) {
+      window.alert("Section name cannot be empty.");
+      return;
+    }
+
+    activeSectionId = created.id;
+    onboardingRuntimeSignals.searchOpened = false;
+    onboardingRuntimeSignals.peekActivated = false;
+    onboardingRuntimeSignals.gestureUsed = false;
+    documentManager.setContextId(workspaceScopeId());
+    updateContextUi();
+    await restoreWorkspaceForActiveContext();
+    updateOnboardingControlsUi();
+    scheduleOnboardingRefresh(0);
+  };
+
+  const renameSectionHandler = () => {
+    if (!activeContextId) {
+      return;
+    }
+
+    const active = activeSectionRecord();
+    if (!active) {
+      return;
+    }
+
+    const nextName = window.prompt("Rename section:", active.name);
+    if (!nextName) {
+      return;
+    }
+
+    const renamed = sectionsStore.renameSection(activeContextId, active.id, nextName);
+    if (!renamed) {
+      window.alert("Section name cannot be empty.");
+      return;
+    }
+
+    updateContextUi();
+  };
+
+  const deleteSectionHandler = async () => {
+    if (!activeContextId) {
+      return;
+    }
+
+    const active = activeSectionRecord();
+    if (!active) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete section "${active.name}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    flushWorkspacePersist();
+    const result = sectionsStore.deleteSection(activeContextId, active.id);
+    if (!result) {
+      window.alert("At least one section must remain.");
+      return;
+    }
+
+    contextWorkspaceStore.deleteWorkspace(workspaceScopeId(activeContextId, result.deletedSectionId));
+    activeSectionId = result.activeSectionId;
+    onboardingRuntimeSignals.searchOpened = false;
+    onboardingRuntimeSignals.peekActivated = false;
+    onboardingRuntimeSignals.gestureUsed = false;
+    documentManager.setContextId(workspaceScopeId());
     updateContextUi();
     await restoreWorkspaceForActiveContext();
     updateOnboardingControlsUi();
@@ -3572,6 +4058,25 @@ async function setupContextFeatures() {
     },
     onImportContextWidgets: () => {
       void importWidgetsFromAnotherContext();
+    },
+  });
+
+  sectionUiController = createSectionManagementUi({
+    tabsElement: sectionTabs,
+    switchElement: sectionSwitcher,
+    activeSectionOutput,
+    newSectionButton,
+    renameSectionButton,
+    deleteSectionButton,
+    onSwitchSection: (nextSectionId) => {
+      void switchSection(nextSectionId);
+    },
+    onCreateSection: () => {
+      void createSectionHandler();
+    },
+    onRenameSection: renameSectionHandler,
+    onDeleteSection: () => {
+      void deleteSectionHandler();
     },
   });
 

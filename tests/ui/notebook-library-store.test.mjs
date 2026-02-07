@@ -1,0 +1,54 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { createNotebookLibraryStore } from "../../src/features/notebooks/notebook-library-store.js";
+import { createMemoryStorage } from "../helpers/browser-env.mjs";
+
+test("library store upserts and retrieves references", () => {
+  const storage = createMemoryStorage();
+  const store = createNotebookLibraryStore({ storage });
+
+  const saved = store.upsertReference("nb-a", {
+    title: "KVL",
+    sourceLabel: "Circuit Notes",
+    popupMetadata: {
+      type: "formula-sheet",
+      tags: ["ee", "circuits"],
+    },
+  });
+
+  assert.ok(saved);
+  const listed = store.listReferences("nb-a");
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].title, "KVL");
+
+  const fetched = store.getReference("nb-a", saved.id);
+  assert.ok(fetched);
+  assert.equal(fetched.sourceLabel, "Circuit Notes");
+  assert.deepEqual(fetched.popupMetadata.tags, ["ee", "circuits"]);
+});
+
+test("library store keeps notebook references isolated", () => {
+  const storage = createMemoryStorage();
+  const store = createNotebookLibraryStore({ storage });
+
+  const aRef = store.upsertReference("nb-a", { title: "Ref A" });
+  const bRef = store.upsertReference("nb-b", { title: "Ref B" });
+
+  assert.ok(aRef);
+  assert.ok(bRef);
+  assert.equal(store.listReferences("nb-a").length, 1);
+  assert.equal(store.listReferences("nb-b").length, 1);
+  assert.equal(store.listReferences("nb-a")[0].title, "Ref A");
+  assert.equal(store.listReferences("nb-b")[0].title, "Ref B");
+});
+
+test("library store can delete a notebook library", () => {
+  const storage = createMemoryStorage();
+  const store = createNotebookLibraryStore({ storage });
+
+  store.upsertReference("nb-a", { title: "Ref A" });
+  assert.equal(store.listReferences("nb-a").length, 1);
+  assert.equal(store.deleteNotebook("nb-a"), true);
+  assert.equal(store.listReferences("nb-a").length, 0);
+});

@@ -16,6 +16,9 @@ function safeLabel(value, fallback = "") {
 }
 
 function describeResult(result) {
+  if (result?.kind === "group-header") {
+    return "";
+  }
   const typeLabel = safeLabel(result.typeLabel, "Widget");
   const contextLabel = safeLabel(result.contextLabel);
   if (contextLabel) {
@@ -29,6 +32,10 @@ function defaultEmptyMessage(query) {
     return "Type a query to search indexed widget text.";
   }
   return "No matching widgets found.";
+}
+
+function isSelectableResult(result) {
+  return result?.kind !== "group-header";
 }
 
 export function createSearchPanelController({
@@ -107,6 +114,14 @@ export function createSearchPanelController({
 
     for (let index = 0; index < results.length; index += 1) {
       const entry = results[index];
+      if (entry?.kind === "group-header") {
+        const heading = document.createElement("p");
+        heading.className = "search-group-heading";
+        heading.textContent = safeLabel(entry.title, "Group");
+        resultsContainer.append(heading);
+        continue;
+      }
+
       const item = document.createElement("button");
       item.type = "button";
       item.className = "search-result-item";
@@ -141,15 +156,22 @@ export function createSearchPanelController({
   };
 
   const setActiveIndex = (index, { activate = false, viaNavigation = false } = {}) => {
-    if (results.length < 1) {
+    const selectable = results
+      .map((entry, entryIndex) => ({ entry, entryIndex }))
+      .filter(({ entry }) => isSelectableResult(entry))
+      .map(({ entryIndex }) => entryIndex);
+
+    if (selectable.length < 1) {
       activeIndex = -1;
       renderResults();
       syncNavigationUi();
       return;
     }
 
-    const bounded = ((index % results.length) + results.length) % results.length;
-    activeIndex = bounded;
+    const activeSelectableIndex = selectable.indexOf(activeIndex);
+    const base = activeSelectableIndex >= 0 ? activeSelectableIndex : 0;
+    const bounded = ((index + base) % selectable.length + selectable.length) % selectable.length;
+    activeIndex = selectable[bounded];
     renderResults();
     syncNavigationUi();
 
@@ -163,7 +185,7 @@ export function createSearchPanelController({
 
   const setResults = (nextResults, { query = "", indexedCount = null } = {}) => {
     results = asArray(nextResults);
-    activeIndex = results.length > 0 ? 0 : -1;
+    activeIndex = results.findIndex((entry) => isSelectableResult(entry));
 
     if (Number.isFinite(indexedCount)) {
       lastIndexedCount = indexedCount;
@@ -237,21 +259,28 @@ export function createSearchPanelController({
       return;
     }
 
-    setActiveIndex(index, { activate: true });
+    if (!isSelectableResult(results[index])) {
+      return;
+    }
+
+    activeIndex = index;
+    renderResults();
+    syncNavigationUi();
+    setActiveIndex(0, { activate: true });
   };
 
   const onPrevClick = () => {
     if (results.length < 1) {
       return;
     }
-    setActiveIndex(activeIndex - 1, { viaNavigation: true });
+    setActiveIndex(-1, { viaNavigation: true });
   };
 
   const onNextClick = () => {
     if (results.length < 1) {
       return;
     }
-    setActiveIndex(activeIndex + 1, { viaNavigation: true });
+    setActiveIndex(1, { viaNavigation: true });
   };
 
   const onWindowKeyDown = (event) => {
@@ -276,20 +305,20 @@ export function createSearchPanelController({
     if (key === "enter" && results.length > 0 && !event.shiftKey && !event.altKey) {
       event.preventDefault();
       if (isTypingTarget(event.target) || queryInput === event.target) {
-        setActiveIndex(activeIndex < 0 ? 0 : activeIndex, { activate: true });
+        setActiveIndex(0, { activate: true });
       }
       return;
     }
 
     if (!isTypingTarget(event.target) && key === "arrowdown" && results.length > 0) {
       event.preventDefault();
-      setActiveIndex(activeIndex + 1, { viaNavigation: true });
+      setActiveIndex(1, { viaNavigation: true });
       return;
     }
 
     if (!isTypingTarget(event.target) && key === "arrowup" && results.length > 0) {
       event.preventDefault();
-      setActiveIndex(activeIndex - 1, { viaNavigation: true });
+      setActiveIndex(-1, { viaNavigation: true });
     }
   };
 

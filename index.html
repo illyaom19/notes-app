@@ -3,43 +3,52 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Modular Notes Prototype</title>
+    <title>Notes App Prototype</title>
     <link rel="stylesheet" href="./src/styles/app.css" />
   </head>
   <body>
     <main class="app-shell">
-      <header class="topbar">
-        <h1>Modular Notes Prototype</h1>
-        <div class="topbar-controls">
-          <label class="context-pick" for="context-select">
-            <span>Context</span>
-            <select id="context-select" aria-label="Active context"></select>
-          </label>
-          <button id="new-context" type="button">New</button>
-          <button id="rename-context" type="button">Rename</button>
-          <button id="delete-context" type="button">Delete</button>
-          <button id="import-context-widget" type="button">Import Widgets</button>
-          <button id="toggle-ui-mode" type="button">Mode: Production</button>
-          <button id="toggle-tools" type="button" class="tools-toggle">Show Tools</button>
-        </div>
+      <header class="topbar" data-production-hidden="true">
+        <h1>Notes App Prototype</h1>
       </header>
 
+      <section class="section-strip" aria-label="Notebook Sections">
+        <div id="section-tabs" class="section-tabs" role="tablist" aria-label="Sections"></div>
+        <label class="section-switch" for="section-switcher">
+          <span>Section</span>
+          <select id="section-switcher" aria-label="Section switcher"></select>
+        </label>
+        <button id="new-section" type="button">New Section</button>
+        <button id="rename-section" type="button">Rename Section</button>
+        <button id="delete-section" type="button">Delete Section</button>
+        <button id="toggle-search-panel" type="button">Search</button>
+        <button id="hold-peek-mode" type="button">Hold Peek</button>
+        <button id="toggle-tools" type="button" class="tools-toggle">Menu</button>
+      </section>
+
       <section id="controls-panel" class="controls-panel" hidden>
-        <div class="controls" aria-label="Prototype Controls">
+        <div class="controls" aria-label="Settings and Actions">
+          <label class="context-pick" for="context-select">
+            <span>Notebook</span>
+            <select id="context-select" aria-label="Active notebook"></select>
+          </label>
+          <button id="new-context" type="button">New Notebook</button>
+          <button id="rename-context" type="button">Rename Notebook</button>
+          <button id="delete-context" type="button">Delete Notebook</button>
+          <button id="import-context-widget" type="button">Import From Notebook</button>
+          <button id="toggle-ui-mode" type="button">Mode: Production</button>
           <button id="import-pdf" type="button">Import PDF</button>
           <button id="detect-whitespace" type="button" data-production-hidden="true">Detect Whitespace</button>
           <button id="start-snip" type="button">Start Snip</button>
-          <button id="toggle-research-panel" type="button" data-production-hidden="true">Research Panel</button>
-          <button id="toggle-search-panel" type="button">Search</button>
-          <button id="hold-peek-mode" type="button">Hold Peek</button>
-          <button id="instantiate-dummy" type="button" data-debug-only="true">Instantiate Dummy Widget</button>
-          <button id="instantiate-expanded" type="button" data-debug-only="true">Instantiate Expanded-Area Widget</button>
-          <button id="instantiate-graph" type="button" data-debug-only="true">Instantiate Graph Widget</button>
+          <button id="toggle-document-settings" type="button">Doc Settings</button>
           <button id="enable-ink" type="button">Enable Ink</button>
           <button id="toggle-ink-tool" type="button" disabled>Ink Tool: Pen</button>
           <button id="undo-ink" type="button" disabled>Undo</button>
           <button id="redo-ink" type="button" disabled>Redo</button>
           <button id="start-worker" type="button" data-production-hidden="true">Start Worker</button>
+          <button id="instantiate-dummy" type="button" data-debug-only="true">Instantiate Dummy Widget</button>
+          <button id="instantiate-expanded" type="button" data-debug-only="true">Instantiate Expanded-Area Widget</button>
+          <button id="instantiate-graph" type="button" data-debug-only="true">Instantiate Graph Widget</button>
           <label class="toggle-control" for="popup-avoid-stylus" data-production-hidden="true">
             <input id="popup-avoid-stylus" type="checkbox" checked />
             <span>Avoid Stylus</span>
@@ -48,19 +57,19 @@
             <input id="popup-reduced-motion" type="checkbox" />
             <span>Reduce Motion</span>
           </label>
-          <label class="toggle-control" for="gesture-enabled" data-production-hidden="true">
+          <label class="toggle-control" for="gesture-enabled">
             <input id="gesture-enabled" type="checkbox" checked />
             <span>Gestures Enabled</span>
           </label>
-          <label class="toggle-control" for="gesture-doubletap-enabled" data-production-hidden="true">
+          <label class="toggle-control" for="gesture-doubletap-enabled">
             <input id="gesture-doubletap-enabled" type="checkbox" />
             <span>Double Tap</span>
           </label>
-          <label class="toggle-control" for="gesture-barreltap-enabled" data-production-hidden="true">
+          <label class="toggle-control" for="gesture-barreltap-enabled">
             <input id="gesture-barreltap-enabled" type="checkbox" checked />
             <span>Barrel Tap</span>
           </label>
-          <label class="select-control" for="gesture-doubletap-binding" data-production-hidden="true">
+          <label class="select-control" for="gesture-doubletap-binding">
             <span>Double Tap Binding</span>
             <select id="gesture-doubletap-binding">
               <option value="none">None</option>
@@ -69,7 +78,7 @@
               <option value="toggle-search-panel">Toggle Search Panel</option>
             </select>
           </label>
-          <label class="select-control" for="gesture-barreltap-binding" data-production-hidden="true">
+          <label class="select-control" for="gesture-barreltap-binding">
             <span>Barrel Tap Binding</span>
             <select id="gesture-barreltap-binding">
               <option value="toggle-ink-tool">Toggle Ink Tool</option>
@@ -85,8 +94,8 @@
 
       <section class="status-panel" aria-label="App Status">
         <span><strong>Mode:</strong> <output id="ui-mode-state">production</output></span>
-        <span><strong>Boot:</strong> Instant (no widgets loaded)</span>
-        <span><strong>Context:</strong> <output id="active-context">none</output></span>
+        <span><strong>Notebook:</strong> <output id="active-context">none</output></span>
+        <span><strong>Section:</strong> <output id="active-section">none</output></span>
         <span><strong>Documents:</strong> <output id="document-count">0</output></span>
         <span><strong>Loaded Modules:</strong> <output id="loaded-modules">none</output></span>
         <span><strong>Widgets:</strong> <output id="widget-count">0</output></span>
@@ -113,7 +122,6 @@
             <span>Switch</span>
             <select id="document-switcher" aria-label="Document switcher"></select>
           </label>
-          <button id="toggle-document-settings" type="button" class="document-settings-toggle">Doc Settings</button>
         </div>
         <div class="document-settings" aria-label="Document settings">
           <p id="document-settings-hint">Select a document to configure defaults.</p>
@@ -134,55 +142,6 @@
           </div>
         </div>
       </section>
-
-      <aside id="research-panel" class="research-panel" aria-label="Research Panel" hidden>
-        <div class="research-panel-header">
-          <h2>Research Capture</h2>
-          <button id="research-close" type="button">Close</button>
-        </div>
-        <p id="research-status" class="research-status">Capture snippets with citation fields.</p>
-        <div class="research-grid">
-          <label for="research-content-type">
-            <span>Snippet Type</span>
-            <select id="research-content-type">
-              <option value="text">Text</option>
-              <option value="definition">Definition</option>
-              <option value="image">Image</option>
-            </select>
-          </label>
-          <label for="research-text-content" data-research-field="text">
-            <span>Text Content</span>
-            <textarea id="research-text-content" rows="4" placeholder="Paste quoted snippet or notes..."></textarea>
-          </label>
-          <label for="research-image-url" data-research-field="image" hidden>
-            <span>Image URL</span>
-            <input id="research-image-url" type="url" placeholder="https://..." />
-          </label>
-          <label for="research-source-title">
-            <span>Source Title</span>
-            <input id="research-source-title" type="text" placeholder="Paper, site, or textbook" />
-          </label>
-          <label for="research-url">
-            <span>Source URL</span>
-            <input id="research-url" type="url" placeholder="https://..." />
-          </label>
-          <label for="research-author">
-            <span>Author (optional)</span>
-            <input id="research-author" type="text" placeholder="Author name" />
-          </label>
-          <label for="research-publisher">
-            <span>Publisher (optional)</span>
-            <input id="research-publisher" type="text" placeholder="Publisher or site" />
-          </label>
-          <label for="research-attribution">
-            <span>Attribution Text</span>
-            <input id="research-attribution" type="text" placeholder="Quoted from..." />
-          </label>
-        </div>
-        <div class="research-actions">
-          <button id="research-capture" type="button">Capture To Widget</button>
-        </div>
-      </aside>
 
       <aside id="search-panel" class="search-panel" aria-label="Search Panel" hidden>
         <div class="search-panel-header">
@@ -220,6 +179,7 @@
 
       <menu id="widget-context-menu" class="widget-menu" aria-label="Widget actions">
         <button type="button" data-action="create-expanded">Create Expanded-Area Widget</button>
+        <button type="button" data-action="save-reference-library">Save Ref To Notebook</button>
         <button type="button" data-action="toggle-collapse">Toggle Collapse</button>
         <button type="button" data-action="remove-widget">Remove Widget</button>
       </menu>
@@ -228,6 +188,7 @@
         <button type="button" data-create-type="expanded-area">Expanded Space</button>
         <button type="button" data-create-type="graph-widget">Graph Widget</button>
         <button type="button" data-create-type="reference-popup">Reference Popup</button>
+        <button type="button" data-create-type="library-reference">Notebook Reference</button>
         <button type="button" data-create-type="pdf-document">Import PDF Here</button>
         <button type="button" data-create-type="dummy" data-debug-only="true">Dummy Widget</button>
       </menu>
