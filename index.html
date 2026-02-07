@@ -19,6 +19,7 @@
           <button id="rename-context" type="button">Rename</button>
           <button id="delete-context" type="button">Delete</button>
           <button id="import-context-widget" type="button">Import Widgets</button>
+          <button id="toggle-ui-mode" type="button">Mode: Production</button>
           <button id="toggle-tools" type="button" class="tools-toggle">Show Tools</button>
         </div>
       </header>
@@ -26,9 +27,9 @@
       <section id="controls-panel" class="controls-panel" hidden>
         <div class="controls" aria-label="Prototype Controls">
           <button id="import-pdf" type="button">Import PDF</button>
-          <button id="detect-whitespace" type="button">Detect Whitespace</button>
+          <button id="detect-whitespace" type="button" data-production-hidden="true">Detect Whitespace</button>
           <button id="start-snip" type="button">Start Snip</button>
-          <button id="toggle-research-panel" type="button">Research Panel</button>
+          <button id="toggle-research-panel" type="button" data-production-hidden="true">Research Panel</button>
           <button id="toggle-search-panel" type="button">Search</button>
           <button id="hold-peek-mode" type="button">Hold Peek</button>
           <button id="instantiate-dummy" type="button" data-debug-only="true">Instantiate Dummy Widget</button>
@@ -38,28 +39,28 @@
           <button id="toggle-ink-tool" type="button" disabled>Ink Tool: Pen</button>
           <button id="undo-ink" type="button" disabled>Undo</button>
           <button id="redo-ink" type="button" disabled>Redo</button>
-          <button id="start-worker" type="button">Start Worker</button>
-          <label class="toggle-control" for="popup-avoid-stylus">
+          <button id="start-worker" type="button" data-production-hidden="true">Start Worker</button>
+          <label class="toggle-control" for="popup-avoid-stylus" data-production-hidden="true">
             <input id="popup-avoid-stylus" type="checkbox" checked />
             <span>Avoid Stylus</span>
           </label>
-          <label class="toggle-control" for="popup-reduced-motion">
+          <label class="toggle-control" for="popup-reduced-motion" data-production-hidden="true">
             <input id="popup-reduced-motion" type="checkbox" />
             <span>Reduce Motion</span>
           </label>
-          <label class="toggle-control" for="gesture-enabled">
+          <label class="toggle-control" for="gesture-enabled" data-production-hidden="true">
             <input id="gesture-enabled" type="checkbox" checked />
             <span>Gestures Enabled</span>
           </label>
-          <label class="toggle-control" for="gesture-doubletap-enabled">
+          <label class="toggle-control" for="gesture-doubletap-enabled" data-production-hidden="true">
             <input id="gesture-doubletap-enabled" type="checkbox" />
             <span>Double Tap</span>
           </label>
-          <label class="toggle-control" for="gesture-barreltap-enabled">
+          <label class="toggle-control" for="gesture-barreltap-enabled" data-production-hidden="true">
             <input id="gesture-barreltap-enabled" type="checkbox" checked />
             <span>Barrel Tap</span>
           </label>
-          <label class="select-control" for="gesture-doubletap-binding">
+          <label class="select-control" for="gesture-doubletap-binding" data-production-hidden="true">
             <span>Double Tap Binding</span>
             <select id="gesture-doubletap-binding">
               <option value="none">None</option>
@@ -68,7 +69,7 @@
               <option value="toggle-search-panel">Toggle Search Panel</option>
             </select>
           </label>
-          <label class="select-control" for="gesture-barreltap-binding">
+          <label class="select-control" for="gesture-barreltap-binding" data-production-hidden="true">
             <span>Barrel Tap Binding</span>
             <select id="gesture-barreltap-binding">
               <option value="toggle-ink-tool">Toggle Ink Tool</option>
@@ -77,10 +78,13 @@
               <option value="none">None</option>
             </select>
           </label>
+          <button id="toggle-onboarding-hints" type="button">Disable Hints</button>
+          <button id="reset-onboarding-hints" type="button" data-production-hidden="true">Reset Hints</button>
         </div>
       </section>
 
       <section class="status-panel" aria-label="App Status">
+        <span><strong>Mode:</strong> <output id="ui-mode-state">production</output></span>
         <span><strong>Boot:</strong> Instant (no widgets loaded)</span>
         <span><strong>Context:</strong> <output id="active-context">none</output></span>
         <span><strong>Documents:</strong> <output id="document-count">0</output></span>
@@ -109,6 +113,7 @@
             <span>Switch</span>
             <select id="document-switcher" aria-label="Document switcher"></select>
           </label>
+          <button id="toggle-document-settings" type="button" class="document-settings-toggle">Doc Settings</button>
         </div>
         <div class="document-settings" aria-label="Document settings">
           <p id="document-settings-hint">Select a document to configure defaults.</p>
@@ -200,6 +205,18 @@
       <section class="canvas-wrap">
         <canvas id="workspace-canvas" aria-label="Workspace Canvas"></canvas>
       </section>
+
+      <aside id="onboarding-hint" class="onboarding-hint" hidden>
+        <p id="onboarding-hint-progress" class="onboarding-hint-progress">Hint 1 of 3</p>
+        <h2 id="onboarding-hint-title">Get started</h2>
+        <p id="onboarding-hint-body">Hints appear here.</p>
+        <div class="onboarding-hint-actions">
+          <button id="onboarding-hint-action" type="button">Try It</button>
+          <button id="onboarding-hint-dismiss" type="button">Dismiss</button>
+          <button id="onboarding-hint-toggle" type="button">Disable Hints</button>
+          <button id="onboarding-hint-reset" type="button">Reset</button>
+        </div>
+      </aside>
 
       <menu id="widget-context-menu" class="widget-menu" aria-label="Widget actions">
         <button type="button" data-action="create-expanded">Create Expanded-Area Widget</button>

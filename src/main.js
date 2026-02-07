@@ -8,13 +8,22 @@ import {
   placementMetadata,
   worldSizeFromScreenPixels,
 } from "./features/widget-system/world-sizing.js";
+import {
+  isProductionMode,
+  loadUiModeState,
+  saveUiModeState,
+  toggleUiMode,
+} from "./features/ui/ui-mode-store.js";
+import { createOnboardingStateService } from "./features/onboarding/onboarding-state-service.js";
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 import { createWidgetCreationController } from "./features/widget-system/widget-creation-controller.js";
 import { createWidgetInteractionManager } from "./features/widget-system/widget-interaction-manager.js";
 
 const importPdfButton = document.querySelector("#import-pdf");
+const toggleUiModeButton = document.querySelector("#toggle-ui-mode");
 const toggleToolsButton = document.querySelector("#toggle-tools");
 const controlsPanel = document.querySelector("#controls-panel");
+const statusPanel = document.querySelector(".status-panel");
 const detectWhitespaceButton = document.querySelector("#detect-whitespace");
 const startSnipButton = document.querySelector("#start-snip");
 const toggleResearchPanelButton = document.querySelector("#toggle-research-panel");
@@ -67,13 +76,28 @@ const gestureDoubleTapToggle = document.querySelector("#gesture-doubletap-enable
 const gestureBarrelTapToggle = document.querySelector("#gesture-barreltap-enabled");
 const gestureDoubleTapBindingSelect = document.querySelector("#gesture-doubletap-binding");
 const gestureBarrelTapBindingSelect = document.querySelector("#gesture-barreltap-binding");
+const toggleOnboardingHintsButton = document.querySelector("#toggle-onboarding-hints");
+const resetOnboardingHintsButton = document.querySelector("#reset-onboarding-hints");
 const debugOnlyControls = Array.from(document.querySelectorAll('[data-debug-only="true"]'));
+const productionHiddenControls = Array.from(document.querySelectorAll("[data-production-hidden='true']"));
+const uiModeStateOutput = document.querySelector("#ui-mode-state");
 
 const contextSelect = document.querySelector("#context-select");
 const newContextButton = document.querySelector("#new-context");
 const renameContextButton = document.querySelector("#rename-context");
 const deleteContextButton = document.querySelector("#delete-context");
 const importContextWidgetButton = document.querySelector("#import-context-widget");
+const documentsPanel = document.querySelector(".documents-panel");
+const documentSettingsPanel = document.querySelector(".document-settings");
+const toggleDocumentSettingsButton = document.querySelector("#toggle-document-settings");
+const onboardingHintRoot = document.querySelector("#onboarding-hint");
+const onboardingHintTitle = document.querySelector("#onboarding-hint-title");
+const onboardingHintBody = document.querySelector("#onboarding-hint-body");
+const onboardingHintProgress = document.querySelector("#onboarding-hint-progress");
+const onboardingHintActionButton = document.querySelector("#onboarding-hint-action");
+const onboardingHintDismissButton = document.querySelector("#onboarding-hint-dismiss");
+const onboardingHintToggleButton = document.querySelector("#onboarding-hint-toggle");
+const onboardingHintResetButton = document.querySelector("#onboarding-hint-reset");
 
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error("Missing #workspace-canvas element.");
@@ -93,7 +117,9 @@ let widgetInteractionManager = null;
 let widgetCreationController = null;
 let detachDocumentFocusSync = null;
 let toolsPanelOpen = false;
+let documentSettingsOpen = true;
 let pendingPdfImportIntent = null;
+let uiModeState = { mode: "production" };
 let debugModeEnabled = false;
 const POPUP_BEHAVIOR_PREFS_KEY = "notes-app.popup.behavior.v1";
 const GESTURE_PREFS_KEY = "notes-app.gesture-prefs.v1";
@@ -132,6 +158,15 @@ let researchCaptures = [];
 
 let restoringContext = false;
 let persistTimer = null;
+let onboardingStateService = createOnboardingStateService();
+let onboardingOverlay = null;
+let onboardingRefreshTimer = null;
+let onboardingHintVisibleId = null;
+const onboardingRuntimeSignals = {
+  searchOpened: false,
+  peekActivated: false,
+  gestureUsed: false,
+};
 
 const registry = new WidgetRegistry();
 registry.register("dummy", () => import("./widgets/dummy/index.js"));
@@ -157,6 +192,10 @@ const runtime = new CanvasRuntime({
     peekModeActive = mode === "peek";
     if (peekStateOutput) {
       peekStateOutput.textContent = peekModeActive ? "on (LOD)" : "off";
+    }
+    if (peekModeActive) {
+      onboardingRuntimeSignals.peekActivated = true;
+      scheduleOnboardingRefresh(40);
     }
   },
 });
@@ -192,16 +231,8 @@ function isFiniteNumber(value) {
   return Number.isFinite(value);
 }
 
-function readDebugModeFlag() {
-  const params = new URLSearchParams(window.location.search);
-  const debugParam = params.get("debug");
-  if (debugParam === "1" || debugParam === "true") {
-    return true;
-  }
-  if (debugParam === "0" || debugParam === "false") {
-    return false;
-  }
-  return window.localStorage.getItem("notes-app.debug-controls") === "1";
+function isProductionUi() {
+  return isProductionMode(uiModeState);
 }
 
 function syncDebugControls() {
@@ -212,10 +243,70 @@ function syncDebugControls() {
   }
 }
 
-function setDebugModeEnabled(nextEnabled) {
-  debugModeEnabled = Boolean(nextEnabled);
-  window.localStorage.setItem("notes-app.debug-controls", debugModeEnabled ? "1" : "0");
+function syncDocumentSettingsUi() {
+  if (documentSettingsPanel instanceof HTMLElement) {
+    documentSettingsPanel.hidden = !documentSettingsOpen;
+  }
+
+  if (toggleDocumentSettingsButton instanceof HTMLButtonElement) {
+    toggleDocumentSettingsButton.textContent = documentSettingsOpen ? "Hide Doc Settings" : "Doc Settings";
+  }
+}
+
+function syncUiModeControls() {
+  const productionMode = isProductionUi();
+
+  if (document.body) {
+    document.body.dataset.uiMode = productionMode ? "production" : "debug";
+  }
+
+  if (statusPanel instanceof HTMLElement) {
+    statusPanel.hidden = productionMode;
+  }
+
+  for (const control of productionHiddenControls) {
+    if (control instanceof HTMLElement) {
+      control.hidden = productionMode;
+    }
+  }
+
+  if (toggleUiModeButton instanceof HTMLButtonElement) {
+    toggleUiModeButton.textContent = productionMode ? "Mode: Production" : "Mode: Debug";
+  }
+
+  if (uiModeStateOutput) {
+    uiModeStateOutput.textContent = productionMode ? "production" : "debug";
+  }
+
+  if (productionMode && !debugModeEnabled && !documentSettingsOpen) {
+    documentsPanel?.classList.add("documents-compact");
+  } else {
+    documentsPanel?.classList.remove("documents-compact");
+  }
+}
+
+function setUiMode(nextMode, { persist = true } = {}) {
+  uiModeState = {
+    mode: nextMode === "debug" ? "debug" : "production",
+  };
+  if (persist) {
+    uiModeState = saveUiModeState(uiModeState);
+  }
+
+  debugModeEnabled = uiModeState.mode === "debug";
+  if (debugModeEnabled) {
+    documentSettingsOpen = true;
+  } else if (toggleDocumentSettingsButton instanceof HTMLButtonElement) {
+    documentSettingsOpen = false;
+    window.localStorage.setItem("notes-app.document-settings.open", "0");
+  } else {
+    documentSettingsOpen = false;
+  }
+
   syncDebugControls();
+  syncUiModeControls();
+  syncDocumentSettingsUi();
+  updateOnboardingControlsUi();
 }
 
 function systemPrefersReducedMotion() {
@@ -905,10 +996,236 @@ function updateSnipUi({ armed, dragging }) {
 function syncToolsUi() {
   if (controlsPanel instanceof HTMLElement) {
     controlsPanel.hidden = !toolsPanelOpen;
+    controlsPanel.setAttribute("aria-label", isProductionUi() ? "Quick Actions" : "Prototype Controls");
   }
 
   if (toggleToolsButton instanceof HTMLButtonElement) {
-    toggleToolsButton.textContent = toolsPanelOpen ? "Hide Tools" : "Show Tools";
+    const labelPrefix = isProductionUi() ? "Quick Actions" : "Tools";
+    toggleToolsButton.textContent = toolsPanelOpen ? `Hide ${labelPrefix}` : `Show ${labelPrefix}`;
+  }
+}
+
+function onboardingHintsCatalog() {
+  const widgets = runtime.listWidgets();
+  const hasPdf = widgets.some((widget) => widget.type === "pdf-document");
+  const hasReference = widgets.some((widget) => widget.type === "reference-popup");
+  const hasInkFeature = Boolean(inkFeature) && inkStateSnapshot.enabled !== false;
+  const hasInkStrokes = Number.isFinite(inkStateSnapshot.completedStrokes) && inkStateSnapshot.completedStrokes > 0;
+
+  return [
+    {
+      id: "import-pdf",
+      title: "Start With A PDF",
+      body: "Import your source document first. Widgets and references can then stay linked to the right context.",
+      actionLabel: "Import PDF",
+      shouldShow: () => !hasPdf,
+      completeWhen: () => hasPdf,
+      onAction: () => {
+        importPdfButton?.click();
+      },
+    },
+    {
+      id: "capture-reference",
+      title: "Capture A Reference",
+      body: "Tap Start Snip, drag over the PDF, and the reference popup will be created beside your work.",
+      actionLabel: "Start Snip",
+      shouldShow: () => hasPdf && !hasReference,
+      completeWhen: () => hasReference,
+      onAction: () => {
+        startSnipButton?.click();
+      },
+    },
+    {
+      id: "ink-with-stylus",
+      title: "Write With Stylus Ink",
+      body: "Ink is stylus-only. Enable ink, then write directly on the canvas or attached widget surfaces.",
+      actionLabel: hasInkFeature ? "Ink Ready" : "Enable Ink",
+      shouldShow: () => widgets.length > 0 && !hasInkStrokes,
+      completeWhen: () => hasInkFeature || hasInkStrokes,
+      onAction: async () => {
+        await ensureInkFeature();
+        setInkEnabled(true);
+      },
+    },
+    {
+      id: "peek-search-gesture",
+      title: "Use Fast Navigation",
+      body: "Hold Peek for overview and open Search with Ctrl/Cmd+F. Gesture bindings are enabled by default.",
+      actionLabel: "Open Search",
+      shouldShow: () => widgets.length > 1,
+      completeWhen: () =>
+        onboardingRuntimeSignals.searchOpened ||
+        onboardingRuntimeSignals.peekActivated ||
+        onboardingRuntimeSignals.gestureUsed,
+      onAction: async () => {
+        const panel = await ensureSearchFeatures();
+        panel.open();
+        onboardingRuntimeSignals.searchOpened = true;
+      },
+    },
+  ];
+}
+
+async function ensureOnboardingOverlay() {
+  if (onboardingOverlay) {
+    return onboardingOverlay;
+  }
+
+  const module = await import("./features/onboarding/hint-overlay.js");
+  loadedModules.add("onboarding-hints");
+  if (loadedModulesOutput) {
+    loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
+  }
+
+  onboardingOverlay = module.createHintOverlay({
+    rootElement: onboardingHintRoot,
+    titleElement: onboardingHintTitle,
+    bodyElement: onboardingHintBody,
+    progressElement: onboardingHintProgress,
+    actionButton: onboardingHintActionButton,
+    dismissButton: onboardingHintDismissButton,
+    toggleHintsButton: onboardingHintToggleButton,
+    resetButton: onboardingHintResetButton,
+    onAction: (hintId) => {
+      void handleOnboardingAction(hintId);
+    },
+    onDismiss: (hintId) => {
+      dismissOnboardingHint(hintId);
+    },
+    onToggleHints: () => {
+      toggleOnboardingHints();
+    },
+    onReset: () => {
+      resetOnboardingHints();
+    },
+  });
+
+  return onboardingOverlay;
+}
+
+async function refreshOnboardingHints() {
+  if (!activeContextId) {
+    return;
+  }
+
+  const overlay = await ensureOnboardingOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  const hintsEnabled = onboardingStateService.isHintsEnabled(activeContextId);
+  overlay.setHintsEnabled(hintsEnabled);
+
+  if (!isProductionUi() || !hintsEnabled) {
+    overlay.hide();
+    onboardingHintVisibleId = null;
+    return;
+  }
+
+  const hints = onboardingHintsCatalog();
+  for (let index = 0; index < hints.length; index += 1) {
+    const hint = hints[index];
+    const state = onboardingStateService.getHintState(activeContextId, hint.id);
+    if (state?.completionState === "dismissed") {
+      continue;
+    }
+
+    if (hint.completeWhen()) {
+      if (state?.completionState !== "completed") {
+        onboardingStateService.markCompleted(activeContextId, hint.id);
+      }
+      continue;
+    }
+
+    if (!hint.shouldShow()) {
+      continue;
+    }
+
+    onboardingHintVisibleId = hint.id;
+    overlay.show({
+      hintId: hint.id,
+      title: hint.title,
+      body: hint.body,
+      actionLabel: hint.actionLabel,
+      progressText: `Hint ${index + 1} of ${hints.length}`,
+      hintsEnabled,
+    });
+    return;
+  }
+
+  onboardingHintVisibleId = null;
+  overlay.hide();
+}
+
+function scheduleOnboardingRefresh(delayMs = 50) {
+  if (onboardingRefreshTimer) {
+    window.clearTimeout(onboardingRefreshTimer);
+  }
+
+  onboardingRefreshTimer = window.setTimeout(() => {
+    onboardingRefreshTimer = null;
+    void refreshOnboardingHints();
+  }, delayMs);
+}
+
+async function handleOnboardingAction(hintId) {
+  if (!activeContextId) {
+    return;
+  }
+
+  const hint = onboardingHintsCatalog().find((entry) => entry.id === hintId);
+  if (!hint || typeof hint.onAction !== "function") {
+    return;
+  }
+
+  try {
+    await hint.onAction();
+  } catch (error) {
+    console.error(error);
+  }
+
+  scheduleOnboardingRefresh(30);
+}
+
+function dismissOnboardingHint(hintId) {
+  if (!activeContextId || !hintId) {
+    return;
+  }
+  onboardingStateService.markDismissed(activeContextId, hintId);
+  scheduleOnboardingRefresh(0);
+}
+
+function toggleOnboardingHints() {
+  if (!activeContextId) {
+    return;
+  }
+  const current = onboardingStateService.isHintsEnabled(activeContextId);
+  onboardingStateService.setHintsEnabled(activeContextId, !current);
+  scheduleOnboardingRefresh(0);
+}
+
+function resetOnboardingHints() {
+  if (!activeContextId) {
+    return;
+  }
+  onboardingStateService.resetContext(activeContextId);
+  onboardingRuntimeSignals.searchOpened = false;
+  onboardingRuntimeSignals.peekActivated = false;
+  onboardingRuntimeSignals.gestureUsed = false;
+  scheduleOnboardingRefresh(0);
+}
+
+function updateOnboardingControlsUi() {
+  if (!activeContextId) {
+    return;
+  }
+
+  const hintsEnabled = onboardingStateService.isHintsEnabled(activeContextId);
+  if (toggleOnboardingHintsButton instanceof HTMLButtonElement) {
+    toggleOnboardingHintsButton.textContent = hintsEnabled ? "Disable Hints" : "Enable Hints";
+  }
+  if (onboardingOverlay) {
+    onboardingOverlay.setHintsEnabled(hintsEnabled);
   }
 }
 
@@ -1333,6 +1650,8 @@ function updateWidgetUi() {
   } else {
     syncSearchIndexUi(0);
   }
+  updateOnboardingControlsUi();
+  scheduleOnboardingRefresh(120);
   scheduleWorkspacePersist();
 }
 
@@ -1535,6 +1854,8 @@ async function executeGestureAction(actionName) {
   if (actionName === "toggle-search-panel") {
     const panel = await ensureSearchFeatures();
     panel.toggle();
+    onboardingRuntimeSignals.searchOpened = true;
+    scheduleOnboardingRefresh(40);
   }
 }
 
@@ -1563,6 +1884,10 @@ async function ensureGestureFeatures() {
         ...lastGestureStatus,
         ...(status ?? {}),
       };
+      if (lastGestureStatus.lastGesture && lastGestureStatus.lastGesture !== "idle") {
+        onboardingRuntimeSignals.gestureUsed = true;
+        scheduleOnboardingRefresh(60);
+      }
       updateGestureUi();
     },
   });
@@ -2207,9 +2532,14 @@ async function switchContext(nextContextId) {
   }
 
   activeContextId = nextContextId;
+  onboardingRuntimeSignals.searchOpened = false;
+  onboardingRuntimeSignals.peekActivated = false;
+  onboardingRuntimeSignals.gestureUsed = false;
   documentManager.setContextId(activeContextId);
   updateContextUi();
   await restoreWorkspaceForActiveContext();
+  updateOnboardingControlsUi();
+  scheduleOnboardingRefresh(0);
   if (searchPanelController && typeof searchPanelController.runQuery === "function") {
     void searchPanelController.runQuery();
   }
@@ -2582,6 +2912,26 @@ function wireBaseEventHandlers() {
     syncToolsUi();
   });
 
+  toggleUiModeButton?.addEventListener("click", () => {
+    const next = toggleUiMode(uiModeState);
+    setUiMode(next.mode);
+    scheduleOnboardingRefresh(0);
+  });
+
+  toggleDocumentSettingsButton?.addEventListener("click", () => {
+    documentSettingsOpen = !documentSettingsOpen;
+    window.localStorage.setItem("notes-app.document-settings.open", documentSettingsOpen ? "1" : "0");
+    syncDocumentSettingsUi();
+  });
+
+  toggleOnboardingHintsButton?.addEventListener("click", () => {
+    toggleOnboardingHints();
+  });
+
+  resetOnboardingHintsButton?.addEventListener("click", () => {
+    resetOnboardingHints();
+  });
+
   const beginPeekHold = () => {
     peekModeHoldPointer = true;
     updatePeekModeFromHolds("button");
@@ -2632,6 +2982,8 @@ function wireBaseEventHandlers() {
     try {
       const panel = await ensureSearchFeatures();
       panel.toggle();
+      onboardingRuntimeSignals.searchOpened = true;
+      scheduleOnboardingRefresh(40);
     } catch (error) {
       console.error(error);
       window.alert(`Search panel failed: ${error.message}`);
@@ -2967,6 +3319,8 @@ function wireBaseEventHandlers() {
       void ensureSearchFeatures()
         .then((panel) => {
           panel.open();
+          onboardingRuntimeSignals.searchOpened = true;
+          scheduleOnboardingRefresh(40);
         })
         .catch((error) => {
           console.error(error);
@@ -2975,9 +3329,11 @@ function wireBaseEventHandlers() {
       return;
     }
 
-    if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === "d") {
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && (key === "d" || key === "u")) {
       event.preventDefault();
-      setDebugModeEnabled(!debugModeEnabled);
+      const next = toggleUiMode(uiModeState);
+      setUiMode(next.mode);
+      scheduleOnboardingRefresh(0);
       return;
     }
 
@@ -3135,9 +3491,14 @@ async function setupContextFeatures() {
     }
 
     activeContextId = created.id;
+    onboardingRuntimeSignals.searchOpened = false;
+    onboardingRuntimeSignals.peekActivated = false;
+    onboardingRuntimeSignals.gestureUsed = false;
     documentManager.setContextId(activeContextId);
     updateContextUi();
     await restoreWorkspaceForActiveContext();
+    updateOnboardingControlsUi();
+    scheduleOnboardingRefresh(0);
   };
 
   const renameContextHandler = () => {
@@ -3182,9 +3543,14 @@ async function setupContextFeatures() {
 
     contextWorkspaceStore.deleteWorkspace(result.deletedContextId);
     activeContextId = result.activeContextId;
+    onboardingRuntimeSignals.searchOpened = false;
+    onboardingRuntimeSignals.peekActivated = false;
+    onboardingRuntimeSignals.gestureUsed = false;
     documentManager.setContextId(activeContextId);
     updateContextUi();
     await restoreWorkspaceForActiveContext();
+    updateOnboardingControlsUi();
+    scheduleOnboardingRefresh(0);
   };
 
   contextUiController = contextUiModule.createContextManagementUi({
@@ -3214,6 +3580,9 @@ async function setupContextFeatures() {
 }
 
 async function bootstrap() {
+  uiModeState = loadUiModeState();
+  setUiMode(uiModeState.mode, { persist: false });
+
   popupBehaviorPrefs = loadPopupBehaviorPrefs();
   updatePopupBehaviorUi();
   gesturePrefs = loadGesturePrefs();
@@ -3227,11 +3596,12 @@ async function bootstrap() {
 
   updateSnipUi({ armed: false, dragging: false });
   setWhitespaceState("idle");
-  debugModeEnabled = readDebugModeFlag();
-  syncDebugControls();
-
   toolsPanelOpen = window.localStorage.getItem("notes-app.tools-panel.open") === "1";
+  documentSettingsOpen =
+    window.localStorage.getItem("notes-app.document-settings.open") === "1" || debugModeEnabled;
   syncToolsUi();
+  syncDocumentSettingsUi();
+  syncUiModeControls();
   setPeekMode(false, "boot");
   updateInkUi({
     completedStrokes: 0,
@@ -3257,6 +3627,8 @@ async function bootstrap() {
     updateGestureUi();
   }
   updateWidgetUi();
+  updateOnboardingControlsUi();
+  scheduleOnboardingRefresh(0);
 }
 
 void bootstrap();

@@ -1,7 +1,7 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 17 (`docs/SPRINT_17_Schema_Migrations_and_Asset_Lifecycle.md`) has now been implemented onto current `main`.
+- Sprint 18 (`docs/SPRINT_18_Production_UI_Minimalism_and_Onboarding.md`) has now been implemented onto current `main`.
 - Sprint 10 and Sprint 12 remain implemented; Sprint 11 remains skipped per directive.
 
 ## What Exists Today
@@ -33,10 +33,10 @@
 
 ## In Progress
 - No active blocker.
-- Sprint 17 migration/asset flow is now active:
-  - Persisted workspace and ink payloads now load through a schema envelope migration runner.
-  - Storage schema targets are centralized in a registry map (`src/features/storage/schema-registry.js`).
-  - PDF/reference widget binary payloads are externalized into an asset catalog with ref tracking and GC.
+- Sprint 18 production UI and onboarding flow is now active:
+  - UI mode (`debug` / `production`) is persisted and switchable from top-bar controls.
+  - Production mode hides debug-heavy chrome (status + advanced controls) and keeps an intent-first quick action surface.
+  - A lazy-loaded onboarding hint overlay now guides first-run flows and persists per-context dismissal/completion state.
 
 ## Blockers
 - None.
@@ -92,15 +92,23 @@
   - Asset catalog model: `{ id, type, sizeBytes, refs, createdAt, lastAccessedAt, derivedFrom?, hash? }`.
   - Workspace serialization now stores `pdfAssetId` / `imageAssetId` with inline payload fallback repair for stale assets.
   - Unreferenced assets are garbage-collected on context/widget ref updates and on maintenance passes.
+- Production UI and onboarding now follow:
+  - `UiModeState`: `{ mode: "debug" | "production" }` stored at `notes-app.ui-mode.v1`.
+  - Production mode defaults to minimal persistent chrome and compact document controls.
+  - Onboarding state is stored per profile/context with hint entries:
+    - `{ hintId, dismissedAt, completionState }`
+  - Onboarding hint overlays are lazy-loaded and non-blocking.
+  - Users can disable/re-enable or reset hints without leaving the canvas workflow.
 
 ## Next Actions
-1. Run QA for migration durability across legacy localStorage payloads (workspace and ink).
-2. Validate long-session asset churn (PDF open/close/import/delete) against storage budget and GC behavior.
-3. Expand coverage for additional persisted stores that still use direct JSON keys (context metadata, UI prefs).
+1. Run tablet-focused usability QA for production mode (tap targets, compact panel behavior, hint visibility while writing).
+2. Validate onboarding progression quality with mixed workflows (direct PDF import, context switching, search-first usage).
+3. Expand UI-mode coverage to additional optional panes (research/search default-open policies by mode).
 
 ## Verification Status
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.
 - `node --test tests/storage/*.test.mjs` passed.
+- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed.
 
 ## Last Updated
 - 2026-02-07 (local environment time)
