@@ -1,4 +1,7 @@
+import { createAssetManager } from "../storage/asset-manager.js";
+
 const STORAGE_KEY = "notes-app.notebook.documents.v1";
+const DOCUMENT_SCOPE_PREFIX = "doclib";
 
 function nowIso() {
   return new Date().toISOString();
@@ -43,9 +46,11 @@ function normalizeSource(candidate) {
 
   const source = asObject(candidate);
   const title = typeof source.title === "string" && source.title.trim() ? source.title.trim() : "Document";
+  const pdfAssetId =
+    typeof source.pdfAssetId === "string" && source.pdfAssetId.trim() ? source.pdfAssetId.trim() : null;
   const bytesBase64 =
     typeof source.bytesBase64 === "string" && source.bytesBase64.trim() ? source.bytesBase64.trim() : null;
-  if (!bytesBase64) {
+  if (!pdfAssetId && !bytesBase64 && !(source.pdfBytes instanceof Uint8Array)) {
     return null;
   }
 
@@ -56,6 +61,7 @@ function normalizeSource(candidate) {
       typeof source.sourceType === "string" && source.sourceType.trim() ? source.sourceType.trim() : "pdf",
     fileName:
       typeof source.fileName === "string" && source.fileName.trim() ? source.fileName.trim() : `${title}.pdf`,
+    pdfAssetId,
     bytesBase64,
     status: source.status === "deleted" ? "deleted" : "active",
     tags: normalizeTags(source.tags),
@@ -118,6 +124,7 @@ function cloneSource(entry) {
     title: entry.title,
     sourceType: entry.sourceType,
     fileName: entry.fileName,
+    pdfAssetId: typeof entry.pdfAssetId === "string" && entry.pdfAssetId.trim() ? entry.pdfAssetId : null,
     bytesBase64: entry.bytesBase64,
     status: entry.status,
     tags: [...entry.tags],
@@ -141,9 +148,67 @@ function loadState(storage) {
 
 export function createNotebookDocumentLibraryStore({ storage = window.localStorage } = {}) {
   let state = loadState(storage);
+  const assetManager = createAssetManager({ storage });
 
-  function persist() {
-    storage.setItem(STORAGE_KEY, JSON.stringify(state));
+  function notebookScopeId(notebookId) {
+    return `${DOCUMENT_SCOPE_PREFIX}/${notebookId}`;
+  }
+
+  function notebookDocumentOwnerRef(notebookId, sourceDocumentId) {
+    return `${notebookScopeId(notebookId)}:${sourceDocumentId}`;
+  }
+
+  function decodeBase64ToBytes(base64) {
+    if (typeof base64 !== "string" || !base64) {
+      return null;
+    }
+
+    try {
+      const binary = window.atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function persist(nextState) {
+    try {
+      storage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+      return true;
+    } catch (error) {
+      console.warn("[storage] failed to persist notebook documents.", error);
+      return false;
+    }
+  }
+
+  function syncNotebookAssetReferences(notebookId, notebook) {
+    if (!notebook || typeof notebookId !== "string" || !notebookId.trim()) {
+      return;
+    }
+
+    const refsByAssetId = new Map();
+    for (const entry of notebook.documents) {
+      if (entry.status === "deleted") {
+        continue;
+      }
+      if (typeof entry.pdfAssetId !== "string" || !entry.pdfAssetId.trim()) {
+        continue;
+      }
+
+      const existing = refsByAssetId.get(entry.pdfAssetId) ?? new Set();
+      existing.add(notebookDocumentOwnerRef(notebookId, entry.id));
+      refsByAssetId.set(entry.pdfAssetId, existing);
+    }
+
+    try {
+      assetManager.replaceContextReferences(notebookScopeId(notebookId), refsByAssetId);
+    } catch (error) {
+      console.warn("[storage] failed to sync notebook document asset refs.", error);
+    }
   }
 
   function ensureNotebook(notebookId) {
@@ -152,7 +217,7 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
     }
 
     if (!state.notebooks[notebookId]) {
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -161,7 +226,11 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
           },
         },
       };
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
+      syncNotebookAssetReferences(notebookId, state.notebooks[notebookId]);
     }
 
     return state.notebooks[notebookId];
@@ -189,6 +258,27 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
       return found ? cloneSource(found) : null;
     },
 
+    loadDocumentBytes(notebookId, sourceDocumentId) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof sourceDocumentId !== "string" || !sourceDocumentId.trim()) {
+        return null;
+      }
+
+      const found = notebook.documents.find((entry) => entry.id === sourceDocumentId);
+      if (!found) {
+        return null;
+      }
+
+      if (typeof found.pdfAssetId === "string" && found.pdfAssetId.trim()) {
+        const bytes = assetManager.loadPdfBytes(found.pdfAssetId);
+        if (bytes instanceof Uint8Array && bytes.length > 0) {
+          return bytes;
+        }
+      }
+
+      return decodeBase64ToBytes(found.bytesBase64);
+    },
+
     upsertDocument(notebookId, candidate) {
       const notebook = ensureNotebook(notebookId);
       const normalized = normalizeSource(candidate);
@@ -196,9 +286,35 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
         return null;
       }
 
+      const ownerRef = notebookDocumentOwnerRef(notebookId, normalized.id);
+      let resolvedPdfAssetId = normalized.pdfAssetId;
+      if (!resolvedPdfAssetId && candidate?.pdfBytes instanceof Uint8Array && candidate.pdfBytes.length > 0) {
+        const registered = assetManager.registerPdfBytes(candidate.pdfBytes, {
+          ownerId: ownerRef,
+          derivedFrom: normalized.id,
+        });
+        resolvedPdfAssetId = registered?.id ?? null;
+      }
+
+      if (!resolvedPdfAssetId && typeof normalized.bytesBase64 === "string" && normalized.bytesBase64) {
+        const registered = assetManager.registerAsset({
+          type: "pdf-bytes",
+          data: normalized.bytesBase64,
+          ownerId: ownerRef,
+          derivedFrom: normalized.id,
+        });
+        resolvedPdfAssetId = registered?.id ?? null;
+      }
+
+      if (!resolvedPdfAssetId) {
+        return null;
+      }
+
       const existingIndex = notebook.documents.findIndex((entry) => entry.id === normalized.id);
       const next = {
         ...normalized,
+        pdfAssetId: resolvedPdfAssetId,
+        bytesBase64: null,
         updatedAt: nowIso(),
       };
 
@@ -211,7 +327,7 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
         nextDocuments[existingIndex] = next;
       }
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -222,7 +338,11 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
         },
       };
 
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
+      syncNotebookAssetReferences(notebookId, state.notebooks[notebookId]);
       return cloneSource(next);
     },
 
@@ -245,7 +365,7 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
       };
       nextDocuments[existingIndex] = updated;
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -256,7 +376,11 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
         },
       };
 
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
+      syncNotebookAssetReferences(notebookId, state.notebooks[notebookId]);
       return cloneSource(updated);
     },
 
@@ -289,7 +413,7 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
       };
       nextDocuments[existingIndex] = updated;
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -299,7 +423,11 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
           },
         },
       };
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
+      syncNotebookAssetReferences(notebookId, state.notebooks[notebookId]);
       return cloneSource(updated);
     },
 
@@ -314,7 +442,7 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
         return false;
       }
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -324,7 +452,11 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
           },
         },
       };
-      persist();
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
+      syncNotebookAssetReferences(notebookId, state.notebooks[notebookId]);
       return true;
     },
 
@@ -335,11 +467,15 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
 
       const notebooks = { ...state.notebooks };
       delete notebooks[notebookId];
-      state = {
+      const nextState = {
         ...state,
         notebooks,
       };
-      persist();
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
+      assetManager.removeContextReferences(notebookScopeId(notebookId));
       return true;
     },
   };

@@ -6,6 +6,7 @@ const CATALOG_KEY = ASSET_SCHEMA.catalogKey;
 const DATA_PREFIX = ASSET_SCHEMA.dataPrefix;
 const SCHEMA_VERSION = ASSET_SCHEMA.schemaVersion;
 const DEFAULT_MAX_BYTES = ASSET_SCHEMA.defaultMaxBytes;
+const PDF_BYTES_BINARY_PREFIX = "bin:";
 
 function nowIso() {
   return new Date().toISOString();
@@ -60,18 +61,28 @@ function encodeBytes(bytes) {
     return null;
   }
 
-  let binary = "";
+  // Store as binary payload to reduce overhead versus base64.
+  let payload = PDF_BYTES_BINARY_PREFIX;
   const chunkSize = 0x8000;
   for (let index = 0; index < bytes.length; index += chunkSize) {
     const chunk = bytes.subarray(index, index + chunkSize);
-    binary += String.fromCharCode(...chunk);
+    payload += String.fromCharCode(...chunk);
   }
-  return window.btoa(binary);
+  return payload;
 }
 
 function decodeBytes(base64Value) {
   if (typeof base64Value !== "string" || !base64Value) {
     return null;
+  }
+
+  if (base64Value.startsWith(PDF_BYTES_BINARY_PREFIX)) {
+    const binary = base64Value.slice(PDF_BYTES_BINARY_PREFIX.length);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index) & 0xff;
+    }
+    return bytes;
   }
 
   try {
@@ -180,12 +191,18 @@ export function createAssetManager({
   }
 
   function persistCatalog() {
-    writeEnvelope({
-      storage,
-      key: CATALOG_KEY,
-      schemaVersion: SCHEMA_VERSION,
-      data: catalog,
-    });
+    try {
+      writeEnvelope({
+        storage,
+        key: CATALOG_KEY,
+        schemaVersion: SCHEMA_VERSION,
+        data: catalog,
+      });
+      return true;
+    } catch (error) {
+      console.warn("[storage] failed to persist asset catalog.", error);
+      return false;
+    }
   }
 
   function findRecord(assetId) {
@@ -366,7 +383,12 @@ export function createAssetManager({
     }
 
     const id = makeId("asset");
-    storage.setItem(dataKey(id), payload);
+    try {
+      storage.setItem(dataKey(id), payload);
+    } catch (error) {
+      console.warn("[storage] failed to persist asset payload.", error);
+      return null;
+    }
 
     const timestamp = nowIso();
     const record = {
@@ -382,7 +404,11 @@ export function createAssetManager({
     };
 
     catalog.records.push(record);
-    persistCatalog();
+    if (!persistCatalog()) {
+      catalog.records = catalog.records.filter((entry) => entry.id !== id);
+      storage.removeItem(dataKey(id));
+      return null;
+    }
     scheduleGarbageCollection({ enforceBudget: true });
 
     return {

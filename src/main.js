@@ -178,6 +178,7 @@ let researchCaptures = [];
 
 let restoringContext = false;
 let persistTimer = null;
+let hasShownWorkspaceStorageWarning = false;
 let onboardingStateService = createOnboardingStateService();
 let onboardingOverlay = null;
 let onboardingRefreshTimer = null;
@@ -229,20 +230,6 @@ function nowIso() {
 
 function makeId(prefix) {
   return globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-}
-
-function encodeBytesToBase64(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
-    return null;
-  }
-
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    const chunk = bytes.subarray(index, index + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return window.btoa(binary);
 }
 
 function decodeBase64ToBytes(base64Value) {
@@ -1919,16 +1906,11 @@ async function toggleWidgetLibraryFromContextMenu(widget) {
       return false;
     }
 
-    const bytesBase64 = encodeBytesToBase64(widget.pdfBytes);
-    if (!bytesBase64) {
-      return false;
-    }
-
     const source = notebookDocumentLibraryStore.upsertDocument(activeContextId, {
       title: widget.metadata?.title ?? widget.fileName ?? "Document",
       sourceType: "pdf",
       fileName: widget.fileName ?? "document.pdf",
-      bytesBase64,
+      pdfBytes: widget.pdfBytes,
       status: "active",
       tags: ["pdf"],
     });
@@ -2479,7 +2461,7 @@ function persistActiveWorkspace() {
   syncPdfDocumentMetadata();
   const persisted = documentManager.toPersistencePayload();
 
-  contextWorkspaceStore.saveFromRuntime({
+  const saved = contextWorkspaceStore.saveFromRuntime({
     contextId: scopeId,
     runtime,
     researchCaptures,
@@ -2493,7 +2475,16 @@ function persistActiveWorkspace() {
     lastPdfWidgetId,
     lastReferenceWidgetId,
   });
-  contextStore.touchActiveContext();
+  if (saved) {
+    hasShownWorkspaceStorageWarning = false;
+    contextStore.touchActiveContext();
+    return;
+  }
+
+  if (!hasShownWorkspaceStorageWarning) {
+    hasShownWorkspaceStorageWarning = true;
+    window.alert("Storage is full. Recent PDF/widget changes may not persist until space is freed.");
+  }
 }
 
 function flushWorkspacePersist() {
@@ -3297,24 +3288,21 @@ async function createPdfWidgetFromFile(
   let sourceDocument = null;
 
   if (activeContextId) {
-    const bytesBase64 = encodeBytesToBase64(bytes);
-    if (bytesBase64) {
-      const candidate = {
-        title:
-          typeof definition.metadata?.title === "string" && definition.metadata.title.trim()
-            ? definition.metadata.title.trim()
-            : file.name,
-        sourceType: "pdf",
-        fileName: file.name,
-        bytesBase64,
-        status: "active",
-        tags: ["pdf"],
-      };
-      if (typeof sourceDocumentId === "string" && sourceDocumentId.trim()) {
-        candidate.id = sourceDocumentId.trim();
-      }
-      sourceDocument = notebookDocumentLibraryStore.upsertDocument(activeContextId, candidate);
+    const candidate = {
+      title:
+        typeof definition.metadata?.title === "string" && definition.metadata.title.trim()
+          ? definition.metadata.title.trim()
+          : file.name,
+      sourceType: "pdf",
+      fileName: file.name,
+      pdfBytes: bytes,
+      status: "active",
+      tags: ["pdf"],
+    };
+    if (typeof sourceDocumentId === "string" && sourceDocumentId.trim()) {
+      candidate.id = sourceDocumentId.trim();
     }
+    sourceDocument = notebookDocumentLibraryStore.upsertDocument(activeContextId, candidate);
   }
 
   const widget = await createPdfWidgetFromBytes({
@@ -3522,7 +3510,9 @@ async function createPdfWidgetFromNotebookSource(sourceDocument, intent = null, 
     return null;
   }
 
-  const bytes = decodeBase64ToBytes(sourceDocument.bytesBase64);
+  const bytes = activeContextId
+    ? notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, sourceDocument.id)
+    : decodeBase64ToBytes(sourceDocument.bytesBase64);
   if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
     window.alert(`Notebook document "${sourceDocument.title}" is missing PDF bytes.`);
     return null;

@@ -1107,13 +1107,18 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       const canonicalized = canonicalizeWorkspaceAssets(normalized, contextId, assetManager);
       const workspace = sanitizeWorkspace(canonicalized.workspace, contextId);
 
-      assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
-      writeEnvelope({
-        storage,
-        key: keyForContext(contextId),
-        schemaVersion: WORKSPACE_SCHEMA_VERSION,
-        data: workspace,
-      });
+      try {
+        assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
+        writeEnvelope({
+          storage,
+          key: keyForContext(contextId),
+          schemaVersion: WORKSPACE_SCHEMA_VERSION,
+          data: workspace,
+        });
+      } catch (error) {
+        console.warn(`[storage] failed to persist workspace ${contextId}.`, error);
+        return false;
+      }
 
       return true;
     },
