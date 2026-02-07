@@ -7,6 +7,11 @@ export function createInkFeature({ runtime, onStateChange, getActiveContextId })
   return {
     undo: () => engine.undo(),
     redo: () => engine.redo(),
+    getTool: () => engine.getTool(),
+    setTool: (tool) => engine.setTool(tool),
+    toggleTool: () => engine.toggleTool(),
+    isEnabled: () => engine.isEnabled(),
+    setEnabled: (nextEnabled) => engine.setEnabled(nextEnabled),
     dispose: () => engine.detach(),
   };
 }

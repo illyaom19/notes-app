@@ -27,6 +27,30 @@ export class StrokeStore {
     this._revision += 1;
   }
 
+  removeStrokes(predicate) {
+    if (typeof predicate !== "function") {
+      return 0;
+    }
+
+    const kept = [];
+    let removed = 0;
+    for (const stroke of this._done) {
+      if (predicate(stroke)) {
+        removed += 1;
+      } else {
+        kept.push(stroke);
+      }
+    }
+
+    if (removed > 0) {
+      this._done = kept;
+      this._undone = [];
+      this._revision += 1;
+    }
+
+    return removed;
+  }
+
   undo() {
     if (!this._done.length) {
       return false;

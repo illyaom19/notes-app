@@ -1,7 +1,7 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 14 (`docs/SPRINT_14_Research_Panel_and_Citation_Model.md`) has now been implemented onto current `main`.
+- Sprint 15 (`docs/SPRINT_15_Ink_Gestures_and_Search_Indexing.md`) has now been implemented onto current `main`.
 - Sprint 10 and Sprint 12 remain implemented; Sprint 11 remains skipped per directive.
 
 ## What Exists Today
@@ -24,17 +24,19 @@
   - Whitespace analyzer/manager: `src/features/whitespace/`
   - Graph interactions: `src/features/graph/`
   - Research panel capture flow (lazy-loaded): `src/features/research/research-panel.js`
+  - Search index pipeline + search panel (lazy-loaded): `src/features/search/`
+  - Pen gesture recognizer + bindings: `src/features/gestures/pen-gestures.js`
   - Context metadata store: `src/features/contexts/context-store.js`
   - Context-scoped workspace persistence: `src/features/contexts/context-workspace-store.js`
   - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
 
 ## In Progress
 - No active blocker.
-- Sprint 14 research/citation flow is now active:
-  - Research panel is loaded on demand and captures text/definition/image snippets with citation fields.
-  - `ResearchCapture` records are persisted per context and deduped by citation/content key.
-  - Reference popup payloads now persist citation metadata, snippet content type, and capture id linkage.
-  - Reference popups render citation cards and provide a source-jump action.
+- Sprint 15 gestures/search flow is now active:
+  - Search panel provides query, next/prev navigation, and jump-to-widget focus.
+  - Search index entries are rebuilt incrementally from widget metadata/content and batched with debounce.
+  - Pen gesture preferences support enable flags and configurable bindings.
+  - Ink now supports tool mode switching (`pen` / `eraser`) with gesture-triggered actions.
 
 ## Blockers
 - None.
@@ -76,11 +78,15 @@
   - `Citation`: `{ sourceTitle, url, accessedAt, author?, publisher?, snippetType, attributionText }`
   - `ResearchCapture`: `{ id, contextId, contentType, content, citation }`
   - Workspace schema now persists `researchCaptures[]` alongside widget state.
+- Gesture and search models now follow:
+  - `GesturePrefs`: enable flags + per-gesture bindings (`doubleTap`, `barrelTap`)
+  - `SearchIndexEntry`: `{ id, contextId, widgetId, fields, updatedAt }`
+  - Search indexing remains in-memory, context-aware, and debounced on widget mutations.
 
 ## Next Actions
-1. Run QA for each capture type (`text`, `definition`, `image`) and verify save/restore per context.
-2. Validate source-link action and citation card rendering across zoom levels and collapsed/minimized popup states.
-3. Add regression tests for `researchCaptures` normalization/migration and citation payload import behavior.
+1. Run tablet/stylus QA for double-tap and barrel-tap gesture paths across supported and unsupported hardware.
+2. Stress test search indexing with large widget counts and validate jump-to-result camera focus behavior.
+3. Add regression tests for eraser interactions and search result ranking/index invalidation.
 
 ## Verification Status
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.

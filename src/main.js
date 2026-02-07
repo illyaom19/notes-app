@@ -12,10 +12,12 @@ const controlsPanel = document.querySelector("#controls-panel");
 const detectWhitespaceButton = document.querySelector("#detect-whitespace");
 const startSnipButton = document.querySelector("#start-snip");
 const toggleResearchPanelButton = document.querySelector("#toggle-research-panel");
+const toggleSearchPanelButton = document.querySelector("#toggle-search-panel");
 const instantiateButton = document.querySelector("#instantiate-dummy");
 const instantiateExpandedButton = document.querySelector("#instantiate-expanded");
 const instantiateGraphButton = document.querySelector("#instantiate-graph");
 const enableInkButton = document.querySelector("#enable-ink");
+const toggleInkToolButton = document.querySelector("#toggle-ink-tool");
 const undoInkButton = document.querySelector("#undo-ink");
 const redoInkButton = document.querySelector("#redo-ink");
 const startWorkerButton = document.querySelector("#start-worker");
@@ -30,7 +32,10 @@ const graphCountOutput = document.querySelector("#graph-count");
 const activeContextOutput = document.querySelector("#active-context");
 const documentCountOutput = document.querySelector("#document-count");
 const inkStateOutput = document.querySelector("#ink-state");
+const inkToolOutput = document.querySelector("#ink-tool");
 const strokeCountOutput = document.querySelector("#stroke-count");
+const gestureStateOutput = document.querySelector("#gesture-state");
+const searchIndexCountOutput = document.querySelector("#search-index-count");
 const cameraOutput = document.querySelector("#camera-state");
 const workerStateOutput = document.querySelector("#worker-state");
 const canvas = document.querySelector("#workspace-canvas");
@@ -38,6 +43,7 @@ const widgetContextMenu = document.querySelector("#widget-context-menu");
 const creationCommandMenu = document.querySelector("#creation-command-menu");
 const pdfFileInput = document.querySelector("#pdf-file-input");
 const researchPanel = document.querySelector("#research-panel");
+const searchPanel = document.querySelector("#search-panel");
 const documentTabs = document.querySelector("#document-tabs");
 const documentSwitcher = document.querySelector("#document-switcher");
 const documentSettingsHint = document.querySelector("#document-settings-hint");
@@ -48,6 +54,11 @@ const focusBindingsButton = document.querySelector("#focus-document-bindings");
 const togglePinDocumentButton = document.querySelector("#toggle-pin-document");
 const popupAvoidStylusToggle = document.querySelector("#popup-avoid-stylus");
 const popupReducedMotionToggle = document.querySelector("#popup-reduced-motion");
+const gestureEnabledToggle = document.querySelector("#gesture-enabled");
+const gestureDoubleTapToggle = document.querySelector("#gesture-doubletap-enabled");
+const gestureBarrelTapToggle = document.querySelector("#gesture-barreltap-enabled");
+const gestureDoubleTapBindingSelect = document.querySelector("#gesture-doubletap-binding");
+const gestureBarrelTapBindingSelect = document.querySelector("#gesture-barreltap-binding");
 const debugOnlyControls = Array.from(document.querySelectorAll('[data-debug-only="true"]'));
 
 const contextSelect = document.querySelector("#context-select");
@@ -67,6 +78,9 @@ let snipTool = null;
 let whitespaceManager = null;
 let graphInteractions = null;
 let researchPanelController = null;
+let searchIndex = null;
+let searchPanelController = null;
+let penGestureController = null;
 let widgetInteractionManager = null;
 let widgetCreationController = null;
 let detachDocumentFocusSync = null;
@@ -74,8 +88,24 @@ let toolsPanelOpen = false;
 let pendingPdfImportIntent = null;
 let debugModeEnabled = false;
 const POPUP_BEHAVIOR_PREFS_KEY = "notes-app.popup.behavior.v1";
+const GESTURE_PREFS_KEY = "notes-app.gesture-prefs.v1";
 const REDUCED_MOTION_MEDIA = "(prefers-reduced-motion: reduce)";
 let popupBehaviorPrefs = null;
+let gesturePrefs = null;
+let lastGestureStatus = {
+  supported: false,
+  enabled: false,
+  lastGesture: "idle",
+  lastBinding: "none",
+};
+let inkStateSnapshot = {
+  completedStrokes: 0,
+  undoDepth: 0,
+  redoDepth: 0,
+  activePointers: 0,
+  activeTool: "pen",
+  enabled: false,
+};
 
 let contextStore = null;
 let contextWorkspaceStore = null;
@@ -234,6 +264,116 @@ function setPopupBehaviorPrefs(nextPrefs) {
   popupBehaviorPrefs = normalizePopupBehaviorPrefs(nextPrefs);
   savePopupBehaviorPrefs(popupBehaviorPrefs);
   updatePopupBehaviorUi();
+}
+
+function updateCameraOutputFromState() {
+  if (!cameraOutput) {
+    return;
+  }
+
+  const worldAtCenter = runtime.camera.screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
+  cameraOutput.textContent = `x=${worldAtCenter.x.toFixed(1)}, y=${worldAtCenter.y.toFixed(1)}, zoom=${runtime.camera.zoom.toFixed(2)}`;
+}
+
+function normalizeGesturePrefs(candidate) {
+  const source = candidate && typeof candidate === "object" ? candidate : {};
+  const gestures = source.gestures && typeof source.gestures === "object" ? source.gestures : {};
+  const bindings = source.bindings && typeof source.bindings === "object" ? source.bindings : {};
+
+  const normalizeBinding = (value, fallback) => {
+    if (
+      value === "none" ||
+      value === "toggle-ink-tool" ||
+      value === "toggle-ink-enabled" ||
+      value === "toggle-search-panel"
+    ) {
+      return value;
+    }
+    return fallback;
+  };
+
+  return {
+    enabled: source.enabled !== false,
+    gestures: {
+      doubleTap: gestures.doubleTap === true,
+      barrelTap: gestures.barrelTap !== false,
+    },
+    bindings: {
+      doubleTap: normalizeBinding(bindings.doubleTap, "none"),
+      barrelTap: normalizeBinding(bindings.barrelTap, "toggle-ink-tool"),
+    },
+  };
+}
+
+function defaultGesturePrefs() {
+  return {
+    enabled: true,
+    gestures: {
+      doubleTap: false,
+      barrelTap: true,
+    },
+    bindings: {
+      doubleTap: "none",
+      barrelTap: "toggle-ink-tool",
+    },
+  };
+}
+
+function loadGesturePrefs() {
+  const fallback = defaultGesturePrefs();
+  try {
+    const raw = window.localStorage.getItem(GESTURE_PREFS_KEY);
+    if (!raw) {
+      return fallback;
+    }
+    const parsed = JSON.parse(raw);
+    return normalizeGesturePrefs({ ...fallback, ...(parsed ?? {}) });
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function saveGesturePrefs(prefs) {
+  window.localStorage.setItem(GESTURE_PREFS_KEY, JSON.stringify(normalizeGesturePrefs(prefs)));
+}
+
+function updateGestureUi() {
+  const prefs = normalizeGesturePrefs(gesturePrefs);
+  if (gestureEnabledToggle instanceof HTMLInputElement) {
+    gestureEnabledToggle.checked = prefs.enabled;
+  }
+  if (gestureDoubleTapToggle instanceof HTMLInputElement) {
+    gestureDoubleTapToggle.checked = prefs.gestures.doubleTap;
+  }
+  if (gestureBarrelTapToggle instanceof HTMLInputElement) {
+    gestureBarrelTapToggle.checked = prefs.gestures.barrelTap;
+  }
+  if (gestureDoubleTapBindingSelect instanceof HTMLSelectElement) {
+    gestureDoubleTapBindingSelect.value = prefs.bindings.doubleTap;
+    gestureDoubleTapBindingSelect.disabled = !prefs.enabled || !prefs.gestures.doubleTap;
+  }
+  if (gestureBarrelTapBindingSelect instanceof HTMLSelectElement) {
+    gestureBarrelTapBindingSelect.value = prefs.bindings.barrelTap;
+    gestureBarrelTapBindingSelect.disabled = !prefs.enabled || !prefs.gestures.barrelTap;
+  }
+
+  if (gestureStateOutput) {
+    if (!lastGestureStatus.supported) {
+      gestureStateOutput.textContent = "unsupported";
+      return;
+    }
+
+    const enabled = prefs.enabled ? "on" : "off";
+    const lastGesture = lastGestureStatus.lastGesture ?? "idle";
+    const lastBinding = lastGestureStatus.lastBinding ?? "none";
+    gestureStateOutput.textContent = `${enabled} ${lastGesture}:${lastBinding}`;
+  }
+}
+
+function setGesturePrefs(nextPrefs) {
+  gesturePrefs = normalizeGesturePrefs(nextPrefs);
+  saveGesturePrefs(gesturePrefs);
+  updateGestureUi();
 }
 
 function viewportCenterAnchor() {
@@ -577,16 +717,62 @@ function updateInkUi(state) {
     return;
   }
 
-  strokeCountOutput.textContent = String(state.completedStrokes);
-  undoInkButton.disabled = state.undoDepth < 1;
-  redoInkButton.disabled = state.redoDepth < 1;
+  inkStateSnapshot = {
+    ...inkStateSnapshot,
+    ...(state && typeof state === "object" ? state : {}),
+  };
 
-  if (state.activePointers > 0) {
-    inkStateOutput.textContent = "writing";
+  const completed = Number.isFinite(inkStateSnapshot.completedStrokes) ? inkStateSnapshot.completedStrokes : 0;
+  const undoDepth = Number.isFinite(inkStateSnapshot.undoDepth) ? inkStateSnapshot.undoDepth : 0;
+  const redoDepth = Number.isFinite(inkStateSnapshot.redoDepth) ? inkStateSnapshot.redoDepth : 0;
+  const activePointers = Number.isFinite(inkStateSnapshot.activePointers) ? inkStateSnapshot.activePointers : 0;
+  const activeTool = inkStateSnapshot.activeTool === "eraser" ? "eraser" : "pen";
+  const enabled = inkStateSnapshot.enabled !== false;
+
+  strokeCountOutput.textContent = String(completed);
+  undoInkButton.disabled = undoDepth < 1;
+  redoInkButton.disabled = redoDepth < 1;
+
+  if (inkToolOutput) {
+    inkToolOutput.textContent = activeTool;
+  }
+
+  if (toggleInkToolButton instanceof HTMLButtonElement) {
+    toggleInkToolButton.disabled = !inkFeature;
+    toggleInkToolButton.textContent = activeTool === "eraser" ? "Ink Tool: Eraser" : "Ink Tool: Pen";
+  }
+
+  if (activePointers > 0) {
+    inkStateOutput.textContent = activeTool === "eraser" ? "erasing" : "writing";
     return;
   }
 
-  inkStateOutput.textContent = "active";
+  inkStateOutput.textContent = inkFeature ? (enabled ? "active" : "paused") : "idle";
+}
+
+function currentInkTool() {
+  if (!inkFeature || typeof inkFeature.getTool !== "function") {
+    return "pen";
+  }
+  return inkFeature.getTool() === "eraser" ? "eraser" : "pen";
+}
+
+function syncSearchIndexUi(indexedCount = null) {
+  if (!searchIndexCountOutput) {
+    return;
+  }
+
+  const count =
+    Number.isFinite(indexedCount) && indexedCount >= 0
+      ? indexedCount
+      : searchIndex
+        ? searchIndex.getEntryCount(activeContextId)
+        : 0;
+  searchIndexCountOutput.textContent = String(count);
+
+  if (searchPanelController && typeof searchPanelController.refreshIndex === "function") {
+    searchPanelController.refreshIndex(count);
+  }
 }
 
 function updateSnipUi({ armed, dragging }) {
@@ -1028,6 +1214,14 @@ function updateWidgetUi() {
 
   updateWhitespaceZoneCount();
   updateContextUi();
+  if (searchIndex && activeContextId) {
+    searchIndex.scheduleReindex({
+      runtime,
+      contextId: activeContextId,
+    });
+  } else {
+    syncSearchIndexUi(0);
+  }
   scheduleWorkspacePersist();
 }
 
@@ -1036,6 +1230,233 @@ function setContextControlsBusy(nextBusy) {
     return;
   }
   contextUiController.setControlsDisabled(nextBusy);
+}
+
+function centerCameraOnWidget(widget) {
+  if (!widget) {
+    return;
+  }
+
+  const bounds =
+    typeof widget.getInteractionBounds === "function"
+      ? widget.getInteractionBounds()
+      : { width: widget.size.width, height: widget.size.height };
+  const centerX = widget.position.x + Math.max(1, bounds.width) / 2;
+  const centerY = widget.position.y + Math.max(1, bounds.height) / 2;
+
+  runtime.camera.offsetX = canvas.clientWidth / 2 - centerX * runtime.camera.zoom;
+  runtime.camera.offsetY = canvas.clientHeight / 2 - centerY * runtime.camera.zoom;
+  updateCameraOutputFromState();
+}
+
+async function jumpToSearchResult(result) {
+  if (!result || typeof result.widgetId !== "string" || !result.widgetId.trim()) {
+    return false;
+  }
+
+  if (
+    typeof result.contextId === "string" &&
+    result.contextId.trim() &&
+    result.contextId !== activeContextId
+  ) {
+    await switchContext(result.contextId);
+  }
+
+  const widget = runtime.getWidgetById(result.widgetId);
+  if (!widget) {
+    return false;
+  }
+
+  runtime.bringWidgetToFront(widget.id);
+  runtime.setFocusedWidgetId(widget.id);
+  runtime.setSelectedWidgetId(widget.id);
+  centerCameraOnWidget(widget);
+  updateWidgetUi();
+  return true;
+}
+
+async function ensureSearchFeatures() {
+  if (searchPanelController && searchIndex) {
+    return searchPanelController;
+  }
+
+  const [indexModule, panelModule] = await Promise.all([
+    import("./features/search/search-index.js"),
+    import("./features/search/search-panel.js"),
+  ]);
+  loadedModules.add("search-index");
+  loadedModules.add("search-panel");
+  if (loadedModulesOutput) {
+    loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
+  }
+
+  if (!searchIndex) {
+    searchIndex = indexModule.createSearchIndex();
+    searchIndex.setUpdateListener((stats) => {
+      syncSearchIndexUi(stats.totalEntries);
+    });
+  }
+
+  if (activeContextId) {
+    searchIndex.reindexNow({ runtime, contextId: activeContextId });
+  }
+
+  searchPanelController = panelModule.createSearchPanelController({
+    panelElement: searchPanel,
+    toggleButton: toggleSearchPanelButton,
+    onQuery: async (query) => {
+      if (!searchIndex) {
+        return { results: [], indexedCount: 0 };
+      }
+
+      if (activeContextId) {
+        searchIndex.reindexNow({ runtime, contextId: activeContextId });
+      }
+
+      const contextLabel = activeContextRecord()?.name ?? "Current Context";
+      const results = searchIndex
+        .query(query, { contextId: activeContextId, limit: 140 })
+        .map((entry) => ({
+          ...entry,
+          contextLabel,
+        }));
+
+      return {
+        results,
+        indexedCount: searchIndex.getEntryCount(activeContextId),
+      };
+    },
+    onActivateResult: async (result) => {
+      await jumpToSearchResult(result);
+    },
+    onNavigateResult: async (result) => {
+      await jumpToSearchResult(result);
+    },
+  });
+
+  syncSearchIndexUi(searchIndex.getEntryCount(activeContextId));
+  return searchPanelController;
+}
+
+async function ensureInkFeature() {
+  if (inkFeature) {
+    return inkFeature;
+  }
+
+  const inkModule = await import("./features/ink/index.js");
+  loadedModules.add("ink");
+  if (loadedModulesOutput) {
+    loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
+  }
+
+  inkFeature = inkModule.createInkFeature({
+    runtime,
+    getActiveContextId: () => activeContextId,
+    onStateChange: (state) => updateInkUi(state),
+  });
+
+  updateInkUi({
+    activeTool: currentInkTool(),
+    enabled: true,
+  });
+
+  if (enableInkButton instanceof HTMLButtonElement) {
+    enableInkButton.textContent = "Ink Enabled";
+  }
+
+  return inkFeature;
+}
+
+function setInkEnabled(nextEnabled) {
+  if (!inkFeature || typeof inkFeature.setEnabled !== "function") {
+    return false;
+  }
+
+  const enabled = inkFeature.setEnabled(nextEnabled);
+  updateInkUi({
+    activeTool: currentInkTool(),
+    enabled,
+  });
+
+  if (enableInkButton instanceof HTMLButtonElement) {
+    enableInkButton.textContent = enabled ? "Ink Enabled" : "Enable Ink";
+  }
+
+  return enabled;
+}
+
+async function toggleInkEnabled() {
+  const feature = await ensureInkFeature();
+  if (!feature || typeof feature.isEnabled !== "function") {
+    return false;
+  }
+  const next = !feature.isEnabled();
+  setInkEnabled(next);
+  return next;
+}
+
+async function toggleInkTool() {
+  const feature = await ensureInkFeature();
+  if (!feature || typeof feature.toggleTool !== "function") {
+    return "pen";
+  }
+
+  const nextTool = feature.toggleTool();
+  updateInkUi({
+    activeTool: nextTool,
+    enabled: feature.isEnabled?.() !== false,
+  });
+
+  return nextTool;
+}
+
+async function executeGestureAction(actionName) {
+  if (actionName === "toggle-ink-tool") {
+    await toggleInkTool();
+    return;
+  }
+
+  if (actionName === "toggle-ink-enabled") {
+    await toggleInkEnabled();
+    return;
+  }
+
+  if (actionName === "toggle-search-panel") {
+    const panel = await ensureSearchFeatures();
+    panel.toggle();
+  }
+}
+
+async function ensureGestureFeatures() {
+  if (penGestureController) {
+    return penGestureController;
+  }
+
+  const gestureModule = await import("./features/gestures/pen-gestures.js");
+  loadedModules.add("pen-gestures");
+  if (loadedModulesOutput) {
+    loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
+  }
+
+  gesturePrefs = normalizeGesturePrefs(gesturePrefs ?? defaultGesturePrefs());
+  updateGestureUi();
+
+  penGestureController = gestureModule.createPenGestureController({
+    canvas,
+    getPrefs: () => gesturePrefs,
+    onAction: (binding) => {
+      void executeGestureAction(binding);
+    },
+    onStatusChange: (status) => {
+      lastGestureStatus = {
+        ...lastGestureStatus,
+        ...(status ?? {}),
+      };
+      updateGestureUi();
+    },
+  });
+
+  return penGestureController;
 }
 
 async function ensureReferencePopupInteractions() {
@@ -1626,6 +2047,9 @@ async function restoreWorkspaceForActiveContext() {
     if (activeDocument) {
       focusDocumentWidgets(activeDocument.id, { selectPrimary: true });
     }
+    if (searchIndex && activeContextId) {
+      searchIndex.reindexNow({ runtime, contextId: activeContextId });
+    }
     updateWidgetUi();
   } finally {
     setContextControlsBusy(false);
@@ -1648,6 +2072,9 @@ async function switchContext(nextContextId) {
   documentManager.setContextId(activeContextId);
   updateContextUi();
   await restoreWorkspaceForActiveContext();
+  if (searchPanelController && typeof searchPanelController.runQuery === "function") {
+    void searchPanelController.runQuery();
+  }
 }
 
 function parseSelectionInput(input, maxCount) {
@@ -2030,6 +2457,19 @@ function wireBaseEventHandlers() {
     }
   });
 
+  toggleSearchPanelButton?.addEventListener("click", async () => {
+    toggleSearchPanelButton.disabled = true;
+    try {
+      const panel = await ensureSearchFeatures();
+      panel.toggle();
+    } catch (error) {
+      console.error(error);
+      window.alert(`Search panel failed: ${error.message}`);
+    } finally {
+      toggleSearchPanelButton.disabled = false;
+    }
+  });
+
   popupAvoidStylusToggle?.addEventListener("change", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) {
@@ -2051,6 +2491,78 @@ function wireBaseEventHandlers() {
     setPopupBehaviorPrefs({
       ...popupBehaviorPrefs,
       motionReduced: target.checked,
+    });
+  });
+
+  gestureEnabledToggle?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    setGesturePrefs({
+      ...gesturePrefs,
+      enabled: target.checked,
+    });
+  });
+
+  gestureDoubleTapToggle?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    setGesturePrefs({
+      ...gesturePrefs,
+      gestures: {
+        ...(gesturePrefs?.gestures ?? {}),
+        doubleTap: target.checked,
+      },
+    });
+  });
+
+  gestureBarrelTapToggle?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    setGesturePrefs({
+      ...gesturePrefs,
+      gestures: {
+        ...(gesturePrefs?.gestures ?? {}),
+        barrelTap: target.checked,
+      },
+    });
+  });
+
+  gestureDoubleTapBindingSelect?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    setGesturePrefs({
+      ...gesturePrefs,
+      bindings: {
+        ...(gesturePrefs?.bindings ?? {}),
+        doubleTap: target.value,
+      },
+    });
+  });
+
+  gestureBarrelTapBindingSelect?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    setGesturePrefs({
+      ...gesturePrefs,
+      bindings: {
+        ...(gesturePrefs?.bindings ?? {}),
+        barrelTap: target.value,
+      },
     });
   });
 
@@ -2159,40 +2671,35 @@ function wireBaseEventHandlers() {
   });
 
   enableInkButton?.addEventListener("click", async () => {
-    if (inkFeature) {
-      return;
+    enableInkButton.disabled = true;
+    const wasInitialized = Boolean(inkFeature);
+    if (!wasInitialized) {
+      enableInkButton.textContent = "Loading...";
     }
 
-    enableInkButton.disabled = true;
-    enableInkButton.textContent = "Loading...";
-
     try {
-      const inkModule = await import("./features/ink/index.js");
-      loadedModules.add("ink");
-      if (loadedModulesOutput) {
-        loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
+      if (!inkFeature) {
+        await ensureInkFeature();
+        setInkEnabled(true);
+      } else {
+        setInkEnabled(true);
       }
-
-      inkFeature = inkModule.createInkFeature({
-        runtime,
-        getActiveContextId: () => activeContextId,
-        onStateChange: (state) => updateInkUi(state),
-      });
-
-      if (inkStateOutput) {
-        inkStateOutput.textContent = "active";
-      }
-
-      enableInkButton.textContent = "Ink Enabled";
     } catch (error) {
       console.error(error);
-      enableInkButton.disabled = false;
-      enableInkButton.textContent = "Enable Ink";
       if (inkStateOutput) {
         inkStateOutput.textContent = "failed";
       }
       window.alert(`Ink initialization failed: ${error.message}`);
+    } finally {
+      enableInkButton.disabled = false;
+      if (enableInkButton instanceof HTMLButtonElement && !inkFeature) {
+        enableInkButton.textContent = "Enable Ink";
+      }
     }
+  });
+
+  toggleInkToolButton?.addEventListener("click", () => {
+    void toggleInkTool();
   });
 
   undoInkButton?.addEventListener("click", () => {
@@ -2275,6 +2782,20 @@ function wireBaseEventHandlers() {
 
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && key === "f") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void ensureSearchFeatures()
+        .then((panel) => {
+          panel.open();
+        })
+        .catch((error) => {
+          console.error(error);
+          window.alert(`Search panel failed: ${error.message}`);
+        });
+      return;
+    }
+
     if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === "d") {
       event.preventDefault();
       setDebugModeEnabled(!debugModeEnabled);
@@ -2501,6 +3022,8 @@ async function setupContextFeatures() {
 async function bootstrap() {
   popupBehaviorPrefs = loadPopupBehaviorPrefs();
   updatePopupBehaviorUi();
+  gesturePrefs = loadGesturePrefs();
+  updateGestureUi();
 
   wireBaseEventHandlers();
   wireWidgetInteractionManager();
@@ -2515,8 +3038,29 @@ async function bootstrap() {
 
   toolsPanelOpen = window.localStorage.getItem("notes-app.tools-panel.open") === "1";
   syncToolsUi();
+  updateInkUi({
+    completedStrokes: 0,
+    undoDepth: 0,
+    redoDepth: 0,
+    activePointers: 0,
+    activeTool: "pen",
+    enabled: false,
+  });
+  syncSearchIndexUi(0);
 
   await setupContextFeatures();
+  try {
+    await ensureGestureFeatures();
+  } catch (error) {
+    console.error(error);
+    lastGestureStatus = {
+      supported: false,
+      enabled: false,
+      lastGesture: "failed",
+      lastBinding: "none",
+    };
+    updateGestureUi();
+  }
   updateWidgetUi();
 }
 

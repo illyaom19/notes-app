@@ -20,6 +20,23 @@ function createStroke(pointerId, { layer, contextId, sourceWidgetId, anchorBound
   };
 }
 
+function distanceToSegment(point, from, to) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (dx === 0 && dy === 0) {
+    return Math.hypot(point.x - from.x, point.y - from.y);
+  }
+
+  const t = clamp(
+    ((point.x - from.x) * dx + (point.y - from.y) * dy) / (dx * dx + dy * dy),
+    0,
+    1,
+  );
+  const projectedX = from.x + t * dx;
+  const projectedY = from.y + t * dy;
+  return Math.hypot(point.x - projectedX, point.y - projectedY);
+}
+
 export class InkEngine {
   constructor({ runtime, onStateChange, getActiveContextId }) {
     this.runtime = runtime;
@@ -28,6 +45,9 @@ export class InkEngine {
     this.store = new StrokeStore(loadPersistedStrokes());
     this.persistence = new InkPersistence();
     this.activeStrokes = new Map();
+    this.activeErasers = new Set();
+    this.enabled = true;
+    this.activeTool = "pen";
     this._detachInput = null;
     this._detachLayer = null;
 
@@ -66,6 +86,30 @@ export class InkEngine {
     if (this.store.redo()) {
       this._afterStoreMutation();
     }
+  }
+
+  getTool() {
+    return this.activeTool;
+  }
+
+  isEnabled() {
+    return this.enabled;
+  }
+
+  setEnabled(nextEnabled) {
+    this.enabled = nextEnabled !== false;
+    this._emitState();
+    return this.enabled;
+  }
+
+  setTool(nextTool) {
+    this.activeTool = nextTool === "eraser" ? "eraser" : "pen";
+    this._emitState();
+    return this.activeTool;
+  }
+
+  toggleTool() {
+    return this.setTool(this.activeTool === "pen" ? "eraser" : "pen");
   }
 
   _activeContextId() {
@@ -182,8 +226,51 @@ export class InkEngine {
     }
   }
 
+  _eraseAtEvent(event, camera) {
+    const world = camera.screenToWorld(event.offsetX, event.offsetY);
+    const radiusWorld = 16 / Math.max(0.25, camera.zoom);
+    let changed = false;
+
+    const removed = this.store.removeStrokes((stroke) => {
+      if (!this._strokeMatchesActiveContext(stroke)) {
+        return false;
+      }
+
+      const renderable = this._toRenderableStroke(stroke);
+      if (!renderable || !Array.isArray(renderable.points) || renderable.points.length < 1) {
+        return false;
+      }
+
+      const points = renderable.points;
+      if (points.length === 1) {
+        return Math.hypot(points[0].x - world.x, points[0].y - world.y) <= radiusWorld;
+      }
+
+      for (let index = 1; index < points.length; index += 1) {
+        const prev = points[index - 1];
+        const current = points[index];
+        if (distanceToSegment(world, prev, current) <= radiusWorld) {
+          return true;
+        }
+      }
+
+      return false;
+    });
+
+    if (removed > 0) {
+      changed = true;
+      this._afterStoreMutation();
+    }
+
+    return changed;
+  }
+
   onPointerDown(event, { camera }) {
     if (event.pointerType !== "pen") {
+      return false;
+    }
+
+    if (!this.enabled) {
       return false;
     }
 
@@ -192,6 +279,13 @@ export class InkEngine {
     }
 
     event.preventDefault();
+    if (this.activeTool === "eraser") {
+      this.activeErasers.add(event.pointerId);
+      this._eraseAtEvent(event, camera);
+      this._emitState();
+      return true;
+    }
+
     const targetWidget = this.runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
     const requestedLayer = !targetWidget ? "global" : targetWidget.type === "pdf-document" ? "pdf" : "widget";
     const requestedWidgetId = requestedLayer === "global" ? null : targetWidget.id;
@@ -214,6 +308,12 @@ export class InkEngine {
   }
 
   onPointerMove(event, { camera }) {
+    if (this.activeErasers.has(event.pointerId)) {
+      event.preventDefault();
+      this._eraseAtEvent(event, camera);
+      return true;
+    }
+
     const stroke = this.activeStrokes.get(event.pointerId);
     if (!stroke) {
       return false;
@@ -243,6 +343,13 @@ export class InkEngine {
   }
 
   _finishStroke(event, camera) {
+    if (this.activeErasers.has(event.pointerId)) {
+      event.preventDefault();
+      this.activeErasers.delete(event.pointerId);
+      this._emitState();
+      return true;
+    }
+
     const stroke = this.activeStrokes.get(event.pointerId);
     if (!stroke) {
       return false;
@@ -279,7 +386,9 @@ export class InkEngine {
         completedStrokes,
         undoDepth: this.store.doneCount,
         redoDepth: this.store.undoneCount,
-        activePointers: this.activeStrokes.size,
+        activePointers: this.activeStrokes.size + this.activeErasers.size,
+        activeTool: this.activeTool,
+        enabled: this.enabled,
       });
     }
   }
