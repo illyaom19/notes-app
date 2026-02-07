@@ -28,9 +28,9 @@
           <button id="import-pdf" type="button">Import PDF</button>
           <button id="detect-whitespace" type="button">Detect Whitespace</button>
           <button id="start-snip" type="button">Start Snip</button>
-          <button id="instantiate-dummy" type="button">Instantiate Dummy Widget</button>
-          <button id="instantiate-expanded" type="button">Instantiate Expanded-Area Widget</button>
-          <button id="instantiate-graph" type="button">Instantiate Graph Widget</button>
+          <button id="instantiate-dummy" type="button" data-debug-only="true">Instantiate Dummy Widget</button>
+          <button id="instantiate-expanded" type="button" data-debug-only="true">Instantiate Expanded-Area Widget</button>
+          <button id="instantiate-graph" type="button" data-debug-only="true">Instantiate Graph Widget</button>
           <button id="enable-ink" type="button">Enable Ink</button>
           <button id="undo-ink" type="button" disabled>Undo</button>
           <button id="redo-ink" type="button" disabled>Redo</button>
@@ -55,6 +55,34 @@
         <span><strong>Camera:</strong> <output id="camera-state">x=0, y=0, zoom=1.00</output></span>
       </section>
 
+      <section class="documents-panel" aria-label="Open Documents">
+        <div class="documents-strip">
+          <div id="document-tabs" class="document-tabs" role="tablist" aria-label="Open documents"></div>
+          <label class="document-switch" for="document-switcher">
+            <span>Switch</span>
+            <select id="document-switcher" aria-label="Document switcher"></select>
+          </label>
+        </div>
+        <div class="document-settings" aria-label="Document settings">
+          <p id="document-settings-hint">Select a document to configure defaults.</p>
+          <div class="document-settings-grid">
+            <label for="document-reference-bindings">
+              <span>Default References</span>
+              <select id="document-reference-bindings" multiple size="4"></select>
+            </label>
+            <label for="document-formula-bindings">
+              <span>Formula Sheets</span>
+              <select id="document-formula-bindings" multiple size="4"></select>
+            </label>
+          </div>
+          <div class="document-settings-actions">
+            <button id="apply-document-bindings" type="button">Apply Bindings</button>
+            <button id="focus-document-bindings" type="button">Focus Bound Widgets</button>
+            <button id="toggle-pin-document" type="button">Pin Doc</button>
+          </div>
+        </div>
+      </section>
+
       <section class="canvas-wrap">
         <canvas id="workspace-canvas" aria-label="Workspace Canvas"></canvas>
       </section>
@@ -63,6 +91,14 @@
         <button type="button" data-action="create-expanded">Create Expanded-Area Widget</button>
         <button type="button" data-action="toggle-collapse">Toggle Collapse</button>
         <button type="button" data-action="remove-widget">Remove Widget</button>
+      </menu>
+
+      <menu id="creation-command-menu" class="creation-menu" aria-label="Creation Menu">
+        <button type="button" data-create-type="expanded-area">Expanded Space</button>
+        <button type="button" data-create-type="graph-widget">Graph Widget</button>
+        <button type="button" data-create-type="reference-popup">Reference Popup</button>
+        <button type="button" data-create-type="pdf-document">Import PDF Here</button>
+        <button type="button" data-create-type="dummy" data-debug-only="true">Dummy Widget</button>
       </menu>
     </main>
 

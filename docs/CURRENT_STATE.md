@@ -1,8 +1,8 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 9 (`docs/SPRINT_9_Universal_Widget_Interactions.md`) implemented from current `main` baseline.
-- Delivered scope: shared widget interaction routing, consistent move/resize/collapse behavior, runtime selection/focus state, and tablet touch parity while keeping stylus dedicated to ink.
+- Sprint 12 (`docs/SPRINT_12_Multi_Document_Management.md`) implemented on top of current `main`.
+- Sprint 11 was skipped per current implementation directive.
 
 ## What Exists Today
 - Core runtime and modular widget architecture:
@@ -16,6 +16,7 @@
   - Graph widget (interactive + snapshot): `src/widgets/graph/`
 - Implemented feature modules:
   - Ink engine: `src/features/ink/`
+  - Document manager: `src/features/documents/document-manager.js`
   - Widget long-press menu: `src/features/widget-system/`
   - Universal widget interaction manager: `src/features/widget-system/widget-interaction-manager.js`
   - Reference popup interactions + snip tool: `src/features/reference-popups/`
@@ -26,9 +27,8 @@
   - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
 
 ## In Progress
-- No active code changes in progress.
-- Follow-up interaction fix applied for ink visibility on widget surfaces.
-- Pending manual interaction QA on physical tablet hardware.
+- No active blocker; Sprint 12 core scope is in place.
+- Existing Sprint 10 creation-menu scaffolding remains present in working tree and is not fully wired.
 
 ## Blockers
 - None.
@@ -47,15 +47,27 @@
 - Widget serializable state now carries `interactionFlags` capability contract.
 - Canvas runtime now renders ink layers after widgets so stylus strokes remain visible on expanded-space, reference popup, and PDF widget surfaces.
 - PDF whitespace collapse now uses segment-based tile mapping so only collapsed whitespace regions compress while surrounding PDF content remains unscaled.
+- Ink now persists with layer semantics:
+  - Global layer strokes stay in world space.
+  - PDF layer strokes stay attached to PDF widgets.
+  - Widget layer strokes stay attached to widgets and collapse with collapsed widget bounds.
+- Document registry is now independent from runtime widgets and persisted with explicit bindings:
+  - `DocumentEntry`: `{ id, contextId, title, sourceType, widgetId, openedAt, pinned }`
+  - `DocumentBindings`: `{ documentId, defaultReferenceIds, formulaSheetIds }`
+- Active document focus brings the document widget plus its bound references/formula widgets to front.
+- Workspace schema now persists `documentBindings` with backward compatibility migration from legacy `referenceWidgetIds`.
+- UI now includes:
+  - Open-document tab strip and list switcher.
+  - Document settings panel for reference/formula binding assignment.
+  - Pin/unpin and focus-bound-widget actions.
 
 ## Next Actions
-1. Manually validate Sprint 9 test plan across all widget types (move/resize/collapse parity and specialized controls).
-2. Measure context switch and interaction latency on target tablet hardware.
-3. Optionally add automated regression tests for pointer routing and shared widget gestures.
+1. Complete and wire Sprint 10 contextual creation controller (`creation-command-menu`) or remove dormant scaffolding.
+2. Run manual QA for multi-document flows on tablet hardware (switch, pin, bind, context import).
+3. Add targeted regression tests for document binding migration and focus behavior.
 
 ## Verification Status
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.
-- `timeout 2s python3 -m http.server 4173 --directory /home/illya/io_dev/notes-app` failed in sandbox with `PermissionError: [Errno 1] Operation not permitted` when binding socket.
 
 ## Last Updated
 - 2026-02-06 (local environment time)

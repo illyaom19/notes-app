@@ -1,6 +1,7 @@
 import { CanvasRuntime } from "./core/canvas/canvas-runtime.js";
 import { WidgetRegistry } from "./core/widgets/widget-registry.js";
 import { BackgroundWorkerClient } from "./core/workers/background-worker-client.js";
+import { createDocumentManager } from "./features/documents/document-manager.js";
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 import { createWidgetInteractionManager } from "./features/widget-system/widget-interaction-manager.js";
 
@@ -32,6 +33,14 @@ const workerStateOutput = document.querySelector("#worker-state");
 const canvas = document.querySelector("#workspace-canvas");
 const widgetContextMenu = document.querySelector("#widget-context-menu");
 const pdfFileInput = document.querySelector("#pdf-file-input");
+const documentTabs = document.querySelector("#document-tabs");
+const documentSwitcher = document.querySelector("#document-switcher");
+const documentSettingsHint = document.querySelector("#document-settings-hint");
+const referenceBindingSelect = document.querySelector("#document-reference-bindings");
+const formulaBindingSelect = document.querySelector("#document-formula-bindings");
+const applyBindingsButton = document.querySelector("#apply-document-bindings");
+const focusBindingsButton = document.querySelector("#focus-document-bindings");
+const togglePinDocumentButton = document.querySelector("#toggle-pin-document");
 
 const contextSelect = document.querySelector("#context-select");
 const newContextButton = document.querySelector("#new-context");
@@ -50,6 +59,7 @@ let snipTool = null;
 let whitespaceManager = null;
 let graphInteractions = null;
 let widgetInteractionManager = null;
+let detachDocumentFocusSync = null;
 let toolsPanelOpen = false;
 
 let contextStore = null;
@@ -57,10 +67,10 @@ let contextWorkspaceStore = null;
 let contextUiController = null;
 
 let activeContextId = null;
-let activeDocuments = [];
-let activeDocumentId = null;
+const documentManager = createDocumentManager();
 let lastPdfWidgetId = null;
 let lastReferenceWidgetId = null;
+let lastDocumentUiRenderKey = "";
 
 let restoringContext = false;
 let persistTimer = null;
@@ -181,58 +191,265 @@ function updateWhitespaceZoneCount() {
 }
 
 function pruneActiveDocuments() {
-  const existingWidgetIds = new Set(runtime.listWidgets().map((widget) => widget.id));
-
-  activeDocuments = activeDocuments
-    .filter((entry) => existingWidgetIds.has(entry.widgetId))
-    .map((entry) => ({
-      ...entry,
-      referenceWidgetIds: (entry.referenceWidgetIds ?? []).filter((refId) => existingWidgetIds.has(refId)),
-      contextId: activeContextId,
-      updatedAt: nowIso(),
-    }));
-
-  if (!activeDocuments.some((entry) => entry.id === activeDocumentId)) {
-    activeDocumentId = activeDocuments[0]?.id ?? null;
-  }
+  const existingWidgetIds = runtime.listWidgets().map((widget) => widget.id);
+  documentManager.pruneForWidgets(existingWidgetIds);
 }
 
 function createDocumentEntryForPdf({ title, widgetId }) {
-  const createdAt = nowIso();
-  const entry = {
-    id: makeId("doc"),
-    contextId: activeContextId,
+  return documentManager.openDocument({
     title,
-    sourceType: "pdf",
     widgetId,
-    referenceWidgetIds: [],
-    createdAt,
-    updatedAt: createdAt,
-  };
-
-  activeDocuments.push(entry);
-  activeDocumentId = entry.id;
-  return entry;
+    sourceType: "pdf",
+  });
 }
 
 function bindReferenceToActiveDocument(referenceWidgetId) {
-  if (!activeDocumentId) {
+  return documentManager.bindReferenceToActive(referenceWidgetId);
+}
+
+function bindFormulaWidgetToDocument(documentId, widgetId) {
+  if (!documentId || !widgetId) {
     return false;
   }
 
-  const target = activeDocuments.find((entry) => entry.id === activeDocumentId);
-  if (!target) {
+  const current = documentManager.getBindings(documentId);
+  const nextFormulaIds = [...(current?.formulaSheetIds ?? []), widgetId];
+  const validWidgetIds = runtime.listWidgets().map((widget) => widget.id);
+  return documentManager.updateBindings(
+    documentId,
+    {
+      defaultReferenceIds: current?.defaultReferenceIds ?? [],
+      formulaSheetIds: nextFormulaIds,
+    },
+    validWidgetIds,
+  );
+}
+
+function focusDocumentWidgets(documentId, { selectPrimary = true } = {}) {
+  const targetDocument = documentManager.getDocumentById(documentId);
+  if (!targetDocument) {
+    return;
+  }
+
+  const bindings = documentManager.getBindings(documentId);
+  const relatedWidgetIds = [
+    targetDocument.widgetId,
+    ...(bindings?.defaultReferenceIds ?? []),
+    ...(bindings?.formulaSheetIds ?? []),
+  ];
+
+  for (const widgetId of relatedWidgetIds) {
+    const widget = runtime.getWidgetById(widgetId);
+    if (!widget) {
+      continue;
+    }
+    runtime.bringWidgetToFront(widget.id);
+  }
+
+  if (selectPrimary && runtime.getWidgetById(targetDocument.widgetId)) {
+    runtime.setFocusedWidgetId(targetDocument.widgetId);
+    runtime.setSelectedWidgetId(targetDocument.widgetId);
+  }
+}
+
+function setActiveDocument(documentId, { focus = true } = {}) {
+  const changed = documentManager.setActiveDocument(documentId);
+  if (!changed) {
     return false;
   }
 
-  if (!target.referenceWidgetIds.includes(referenceWidgetId)) {
-    target.referenceWidgetIds.push(referenceWidgetId);
-    target.updatedAt = nowIso();
+  const activeDocument = documentManager.getActiveDocument();
+  if (activeDocument) {
+    const widget = runtime.getWidgetById(activeDocument.widgetId);
+    if (widget?.type === "pdf-document") {
+      lastPdfWidgetId = widget.id;
+    }
   }
+
+  if (focus) {
+    focusDocumentWidgets(documentId);
+  }
+
+  updateWidgetUi();
   return true;
 }
 
+function syncPdfDocumentMetadata() {
+  const documents = documentManager.listDocuments();
+  const documentByWidgetId = new Map(documents.map((entry) => [entry.widgetId, entry]));
+
+  for (const widget of runtime.listWidgets()) {
+    if (widget.type !== "pdf-document") {
+      continue;
+    }
+
+    const linked = documentByWidgetId.get(widget.id);
+    if (linked) {
+      widget.metadata.documentId = linked.id;
+      continue;
+    }
+
+    const created = createDocumentEntryForPdf({
+      title: widget.metadata?.title ?? widget.fileName ?? "Document",
+      widgetId: widget.id,
+    });
+    if (created) {
+      widget.metadata.documentId = created.id;
+    }
+  }
+}
+
+function widgetDisplayLabel(widget) {
+  if (widget.type === "reference-popup") {
+    const source = typeof widget.sourceLabel === "string" && widget.sourceLabel.trim() ? widget.sourceLabel : "Ref";
+    return `${source} (${widget.id.slice(0, 6)})`;
+  }
+
+  if (widget.type === "expanded-area") {
+    return `${widget.metadata?.title ?? "Expanded Space"} (${widget.id.slice(0, 6)})`;
+  }
+
+  if (widget.type === "graph-widget") {
+    return `${widget.metadata?.title ?? "Graph"} (${widget.id.slice(0, 6)})`;
+  }
+
+  return `${widget.type} (${widget.id.slice(0, 6)})`;
+}
+
+function updateDocumentBindingsUi() {
+  const activeDocument = documentManager.getActiveDocument();
+  const hasActiveDocument = Boolean(activeDocument);
+  const widgets = runtime.listWidgets();
+  const validWidgetIds = widgets.map((widget) => widget.id);
+  const bindings = hasActiveDocument
+    ? documentManager.getBindings(activeDocument.id)
+    : { defaultReferenceIds: [], formulaSheetIds: [] };
+
+  if (documentSettingsHint) {
+    documentSettingsHint.textContent = hasActiveDocument
+      ? `${activeDocument.title} bindings`
+      : "Select a document to configure defaults.";
+  }
+
+  if (referenceBindingSelect instanceof HTMLSelectElement) {
+    referenceBindingSelect.innerHTML = "";
+    const refs = widgets.filter((widget) => widget.type === "reference-popup");
+    for (const widget of refs) {
+      const option = document.createElement("option");
+      option.value = widget.id;
+      option.textContent = widgetDisplayLabel(widget);
+      option.selected = bindings.defaultReferenceIds.includes(widget.id);
+      referenceBindingSelect.append(option);
+    }
+    referenceBindingSelect.disabled = !hasActiveDocument || refs.length < 1;
+  }
+
+  if (formulaBindingSelect instanceof HTMLSelectElement) {
+    formulaBindingSelect.innerHTML = "";
+    const formulas = widgets.filter((widget) =>
+      widget.type === "expanded-area" || widget.type === "graph-widget",
+    );
+    for (const widget of formulas) {
+      const option = document.createElement("option");
+      option.value = widget.id;
+      option.textContent = widgetDisplayLabel(widget);
+      option.selected = bindings.formulaSheetIds.includes(widget.id);
+      formulaBindingSelect.append(option);
+    }
+    formulaBindingSelect.disabled = !hasActiveDocument || formulas.length < 1;
+  }
+
+  if (applyBindingsButton instanceof HTMLButtonElement) {
+    applyBindingsButton.disabled = !hasActiveDocument || validWidgetIds.length < 1;
+  }
+  if (focusBindingsButton instanceof HTMLButtonElement) {
+    focusBindingsButton.disabled = !hasActiveDocument;
+  }
+  if (togglePinDocumentButton instanceof HTMLButtonElement) {
+    togglePinDocumentButton.disabled = !hasActiveDocument;
+    togglePinDocumentButton.textContent = hasActiveDocument && activeDocument.pinned ? "Unpin Doc" : "Pin Doc";
+  }
+}
+
+function updateDocumentSwitcherUi() {
+  const documents = documentManager.listDocuments();
+  const activeDocument = documentManager.getActiveDocument();
+  const widgets = runtime.listWidgets();
+  const activeBindings = activeDocument
+    ? documentManager.getBindings(activeDocument.id)
+    : { defaultReferenceIds: [], formulaSheetIds: [] };
+
+  const renderKey = [
+    documents.map((entry) => `${entry.id}:${entry.title}:${entry.pinned ? 1 : 0}`).join("|"),
+    activeDocument?.id ?? "",
+    widgets
+      .filter((widget) => widget.type === "reference-popup")
+      .map((widget) => widget.id)
+      .join(","),
+    widgets
+      .filter((widget) => widget.type === "expanded-area" || widget.type === "graph-widget")
+      .map((widget) => widget.id)
+      .join(","),
+    activeBindings.defaultReferenceIds.join(","),
+    activeBindings.formulaSheetIds.join(","),
+  ].join("||");
+
+  if (documentCountOutput) {
+    documentCountOutput.textContent = String(documents.length);
+  }
+
+  if (renderKey === lastDocumentUiRenderKey) {
+    return;
+  }
+  lastDocumentUiRenderKey = renderKey;
+
+  if (documentTabs instanceof HTMLElement) {
+    documentTabs.innerHTML = "";
+    for (const entry of documents) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "document-tab";
+      if (entry.id === activeDocument?.id) {
+        button.dataset.active = "true";
+      }
+      if (entry.pinned) {
+        button.dataset.pinned = "true";
+      }
+      button.dataset.documentId = entry.id;
+      button.textContent = entry.pinned ? `[P] ${entry.title}` : entry.title;
+      documentTabs.append(button);
+    }
+  }
+
+  if (documentSwitcher instanceof HTMLSelectElement) {
+    documentSwitcher.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = documents.length > 0 ? "Switch document..." : "No open documents";
+    documentSwitcher.append(placeholder);
+
+    for (const entry of documents) {
+      const option = document.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.pinned ? `[P] ${entry.title}` : entry.title;
+      option.selected = entry.id === activeDocument?.id;
+      documentSwitcher.append(option);
+    }
+    documentSwitcher.disabled = documents.length < 1;
+  }
+
+  updateDocumentBindingsUi();
+}
+
 function preferredPdfWidget() {
+  const activeDocument = documentManager.getActiveDocument();
+  if (activeDocument) {
+    const activeWidget = runtime.getWidgetById(activeDocument.widgetId);
+    if (activeWidget?.type === "pdf-document") {
+      return activeWidget;
+    }
+  }
+
   if (lastPdfWidgetId) {
     const candidate = runtime.getWidgetById(lastPdfWidgetId);
     if (candidate && candidate.type === "pdf-document") {
@@ -258,12 +475,15 @@ function persistActiveWorkspace() {
   }
 
   pruneActiveDocuments();
+  syncPdfDocumentMetadata();
+  const persisted = documentManager.toPersistencePayload();
 
   contextWorkspaceStore.saveFromRuntime({
     contextId: activeContextId,
     runtime,
-    documents: activeDocuments,
-    activeDocumentId,
+    documents: persisted.documents,
+    documentBindings: persisted.documentBindings,
+    activeDocumentId: persisted.activeDocumentId,
     lastPdfWidgetId,
     lastReferenceWidgetId,
   });
@@ -309,10 +529,8 @@ function updateWidgetUi() {
   }
 
   pruneActiveDocuments();
-
-  if (documentCountOutput) {
-    documentCountOutput.textContent = String(activeDocuments.length);
-  }
+  syncPdfDocumentMetadata();
+  updateDocumentSwitcherUi();
 
   updateWhitespaceZoneCount();
   updateContextUi();
@@ -429,7 +647,10 @@ async function createPdfWidgetFromFile(file, definition = {}) {
     title: widget.metadata?.title ?? file.name,
     widgetId: widget.id,
   });
-  widget.metadata.documentId = documentEntry.id;
+  if (documentEntry) {
+    widget.metadata.documentId = documentEntry.id;
+    focusDocumentWidgets(documentEntry.id, { selectPrimary: true });
+  }
 
   updateWidgetUi();
   return widget;
@@ -486,6 +707,12 @@ async function createExpandedFromWhitespaceZone(pdfWidget, zone) {
 
   runtime.addWidget(linkedWidget);
   pdfWidget.setWhitespaceZoneLinkedWidget(zone.id, linkedWidget.id);
+  const ownerDocument = documentManager.getDocumentByWidgetId(pdfWidget.id);
+  if (ownerDocument) {
+    bindFormulaWidgetToDocument(ownerDocument.id, linkedWidget.id);
+  } else {
+    documentManager.bindFormulaToActive(linkedWidget.id);
+  }
   updateWidgetUi();
 }
 
@@ -528,14 +755,24 @@ async function restoreWorkspaceForActiveContext() {
 
   try {
     clearRuntimeWidgets();
-    activeDocuments = [];
-    activeDocumentId = null;
+    documentManager.reset({
+      contextId: activeContextId,
+      documents: [],
+      documentBindings: [],
+      activeDocumentId: null,
+      validWidgetIds: [],
+    });
     lastPdfWidgetId = null;
     lastReferenceWidgetId = null;
 
     const workspace = contextWorkspaceStore.loadWorkspace(activeContextId);
-    activeDocuments = workspace.documents;
-    activeDocumentId = workspace.activeWorkspaceState.activeDocumentId;
+    documentManager.reset({
+      contextId: activeContextId,
+      documents: workspace.documents,
+      documentBindings: workspace.documentBindings,
+      activeDocumentId: workspace.activeWorkspaceState.activeDocumentId,
+      validWidgetIds: workspace.widgets.map((entry) => entry.id),
+    });
     lastPdfWidgetId = workspace.activeWorkspaceState.lastPdfWidgetId;
     lastReferenceWidgetId = workspace.activeWorkspaceState.lastReferenceWidgetId;
 
@@ -581,6 +818,11 @@ async function restoreWorkspaceForActiveContext() {
     }
 
     pruneActiveDocuments();
+    syncPdfDocumentMetadata();
+    const activeDocument = documentManager.getActiveDocument();
+    if (activeDocument) {
+      focusDocumentWidgets(activeDocument.id, { selectPrimary: true });
+    }
     updateWidgetUi();
   } finally {
     setContextControlsBusy(false);
@@ -600,6 +842,7 @@ async function switchContext(nextContextId) {
   }
 
   activeContextId = nextContextId;
+  documentManager.setContextId(activeContextId);
   updateContextUi();
   await restoreWorkspaceForActiveContext();
 }
@@ -621,6 +864,16 @@ function parseSelectionInput(input, maxCount) {
   return Array.from(picked).sort((a, b) => a - b);
 }
 
+function selectedMultiValueIds(selectElement) {
+  if (!(selectElement instanceof HTMLSelectElement)) {
+    return [];
+  }
+
+  return Array.from(selectElement.selectedOptions)
+    .map((option) => option.value)
+    .filter((value) => typeof value === "string" && value.trim());
+}
+
 function widgetTitle(serializedWidget) {
   const title = serializedWidget.metadata?.title;
   if (typeof title === "string" && title.trim()) {
@@ -638,26 +891,34 @@ function widgetTitle(serializedWidget) {
   return serializedWidget.type;
 }
 
-function cloneImportedDocument(sourceDocument, idMap) {
+function cloneImportedDocument(sourceDocument, sourceBinding, idMap) {
   const mappedWidgetId = idMap.get(sourceDocument.widgetId);
   if (!mappedWidgetId) {
     return null;
   }
 
-  const mappedReferences = (sourceDocument.referenceWidgetIds ?? [])
+  const mappedReferences = (sourceBinding?.defaultReferenceIds ?? sourceDocument.referenceWidgetIds ?? [])
     .map((refId) => idMap.get(refId))
     .filter((entry) => typeof entry === "string");
+  const mappedFormulaSheets = (sourceBinding?.formulaSheetIds ?? [])
+    .map((widgetId) => idMap.get(widgetId))
+    .filter((entry) => typeof entry === "string");
 
-  const timestamp = nowIso();
   return {
-    id: makeId("doc"),
-    contextId: activeContextId,
-    title: sourceDocument.title,
-    sourceType: sourceDocument.sourceType,
-    widgetId: mappedWidgetId,
-    referenceWidgetIds: Array.from(new Set(mappedReferences)),
-    createdAt: timestamp,
-    updatedAt: timestamp,
+    document: {
+      id: makeId("doc"),
+      contextId: activeContextId,
+      title: sourceDocument.title,
+      sourceType: sourceDocument.sourceType,
+      widgetId: mappedWidgetId,
+      openedAt: nowIso(),
+      pinned: Boolean(sourceDocument.pinned),
+    },
+    binding: {
+      documentId: null,
+      defaultReferenceIds: Array.from(new Set(mappedReferences)),
+      formulaSheetIds: Array.from(new Set(mappedFormulaSheets)),
+    },
   };
 }
 
@@ -745,33 +1006,49 @@ async function importWidgetsFromAnotherContext() {
     }
   }
 
+  const sourceBindingsByDocumentId = new Map(
+    (sourceWorkspace.documentBindings ?? []).map((entry) => [entry.documentId, entry]),
+  );
   const sourceDocsToCopy = sourceWorkspace.documents.filter((entry) => idMap.has(entry.widgetId));
   for (const sourceDoc of sourceDocsToCopy) {
-    const clonedDoc = cloneImportedDocument(sourceDoc, idMap);
-    if (!clonedDoc) {
+    const cloned = cloneImportedDocument(sourceDoc, sourceBindingsByDocumentId.get(sourceDoc.id), idMap);
+    if (!cloned) {
       continue;
     }
-    activeDocuments.push(clonedDoc);
-    if (!activeDocumentId) {
-      activeDocumentId = clonedDoc.id;
+
+    const imported = documentManager.addImportedDocument({
+      document: cloned.document,
+      binding: {
+        ...cloned.binding,
+        documentId: cloned.document.id,
+      },
+    });
+
+    if (!documentManager.getActiveDocumentId() && imported) {
+      documentManager.setActiveDocument(imported.id);
     }
   }
 
   const importedPdfWidgets = importedWidgets.filter((widget) => widget.type === "pdf-document");
   for (const widget of importedPdfWidgets) {
-    const hasDocument = activeDocuments.some((entry) => entry.widgetId === widget.id);
-    if (!hasDocument) {
-      const nextDoc = createDocumentEntryForPdf({
-        title: widget.metadata?.title ?? "Imported PDF",
-        widgetId: widget.id,
-      });
-      widget.metadata.documentId = nextDoc.id;
+    const doc = documentManager.ensureDocumentForWidget({
+      widgetId: widget.id,
+      title: widget.metadata?.title ?? "Imported PDF",
+      sourceType: "pdf",
+    });
+    if (doc) {
+      widget.metadata.documentId = doc.id;
     }
   }
 
   const importedReferenceWidgets = importedWidgets.filter((widget) => widget.type === "reference-popup");
   for (const widget of importedReferenceWidgets) {
     bindReferenceToActiveDocument(widget.id);
+  }
+
+  const activeDocument = documentManager.getActiveDocument();
+  if (activeDocument) {
+    focusDocumentWidgets(activeDocument.id, { selectPrimary: false });
   }
 
   updateWidgetUi();
@@ -992,6 +1269,76 @@ function wireBaseEventHandlers() {
     inkFeature?.redo();
   });
 
+  documentTabs?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const button = target.closest("button[data-document-id]");
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const documentId = button.dataset.documentId;
+    if (!documentId) {
+      return;
+    }
+
+    setActiveDocument(documentId, { focus: true });
+  });
+
+  documentSwitcher?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    if (!target.value) {
+      return;
+    }
+
+    setActiveDocument(target.value, { focus: true });
+  });
+
+  applyBindingsButton?.addEventListener("click", () => {
+    const activeDocument = documentManager.getActiveDocument();
+    if (!activeDocument) {
+      return;
+    }
+
+    const allWidgetIds = runtime.listWidgets().map((widget) => widget.id);
+    const defaultReferenceIds = selectedMultiValueIds(referenceBindingSelect);
+    const formulaSheetIds = selectedMultiValueIds(formulaBindingSelect);
+
+    documentManager.updateBindings(
+      activeDocument.id,
+      { defaultReferenceIds, formulaSheetIds },
+      allWidgetIds,
+    );
+    focusDocumentWidgets(activeDocument.id, { selectPrimary: true });
+    updateWidgetUi();
+  });
+
+  focusBindingsButton?.addEventListener("click", () => {
+    const activeDocument = documentManager.getActiveDocument();
+    if (!activeDocument) {
+      return;
+    }
+    focusDocumentWidgets(activeDocument.id, { selectPrimary: true });
+    updateWidgetUi();
+  });
+
+  togglePinDocumentButton?.addEventListener("click", () => {
+    const activeDocument = documentManager.getActiveDocument();
+    if (!activeDocument) {
+      return;
+    }
+
+    documentManager.togglePinned(activeDocument.id);
+    updateWidgetUi();
+  });
+
   window.addEventListener("keydown", (event) => {
     if (!inkFeature) {
       return;
@@ -1047,6 +1394,34 @@ function wireWidgetInteractionManager() {
   });
 }
 
+function wireDocumentFocusSync() {
+  if (detachDocumentFocusSync) {
+    return;
+  }
+
+  detachDocumentFocusSync = runtime.registerInputHandler({
+    onPointerDown(event) {
+      if (event.pointerType === "pen") {
+        return false;
+      }
+
+      const widget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
+      if (!widget) {
+        return false;
+      }
+
+      const document = documentManager.getDocumentByWidgetId(widget.id);
+      if (!document || document.id === documentManager.getActiveDocumentId()) {
+        return false;
+      }
+
+      documentManager.setActiveDocument(document.id);
+      updateWidgetUi();
+      return false;
+    },
+  });
+}
+
 async function setupContextFeatures() {
   const [
     contextStoreModule,
@@ -1061,6 +1436,7 @@ async function setupContextFeatures() {
   contextStore = contextStoreModule.createContextStore();
   contextWorkspaceStore = contextWorkspaceModule.createContextWorkspaceStore();
   activeContextId = contextStore.getActiveContextId();
+  documentManager.setContextId(activeContextId);
 
   const createContextHandler = async () => {
     const name = window.prompt("Context name:", "New Context");
@@ -1077,6 +1453,7 @@ async function setupContextFeatures() {
     }
 
     activeContextId = created.id;
+    documentManager.setContextId(activeContextId);
     updateContextUi();
     await restoreWorkspaceForActiveContext();
   };
@@ -1123,6 +1500,7 @@ async function setupContextFeatures() {
 
     contextWorkspaceStore.deleteWorkspace(result.deletedContextId);
     activeContextId = result.activeContextId;
+    documentManager.setContextId(activeContextId);
     updateContextUi();
     await restoreWorkspaceForActiveContext();
   };
@@ -1156,6 +1534,7 @@ async function setupContextFeatures() {
 async function bootstrap() {
   wireBaseEventHandlers();
   wireWidgetInteractionManager();
+  wireDocumentFocusSync();
   wireContextMenu();
 
   updateSnipUi({ armed: false, dragging: false });

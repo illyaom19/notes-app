@@ -76,6 +76,31 @@ function normalizeWhitespaceZones(candidate) {
     .filter((entry) => entry && entry.normalizedHeight > 0);
 }
 
+function normalizeIdList(candidate, validIds) {
+  if (!Array.isArray(candidate)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const result = [];
+
+  for (const value of candidate) {
+    if (typeof value !== "string" || !value.trim()) {
+      continue;
+    }
+    if (seen.has(value)) {
+      continue;
+    }
+    if (validIds && !validIds.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+
+  return result;
+}
+
 function encodeBytes(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
     return null;
@@ -114,6 +139,7 @@ function defaultWorkspace(contextId) {
     updatedAt: nowIso(),
     widgets: [],
     documents: [],
+    documentBindings: [],
     activeWorkspaceState: {
       activeDocumentId: null,
       lastPdfWidgetId: null,
@@ -203,9 +229,6 @@ function sanitizeDocumentEntry(candidate, contextId, validWidgetIds) {
   }
 
   const id = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : makeId("doc");
-  const references = Array.isArray(candidate.referenceWidgetIds)
-    ? candidate.referenceWidgetIds.filter((entry) => typeof entry === "string" && validWidgetIds.has(entry))
-    : [];
 
   return {
     id,
@@ -219,9 +242,33 @@ function sanitizeDocumentEntry(candidate, contextId, validWidgetIds) {
         ? candidate.sourceType.trim()
         : "pdf",
     widgetId,
-    referenceWidgetIds: Array.from(new Set(references)),
-    createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : nowIso(),
-    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
+    openedAt:
+      typeof candidate.openedAt === "string"
+        ? candidate.openedAt
+        : typeof candidate.createdAt === "string"
+          ? candidate.createdAt
+          : nowIso(),
+    pinned: Boolean(candidate.pinned),
+    // Keep for migration only, not part of the Sprint 12 canonical document entry.
+    referenceWidgetIds: normalizeIdList(candidate.referenceWidgetIds, validWidgetIds),
+  };
+}
+
+function sanitizeDocumentBindingEntry(candidate, validDocumentIds, validWidgetIds) {
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+
+  const documentId =
+    typeof candidate.documentId === "string" && candidate.documentId.trim() ? candidate.documentId : null;
+  if (!documentId || !validDocumentIds.has(documentId)) {
+    return null;
+  }
+
+  return {
+    documentId,
+    defaultReferenceIds: normalizeIdList(candidate.defaultReferenceIds, validWidgetIds),
+    formulaSheetIds: normalizeIdList(candidate.formulaSheetIds, validWidgetIds),
   };
 }
 
@@ -254,6 +301,29 @@ function sanitizeWorkspace(candidate, contextId) {
         .map((entry) => sanitizeDocumentEntry(entry, contextId, validWidgetIds))
         .filter((entry) => entry !== null)
     : [];
+  const validDocumentIds = new Set(documents.map((entry) => entry.id));
+
+  const explicitBindings = Array.isArray(candidate.documentBindings)
+    ? candidate.documentBindings
+        .map((entry) => sanitizeDocumentBindingEntry(entry, validDocumentIds, validWidgetIds))
+        .filter((entry) => entry !== null)
+    : [];
+
+  const bindingsByDocumentId = new Map(explicitBindings.map((entry) => [entry.documentId, entry]));
+  for (const document of documents) {
+    if (bindingsByDocumentId.has(document.id)) {
+      continue;
+    }
+
+    // Backward compatibility for legacy schema where references were on document entries.
+    bindingsByDocumentId.set(document.id, {
+      documentId: document.id,
+      defaultReferenceIds: [...document.referenceWidgetIds],
+      formulaSheetIds: [],
+    });
+  }
+
+  const documentBindings = Array.from(bindingsByDocumentId.values());
 
   const activeWorkspaceState = asPlainObject(candidate.activeWorkspaceState);
 
@@ -262,7 +332,16 @@ function sanitizeWorkspace(candidate, contextId) {
     contextId,
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
     widgets: dedupedWidgets,
-    documents,
+    documents: documents.map((entry) => ({
+      id: entry.id,
+      contextId: entry.contextId,
+      title: entry.title,
+      sourceType: entry.sourceType,
+      widgetId: entry.widgetId,
+      openedAt: entry.openedAt,
+      pinned: entry.pinned,
+    })),
+    documentBindings,
     activeWorkspaceState: {
       activeDocumentId:
         typeof activeWorkspaceState.activeDocumentId === "string" &&
@@ -376,9 +455,16 @@ function copyDocument(entry, contextId) {
     title: entry.title,
     sourceType: entry.sourceType,
     widgetId: entry.widgetId,
-    referenceWidgetIds: [...entry.referenceWidgetIds],
-    createdAt: entry.createdAt,
-    updatedAt: entry.updatedAt,
+    openedAt: entry.openedAt,
+    pinned: Boolean(entry.pinned),
+  };
+}
+
+function copyDocumentBinding(entry) {
+  return {
+    documentId: entry.documentId,
+    defaultReferenceIds: [...normalizeIdList(entry.defaultReferenceIds)],
+    formulaSheetIds: [...normalizeIdList(entry.formulaSheetIds)],
   };
 }
 
@@ -423,6 +509,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         ...workspace,
         widgets: workspace.widgets.map((entry) => ({ ...entry })),
         documents: workspace.documents.map((entry) => copyDocument(entry, contextId)),
+        documentBindings: workspace.documentBindings.map((entry) => copyDocumentBinding(entry)),
         activeWorkspaceState: {
           activeDocumentId: workspace.activeWorkspaceState.activeDocumentId,
           lastPdfWidgetId: workspace.activeWorkspaceState.lastPdfWidgetId,
@@ -456,6 +543,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       contextId,
       runtime,
       documents = [],
+      documentBindings = [],
       activeDocumentId = null,
       lastPdfWidgetId = null,
       lastReferenceWidgetId = null,
@@ -469,6 +557,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         contextId,
         widgets: serializedWidgets,
         documents,
+        documentBindings,
         activeWorkspaceState: {
           activeDocumentId,
           lastPdfWidgetId,
