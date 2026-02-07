@@ -3,6 +3,7 @@ import { WidgetRegistry } from "./core/widgets/widget-registry.js";
 import { BackgroundWorkerClient } from "./core/workers/background-worker-client.js";
 import { createDocumentManager } from "./features/documents/document-manager.js";
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
+import { createWidgetCreationController } from "./features/widget-system/widget-creation-controller.js";
 import { createWidgetInteractionManager } from "./features/widget-system/widget-interaction-manager.js";
 
 const importPdfButton = document.querySelector("#import-pdf");
@@ -32,6 +33,7 @@ const cameraOutput = document.querySelector("#camera-state");
 const workerStateOutput = document.querySelector("#worker-state");
 const canvas = document.querySelector("#workspace-canvas");
 const widgetContextMenu = document.querySelector("#widget-context-menu");
+const creationCommandMenu = document.querySelector("#creation-command-menu");
 const pdfFileInput = document.querySelector("#pdf-file-input");
 const documentTabs = document.querySelector("#document-tabs");
 const documentSwitcher = document.querySelector("#document-switcher");
@@ -41,6 +43,7 @@ const formulaBindingSelect = document.querySelector("#document-formula-bindings"
 const applyBindingsButton = document.querySelector("#apply-document-bindings");
 const focusBindingsButton = document.querySelector("#focus-document-bindings");
 const togglePinDocumentButton = document.querySelector("#toggle-pin-document");
+const debugOnlyControls = Array.from(document.querySelectorAll('[data-debug-only="true"]'));
 
 const contextSelect = document.querySelector("#context-select");
 const newContextButton = document.querySelector("#new-context");
@@ -59,8 +62,11 @@ let snipTool = null;
 let whitespaceManager = null;
 let graphInteractions = null;
 let widgetInteractionManager = null;
+let widgetCreationController = null;
 let detachDocumentFocusSync = null;
 let toolsPanelOpen = false;
+let pendingPdfImportIntent = null;
+let debugModeEnabled = false;
 
 let contextStore = null;
 let contextWorkspaceStore = null;
@@ -113,6 +119,160 @@ function defaultPlacement(baseX, baseY, stepX, stepY) {
   return {
     x: baseX + runtime.getWidgetCount() * stepX,
     y: baseY + runtime.getWidgetCount() * stepY,
+  };
+}
+
+const CREATION_TYPES = new Set([
+  "dummy",
+  "expanded-area",
+  "graph-widget",
+  "reference-popup",
+  "pdf-document",
+]);
+
+function isFiniteNumber(value) {
+  return Number.isFinite(value);
+}
+
+function readDebugModeFlag() {
+  const params = new URLSearchParams(window.location.search);
+  const debugParam = params.get("debug");
+  if (debugParam === "1" || debugParam === "true") {
+    return true;
+  }
+  if (debugParam === "0" || debugParam === "false") {
+    return false;
+  }
+  return window.localStorage.getItem("notes-app.debug-controls") === "1";
+}
+
+function syncDebugControls() {
+  for (const control of debugOnlyControls) {
+    if (control instanceof HTMLElement) {
+      control.hidden = !debugModeEnabled;
+    }
+  }
+}
+
+function setDebugModeEnabled(nextEnabled) {
+  debugModeEnabled = Boolean(nextEnabled);
+  window.localStorage.setItem("notes-app.debug-controls", debugModeEnabled ? "1" : "0");
+  syncDebugControls();
+}
+
+function viewportCenterAnchor() {
+  return runtime.camera.screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
+}
+
+function normalizeCreationIntent(intent) {
+  if (!intent || typeof intent !== "object") {
+    return null;
+  }
+
+  const type = typeof intent.type === "string" ? intent.type : null;
+  if (!type || !CREATION_TYPES.has(type)) {
+    return null;
+  }
+
+  const hasAnchor = intent.anchor && isFiniteNumber(intent.anchor.x) && isFiniteNumber(intent.anchor.y);
+  const contextId =
+    typeof intent.contextId === "string" && intent.contextId.trim()
+      ? intent.contextId
+      : activeContextId ?? null;
+
+  return {
+    type,
+    anchor: hasAnchor ? { x: intent.anchor.x, y: intent.anchor.y } : null,
+    sourceWidgetId:
+      typeof intent.sourceWidgetId === "string" && intent.sourceWidgetId.trim()
+        ? intent.sourceWidgetId
+        : null,
+    contextId,
+    createdFrom:
+      typeof intent.createdFrom === "string" && intent.createdFrom.trim()
+        ? intent.createdFrom.trim()
+        : "manual",
+  };
+}
+
+function createCreationIntent({ type, anchor, sourceWidgetId, contextId, createdFrom } = {}) {
+  return normalizeCreationIntent({
+    type,
+    anchor,
+    sourceWidgetId,
+    contextId: contextId ?? activeContextId ?? null,
+    createdFrom: createdFrom ?? "manual",
+  });
+}
+
+function anchorFromSourceWidget(sourceWidgetId) {
+  if (!sourceWidgetId) {
+    return null;
+  }
+
+  const sourceWidget = runtime.getWidgetById(sourceWidgetId);
+  if (!sourceWidget) {
+    return null;
+  }
+
+  const bounds =
+    typeof sourceWidget.getInteractionBounds === "function"
+      ? sourceWidget.getInteractionBounds()
+      : sourceWidget.size;
+
+  return {
+    x: sourceWidget.position.x + Math.max(1, bounds.width) / 2,
+    y: sourceWidget.position.y + Math.max(1, bounds.height) / 2,
+  };
+}
+
+function anchorBesideWidget(sourceWidget) {
+  if (!sourceWidget) {
+    return viewportCenterAnchor();
+  }
+
+  const bounds =
+    typeof sourceWidget.getInteractionBounds === "function"
+      ? sourceWidget.getInteractionBounds()
+      : sourceWidget.size;
+
+  return {
+    x: sourceWidget.position.x + Math.max(1, bounds.width) + 180,
+    y: sourceWidget.position.y + Math.max(1, bounds.height) / 2,
+  };
+}
+
+function positionFromCreationIntent(intent, size, fallback) {
+  const normalized = normalizeCreationIntent(intent);
+  const width = Math.max(1, size?.width ?? 280);
+  const height = Math.max(1, size?.height ?? 200);
+
+  const anchor =
+    normalized?.anchor ?? anchorFromSourceWidget(normalized?.sourceWidgetId) ?? viewportCenterAnchor();
+  if (!anchor || !isFiniteNumber(anchor.x) || !isFiniteNumber(anchor.y)) {
+    return fallback;
+  }
+
+  return {
+    x: anchor.x - width / 2,
+    y: anchor.y - height / 2,
+  };
+}
+
+function withCreationProvenance(metadata, intent) {
+  const base = metadata && typeof metadata === "object" ? { ...metadata } : {};
+  const normalized = normalizeCreationIntent(intent);
+
+  if (!normalized) {
+    return base;
+  }
+
+  return {
+    ...base,
+    createdFrom: normalized.createdFrom,
+    creationSourceWidgetId: normalized.sourceWidgetId,
+    creationContextId: normalized.contextId,
+    creationCreatedAt: nowIso(),
   };
 }
 
@@ -205,6 +365,24 @@ function createDocumentEntryForPdf({ title, widgetId }) {
 
 function bindReferenceToActiveDocument(referenceWidgetId) {
   return documentManager.bindReferenceToActive(referenceWidgetId);
+}
+
+function bindReferenceToDocument(documentId, referenceWidgetId) {
+  if (!documentId || !referenceWidgetId) {
+    return false;
+  }
+
+  const current = documentManager.getBindings(documentId);
+  const nextReferenceIds = [...(current?.defaultReferenceIds ?? []), referenceWidgetId];
+  const validWidgetIds = runtime.listWidgets().map((widget) => widget.id);
+  return documentManager.updateBindings(
+    documentId,
+    {
+      defaultReferenceIds: nextReferenceIds,
+      formulaSheetIds: current?.formulaSheetIds ?? [],
+    },
+    validWidgetIds,
+  );
 }
 
 function bindFormulaWidgetToDocument(documentId, widgetId) {
@@ -569,7 +747,17 @@ async function ensureSnipTool() {
   snipTool = snipModule.createSnipTool({
     runtime,
     onSnipReady: ({ dataUrl, width, height }) => {
-      void createReferencePopupFromSnip({ dataUrl, width, height });
+      void createReferencePopupFromSnip({
+        dataUrl,
+        width,
+        height,
+        intent: createCreationIntent({
+          type: "reference-popup",
+          anchor: viewportCenterAnchor(),
+          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+          createdFrom: "manual",
+        }),
+      });
     },
     onStateChange: (state) => updateSnipUi(state),
   });
@@ -609,12 +797,20 @@ async function ensureGraphFeatures() {
   return graphInteractions;
 }
 
-async function createExpandedAreaWidget(definition = {}) {
+async function createExpandedAreaWidget(definition = {}, intent = null) {
+  const normalizedIntent = normalizeCreationIntent(intent);
+  const requestedSize = definition.size ?? { width: 420, height: 260 };
   const widget = await registry.instantiate("expanded-area", {
     id: definition.id ?? makeId("expanded"),
-    position: definition.position ?? defaultPlacement(-120, -60, 35, 28),
+    position:
+      definition.position ??
+      positionFromCreationIntent(
+        normalizedIntent,
+        requestedSize,
+        defaultPlacement(-120, -60, 35, 28),
+      ),
     size: definition.size,
-    metadata: definition.metadata,
+    metadata: withCreationProvenance(definition.metadata, normalizedIntent),
     collapsed: definition.collapsed,
   });
 
@@ -623,16 +819,45 @@ async function createExpandedAreaWidget(definition = {}) {
   return widget;
 }
 
-async function createPdfWidgetFromFile(file, definition = {}) {
+async function createDummyWidget(definition = {}, intent = null) {
+  const normalizedIntent = normalizeCreationIntent(intent);
+  const requestedSize = definition.size ?? { width: 300, height: 180 };
+  const widget = await registry.instantiate("dummy", {
+    id: definition.id ?? makeId("dummy"),
+    position:
+      definition.position ??
+      positionFromCreationIntent(
+        normalizedIntent,
+        requestedSize,
+        defaultPlacement(-150, -90, 40, 30),
+      ),
+    size: definition.size,
+    metadata: withCreationProvenance(definition.metadata, normalizedIntent),
+    collapsed: definition.collapsed,
+  });
+  runtime.addWidget(widget);
+  updateWidgetUi();
+  return widget;
+}
+
+async function createPdfWidgetFromFile(file, definition = {}, intent = null) {
+  const normalizedIntent = normalizeCreationIntent(intent);
+  const requestedSize = definition.size ?? { width: 480, height: 680 };
   const bytes = new Uint8Array(await file.arrayBuffer());
   const widget = await registry.instantiate("pdf-document", {
     id: definition.id ?? makeId("pdf"),
-    position: definition.position ?? defaultPlacement(-180, -120, 36, 30),
+    position:
+      definition.position ??
+      positionFromCreationIntent(
+        normalizedIntent,
+        requestedSize,
+        defaultPlacement(-180, -120, 36, 30),
+      ),
     size: definition.size,
-    metadata: {
+    metadata: withCreationProvenance({
       title: definition.metadata?.title ?? file.name,
       ...(definition.metadata ?? {}),
-    },
+    }, normalizedIntent),
     dataPayload: {
       bytes,
       fileName: file.name,
@@ -656,31 +881,135 @@ async function createPdfWidgetFromFile(file, definition = {}) {
   return widget;
 }
 
-async function createReferencePopupFromSnip({ dataUrl, width, height }) {
+async function createReferencePopupWidget({ definition = {}, intent = null } = {}) {
+  const normalizedIntent = normalizeCreationIntent(intent);
+  const requestedSize = definition.size ?? { width: 280, height: 210 };
+
   await ensureReferencePopupInteractions();
 
   const widget = await registry.instantiate("reference-popup", {
-    id: makeId("ref"),
-    position: defaultPlacement(-80, -80, 16, 14),
-    size: {
-      width: Math.max(220, Math.min(420, Math.round(width * 0.78))),
-      height: Math.max(150, Math.min(360, Math.round(height * 0.78 + 52))),
-    },
-    metadata: {
-      title: "Reference",
-    },
+    id: definition.id ?? makeId("ref"),
+    position:
+      definition.position ??
+      positionFromCreationIntent(
+        normalizedIntent,
+        requestedSize,
+        defaultPlacement(-80, -80, 16, 14),
+      ),
+    size: definition.size,
+    metadata: withCreationProvenance(
+      {
+        title: definition.metadata?.title ?? "Reference",
+        ...(definition.metadata ?? {}),
+      },
+      normalizedIntent,
+    ),
     dataPayload: {
-      imageDataUrl: dataUrl,
-      sourceLabel: "Quick Snip",
+      imageDataUrl: definition.dataPayload?.imageDataUrl ?? null,
+      sourceLabel: definition.dataPayload?.sourceLabel ?? "Manual",
     },
+    collapsed: definition.collapsed,
   });
 
   runtime.addWidget(widget);
   lastReferenceWidgetId = widget.id;
-  bindReferenceToActiveDocument(widget.id);
+
+  const sourceDocument = normalizedIntent?.sourceWidgetId
+    ? documentManager.getDocumentByWidgetId(normalizedIntent.sourceWidgetId)
+    : null;
+  if (sourceDocument) {
+    bindReferenceToDocument(sourceDocument.id, widget.id);
+  } else {
+    bindReferenceToActiveDocument(widget.id);
+  }
 
   updateWidgetUi();
   return widget;
+}
+
+async function createReferencePopupFromSnip({ dataUrl, width, height, intent = null }) {
+  const normalizedIntent = normalizeCreationIntent(intent);
+  await ensureReferencePopupInteractions();
+
+  return createReferencePopupWidget({
+    intent: normalizedIntent,
+    definition: {
+      size: {
+        width: Math.max(220, Math.min(420, Math.round(width * 0.78))),
+        height: Math.max(150, Math.min(360, Math.round(height * 0.78 + 52))),
+      },
+      metadata: {
+        title: "Reference",
+      },
+      dataPayload: {
+        imageDataUrl: dataUrl,
+        sourceLabel: "Quick Snip",
+      },
+    },
+  });
+}
+
+function openPdfPickerForIntent(intent) {
+  if (!(pdfFileInput instanceof HTMLInputElement)) {
+    window.alert("PDF input is unavailable.");
+    return false;
+  }
+
+  const normalizedIntent = normalizeCreationIntent(intent);
+  if (!normalizedIntent || normalizedIntent.type !== "pdf-document") {
+    return false;
+  }
+
+  pendingPdfImportIntent = normalizedIntent;
+  pdfFileInput.value = "";
+  pdfFileInput.click();
+  return true;
+}
+
+async function executeCreationIntent(intent) {
+  const normalizedIntent = normalizeCreationIntent(intent);
+  if (!normalizedIntent) {
+    window.alert("Unsupported widget type.");
+    return false;
+  }
+
+  if (normalizedIntent.type === "pdf-document") {
+    return openPdfPickerForIntent(normalizedIntent);
+  }
+
+  if (normalizedIntent.type === "dummy") {
+    await createDummyWidget({}, normalizedIntent);
+    return true;
+  }
+
+  if (normalizedIntent.type === "expanded-area") {
+    await createExpandedAreaWidget({}, normalizedIntent);
+    return true;
+  }
+
+  if (normalizedIntent.type === "graph-widget") {
+    await createGraphWidget({}, normalizedIntent);
+    return true;
+  }
+
+  if (normalizedIntent.type === "reference-popup") {
+    await createReferencePopupWidget({
+      intent: normalizedIntent,
+      definition: {
+        metadata: {
+          title: "Reference",
+        },
+        dataPayload: {
+          imageDataUrl: null,
+          sourceLabel: "Manual",
+        },
+      },
+    });
+    return true;
+  }
+
+  window.alert(`Unsupported widget type: ${normalizedIntent.type}`);
+  return false;
 }
 
 async function createExpandedFromWhitespaceZone(pdfWidget, zone) {
@@ -689,23 +1018,33 @@ async function createExpandedFromWhitespaceZone(pdfWidget, zone) {
     return;
   }
 
-  const linkedWidget = await registry.instantiate("expanded-area", {
-    id: makeId("space"),
-    position: {
-      x: rect.x + rect.width + 22,
-      y: rect.y,
+  const linkedWidget = await createExpandedAreaWidget(
+    {
+      id: makeId("space"),
+      position: {
+        x: rect.x + rect.width + 22,
+        y: rect.y,
+      },
+      size: {
+        width: 300,
+        height: Math.max(120, Math.min(320, rect.height)),
+      },
+      metadata: {
+        title: "Expanded Space",
+        note: `Linked to ${pdfWidget.metadata.title} (${zone.id})`,
+      },
     },
-    size: {
-      width: 300,
-      height: Math.max(120, Math.min(320, rect.height)),
-    },
-    metadata: {
-      title: "Expanded Space",
-      note: `Linked to ${pdfWidget.metadata.title} (${zone.id})`,
-    },
-  });
+    createCreationIntent({
+      type: "expanded-area",
+      anchor: {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+      },
+      sourceWidgetId: pdfWidget.id,
+      createdFrom: "suggestion-accepted",
+    }),
+  );
 
-  runtime.addWidget(linkedWidget);
   pdfWidget.setWhitespaceZoneLinkedWidget(zone.id, linkedWidget.id);
   const ownerDocument = documentManager.getDocumentByWidgetId(pdfWidget.id);
   if (ownerDocument) {
@@ -728,14 +1067,22 @@ async function handleWhitespaceZoneToggle(pdfWidget, zone) {
   }
 }
 
-async function createGraphWidget(definition = {}) {
+async function createGraphWidget(definition = {}, intent = null) {
+  const normalizedIntent = normalizeCreationIntent(intent);
   await ensureGraphFeatures();
+  const requestedSize = definition.size ?? { width: 420, height: 280 };
 
   const widget = await registry.instantiate("graph-widget", {
     id: definition.id ?? makeId("graph"),
-    position: definition.position ?? defaultPlacement(-100, -40, 14, 12),
+    position:
+      definition.position ??
+      positionFromCreationIntent(
+        normalizedIntent,
+        requestedSize,
+        defaultPlacement(-100, -40, 14, 12),
+      ),
     size: definition.size,
-    metadata: definition.metadata,
+    metadata: withCreationProvenance(definition.metadata, normalizedIntent),
     dataPayload: definition.dataPayload,
     collapsed: definition.collapsed,
   });
@@ -1062,12 +1409,14 @@ function wireBaseEventHandlers() {
     instantiateButton.textContent = "Loading...";
 
     try {
-      const widget = await registry.instantiate("dummy", {
-        id: makeId("dummy"),
-        position: defaultPlacement(-150, -90, 40, 30),
-      });
-      runtime.addWidget(widget);
-      updateWidgetUi();
+      await executeCreationIntent(
+        createCreationIntent({
+          type: "dummy",
+          anchor: viewportCenterAnchor(),
+          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+          createdFrom: "manual",
+        }),
+      );
     } catch (error) {
       console.error(error);
       window.alert(`Failed to instantiate widget: ${error.message}`);
@@ -1082,7 +1431,14 @@ function wireBaseEventHandlers() {
     instantiateExpandedButton.textContent = "Loading...";
 
     try {
-      await createExpandedAreaWidget();
+      await executeCreationIntent(
+        createCreationIntent({
+          type: "expanded-area",
+          anchor: viewportCenterAnchor(),
+          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+          createdFrom: "manual",
+        }),
+      );
     } catch (error) {
       console.error(error);
       window.alert(`Failed to instantiate expanded widget: ${error.message}`);
@@ -1114,7 +1470,14 @@ function wireBaseEventHandlers() {
     instantiateGraphButton.textContent = "Loading...";
 
     try {
-      await createGraphWidget();
+      await executeCreationIntent(
+        createCreationIntent({
+          type: "graph-widget",
+          anchor: viewportCenterAnchor(),
+          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+          createdFrom: "manual",
+        }),
+      );
     } catch (error) {
       console.error(error);
       window.alert(`Graph widget failed: ${error.message}`);
@@ -1162,12 +1525,14 @@ function wireBaseEventHandlers() {
   });
 
   importPdfButton?.addEventListener("click", () => {
-    if (!(pdfFileInput instanceof HTMLInputElement)) {
-      return;
-    }
-
-    pdfFileInput.value = "";
-    pdfFileInput.click();
+    void executeCreationIntent(
+      createCreationIntent({
+        type: "pdf-document",
+        anchor: viewportCenterAnchor(),
+        sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+        createdFrom: "manual",
+      }),
+    );
   });
 
   pdfFileInput?.addEventListener("change", async (event) => {
@@ -1181,6 +1546,7 @@ function wireBaseEventHandlers() {
 
     const file = event.target.files?.[0];
     if (!file) {
+      pendingPdfImportIntent = null;
       return;
     }
 
@@ -1188,11 +1554,18 @@ function wireBaseEventHandlers() {
     importPdfButton.textContent = "Importing...";
 
     try {
-      await createPdfWidgetFromFile(file);
+      const fallbackIntent = createCreationIntent({
+        type: "pdf-document",
+        anchor: viewportCenterAnchor(),
+        sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+        createdFrom: "manual",
+      });
+      await createPdfWidgetFromFile(file, {}, pendingPdfImportIntent ?? fallbackIntent);
     } catch (error) {
       console.error(error);
       window.alert(`PDF import failed: ${error.message}`);
     } finally {
+      pendingPdfImportIntent = null;
       importPdfButton.disabled = false;
       importPdfButton.textContent = "Import PDF";
       event.target.value = "";
@@ -1340,11 +1713,17 @@ function wireBaseEventHandlers() {
   });
 
   window.addEventListener("keydown", (event) => {
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === "d") {
+      event.preventDefault();
+      setDebugModeEnabled(!debugModeEnabled);
+      return;
+    }
+
     if (!inkFeature) {
       return;
     }
 
-    const key = event.key.toLowerCase();
     const metaOrCtrl = event.ctrlKey || event.metaKey;
     if (!metaOrCtrl) {
       return;
@@ -1378,7 +1757,15 @@ function wireContextMenu() {
     canvas,
     menuElement: widgetContextMenu,
     runtime,
-    onCreateExpanded: () => createExpandedAreaWidget(),
+    onCreateExpanded: (sourceWidget) =>
+      executeCreationIntent(
+        createCreationIntent({
+          type: "expanded-area",
+          anchor: anchorBesideWidget(sourceWidget ?? null),
+          sourceWidgetId: sourceWidget?.id ?? null,
+          createdFrom: "manual",
+        }),
+      ),
     onWidgetMutated: () => updateWidgetUi(),
   });
 }
@@ -1391,6 +1778,25 @@ function wireWidgetInteractionManager() {
   widgetInteractionManager = createWidgetInteractionManager({
     runtime,
     onWidgetMutated: () => updateWidgetUi(),
+  });
+}
+
+function wireWidgetCreationController() {
+  if (widgetCreationController) {
+    return;
+  }
+
+  widgetCreationController = createWidgetCreationController({
+    runtime,
+    canvas,
+    menuElement: creationCommandMenu,
+    getActiveContextId: () => activeContextId,
+    onCreateIntent: (intent) => {
+      void executeCreationIntent(intent).catch((error) => {
+        console.error(error);
+        window.alert(`Widget creation failed: ${error.message}`);
+      });
+    },
   });
 }
 
@@ -1534,11 +1940,14 @@ async function setupContextFeatures() {
 async function bootstrap() {
   wireBaseEventHandlers();
   wireWidgetInteractionManager();
+  wireWidgetCreationController();
   wireDocumentFocusSync();
   wireContextMenu();
 
   updateSnipUi({ armed: false, dragging: false });
   setWhitespaceState("idle");
+  debugModeEnabled = readDebugModeFlag();
+  syncDebugControls();
 
   toolsPanelOpen = window.localStorage.getItem("notes-app.tools-panel.open") === "1";
   syncToolsUi();

@@ -1,8 +1,8 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 12 (`docs/SPRINT_12_Multi_Document_Management.md`) implemented on top of current `main`.
-- Sprint 11 was skipped per current implementation directive.
+- Sprint 10 (`docs/SPRINT_10_Widget_Discovery_and_Intent_Creation.md`) has now been fully implemented onto current `main`.
+- Sprint 12 remains implemented; Sprint 11 remains skipped per directive.
 
 ## What Exists Today
 - Core runtime and modular widget architecture:
@@ -18,6 +18,7 @@
   - Ink engine: `src/features/ink/`
   - Document manager: `src/features/documents/document-manager.js`
   - Widget long-press menu: `src/features/widget-system/`
+  - Widget creation controller: `src/features/widget-system/widget-creation-controller.js`
   - Universal widget interaction manager: `src/features/widget-system/widget-interaction-manager.js`
   - Reference popup interactions + snip tool: `src/features/reference-popups/`
   - Whitespace analyzer/manager: `src/features/whitespace/`
@@ -27,8 +28,11 @@
   - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
 
 ## In Progress
-- No active blocker; Sprint 12 core scope is in place.
-- Existing Sprint 10 creation-menu scaffolding remains present in working tree and is not fully wired.
+- No active blocker.
+- Sprint 10 contextual creation pipeline is now active:
+  - Contextual creation command menu (double-tap canvas / `N` shortcut).
+  - Unified `CreationIntent` pipeline for contextual + toolbar/manual creation.
+  - Debug-only fallback create buttons hidden by default and toggleable via debug mode.
 
 ## Blockers
 - None.
@@ -60,11 +64,13 @@
   - Open-document tab strip and list switcher.
   - Document settings panel for reference/formula binding assignment.
   - Pin/unpin and focus-bound-widget actions.
+- Creation intents now carry provenance metadata (`createdFrom`, source/context fields) across manual, suggestion-accepted, and imported paths.
+- Whitespace-driven expanded-space creation now records `createdFrom: suggestion-accepted`.
 
 ## Next Actions
-1. Complete and wire Sprint 10 contextual creation controller (`creation-command-menu`) or remove dormant scaffolding.
-2. Run manual QA for multi-document flows on tablet hardware (switch, pin, bind, context import).
-3. Add targeted regression tests for document binding migration and focus behavior.
+1. Run manual QA on tablet for Sprint 10 + Sprint 12 combined flows (contextual creation, document switching, bindings).
+2. Add targeted regression tests for creation-intent provenance and document binding migration/focus behavior.
+3. Validate production/debug control visibility behavior (`notes-app.debug-controls`, `?debug=1`).
 
 ## Verification Status
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.

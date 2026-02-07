@@ -127,7 +127,7 @@ export function createWidgetContextMenu({
     const activeWidget = getActiveWidget();
 
     if (action === "create-expanded") {
-      await onCreateExpanded();
+      await onCreateExpanded(activeWidget ?? null);
       closeMenu();
       return;
     }

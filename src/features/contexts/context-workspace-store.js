@@ -648,6 +648,10 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         delete clone.metadata.documentId;
       }
 
+      clone.metadata.createdFrom = "imported";
+      clone.metadata.creationContextId = targetContextId;
+      clone.metadata.creationCreatedAt = nowIso();
+
       if (clone.type === "pdf-document") {
         clone.runtimeState = {
           whitespaceZones: normalizeWhitespaceZones(clone.runtimeState.whitespaceZones).map((zone) => ({
