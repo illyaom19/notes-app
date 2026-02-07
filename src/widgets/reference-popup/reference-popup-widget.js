@@ -6,6 +6,19 @@ const MIN_BODY_HEIGHT = 90;
 const MIN_SIZE = { width: 180, height: 120 };
 const SOURCE_BUTTON_SIZE = { width: 90, height: 18 };
 
+function formatPopupTypeLabel(type) {
+  if (type === "definition-citation") {
+    return "Definition";
+  }
+  if (type === "research-citation") {
+    return "Research";
+  }
+  if (type === "reference-popup") {
+    return "Reference";
+  }
+  return type;
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -165,7 +178,7 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
 
 export class ReferencePopupWidget extends WidgetBase {
   constructor(definition) {
-    const title = definition.metadata?.title ?? "Ref";
+    const title = definition.metadata?.title ?? "Reference";
     const popupMetadata = normalizePopupMetadata(definition.metadata?.popupMetadata, title);
 
     super({
@@ -185,7 +198,7 @@ export class ReferencePopupWidget extends WidgetBase {
     this.textContent =
       typeof definition.dataPayload?.textContent === "string" ? definition.dataPayload.textContent : "";
     this._image = null;
-    this.sourceLabel = definition.dataPayload?.sourceLabel ?? "Snip";
+    this.sourceLabel = definition.dataPayload?.sourceLabel ?? "Source";
     this.contentType = normalizeContentType(
       definition.dataPayload?.contentType,
       this.imageDataUrl ? "image" : "text",
@@ -356,7 +369,8 @@ export class ReferencePopupWidget extends WidgetBase {
     fillStrokeRoundedRect(ctx, screen.x, screen.y, width, height, 16, "#ffffff", "#6f8faa", 1.4);
     fillPill(ctx, screen.x + 10, screen.y + 6, Math.max(90, width - 88), 20 * camera.zoom, "#edf4fb");
 
-    const typeLabel = popupMetadata.type.length > 18 ? `${popupMetadata.type.slice(0, 15)}...` : popupMetadata.type;
+    const formattedType = formatPopupTypeLabel(popupMetadata.type);
+    const typeLabel = formattedType.length > 18 ? `${formattedType.slice(0, 15)}...` : formattedType;
     const typeChipWidth = Math.max(54, Math.min(122, (typeLabel.length + 3) * 6.5 * camera.zoom));
     fillPill(ctx, screen.x + 16, screen.y + 10 * camera.zoom, typeChipWidth, 12 * camera.zoom, "#d8e9f6");
 
@@ -388,7 +402,7 @@ export class ReferencePopupWidget extends WidgetBase {
     fillPill(ctx, closeScreen.x, closeScreen.y, iconSize, iconSize, "#dce7f1");
 
     ctx.fillStyle = "#284760";
-    ctx.fillText("^", minimizeScreen.x + 5 * camera.zoom, minimizeScreen.y + 12 * camera.zoom);
+    ctx.fillText("-", minimizeScreen.x + 6 * camera.zoom, minimizeScreen.y + 12 * camera.zoom);
     ctx.fillText("x", closeScreen.x + 4 * camera.zoom, closeScreen.y + 12 * camera.zoom);
 
     if (this.metadata.minimized) {
@@ -418,7 +432,7 @@ export class ReferencePopupWidget extends WidgetBase {
       );
       ctx.fillStyle = "#2d536f";
       ctx.font = `${Math.max(8, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("Open Source", sourceScreen.x + 8 * camera.zoom, sourceScreen.y + 12 * camera.zoom);
+      ctx.fillText("View Source", sourceScreen.x + 8 * camera.zoom, sourceScreen.y + 12 * camera.zoom);
     }
 
     const topInset = sourceButtonVisible ? 34 : 12;
@@ -439,7 +453,7 @@ export class ReferencePopupWidget extends WidgetBase {
     } else {
       ctx.fillStyle = "#50697f";
       ctx.font = `${Math.max(9, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      const text = this.textContent.trim() || "No capture";
+      const text = this.textContent.trim() || "No reference content";
       drawWrappedText(
         ctx,
         text,
@@ -496,7 +510,7 @@ export class ReferencePopupWidget extends WidgetBase {
     const handleSize = 18 * camera.zoom;
     fillPill(ctx, resizeScreen.x, resizeScreen.y, handleSize, handleSize, "#7e9db7");
     ctx.fillStyle = "#f2f8fc";
-    ctx.fillText("<>", resizeScreen.x + 3 * camera.zoom, resizeScreen.y + 12 * camera.zoom);
+    ctx.fillText("[]", resizeScreen.x + 3 * camera.zoom, resizeScreen.y + 12 * camera.zoom);
   }
 
   renderSnapshot(ctx, camera) {

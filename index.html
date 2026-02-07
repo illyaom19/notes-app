@@ -35,20 +35,13 @@
           <button id="new-context" type="button">New Notebook</button>
           <button id="rename-context" type="button">Rename Notebook</button>
           <button id="delete-context" type="button">Delete Notebook</button>
-          <button id="import-context-widget" type="button">Import From Notebook</button>
           <button id="toggle-ui-mode" type="button">Mode: Production</button>
-          <button id="import-pdf" type="button">Import PDF</button>
-          <button id="detect-whitespace" type="button" data-production-hidden="true">Detect Whitespace</button>
-          <button id="start-snip" type="button">Start Snip</button>
           <button id="toggle-document-settings" type="button">Doc Settings</button>
           <button id="enable-ink" type="button">Enable Ink</button>
           <button id="toggle-ink-tool" type="button" disabled>Ink Tool: Pen</button>
           <button id="undo-ink" type="button" disabled>Undo</button>
           <button id="redo-ink" type="button" disabled>Redo</button>
           <button id="start-worker" type="button" data-production-hidden="true">Start Worker</button>
-          <button id="instantiate-dummy" type="button" data-debug-only="true">Instantiate Dummy Widget</button>
-          <button id="instantiate-expanded" type="button" data-debug-only="true">Instantiate Expanded-Area Widget</button>
-          <button id="instantiate-graph" type="button" data-debug-only="true">Instantiate Graph Widget</button>
           <label class="toggle-control" for="popup-avoid-stylus" data-production-hidden="true">
             <input id="popup-avoid-stylus" type="checkbox" checked />
             <span>Avoid Stylus</span>
@@ -105,7 +98,6 @@
         <span><strong>Whitespace:</strong> <output id="whitespace-state">idle</output></span>
         <span><strong>Peek:</strong> <output id="peek-state">off</output></span>
         <span><strong>Whitespace Zones:</strong> <output id="whitespace-zone-count">0</output></span>
-        <span><strong>Graphs:</strong> <output id="graph-count">0</output></span>
         <span><strong>Ink:</strong> <output id="ink-state">idle</output></span>
         <span><strong>Ink Tool:</strong> <output id="ink-tool">pen</output></span>
         <span><strong>Strokes:</strong> <output id="stroke-count">0</output></span>
@@ -150,7 +142,7 @@
         </div>
         <label class="search-query" for="search-query">
           <span>Query</span>
-          <input id="search-query" type="search" placeholder="Search titles, notes, citations, equations..." />
+          <input id="search-query" type="search" placeholder="Search titles, notes, citations, and document text..." />
         </label>
         <p id="search-status" class="search-status">Type a query to search indexed widget text.</p>
         <div class="search-actions">
@@ -219,19 +211,18 @@
       </aside>
 
       <menu id="widget-context-menu" class="widget-menu" aria-label="Widget actions">
-        <button type="button" data-action="create-expanded">Create Expanded-Area Widget</button>
-        <button type="button" data-action="save-reference-library">Save Ref To Notebook</button>
-        <button type="button" data-action="toggle-collapse">Toggle Collapse</button>
-        <button type="button" data-action="remove-widget">Remove Widget</button>
+        <button type="button" data-action="copy-widget">Copy</button>
+        <button type="button" data-action="rename-widget">Rename</button>
+        <button type="button" data-action="toggle-library">Add To Library</button>
+        <button type="button" data-action="widget-info">Info</button>
+        <button type="button" data-action="remove-widget">Delete</button>
       </menu>
 
       <menu id="creation-command-menu" class="creation-menu" aria-label="Creation Menu">
-        <button type="button" data-create-type="expanded-area">Expanded Space</button>
-        <button type="button" data-create-type="graph-widget">Graph Widget</button>
-        <button type="button" data-create-type="reference-popup">Reference Popup</button>
-        <button type="button" data-create-type="library-reference">Notebook Reference</button>
-        <button type="button" data-create-type="pdf-document">Import PDF Here</button>
-        <button type="button" data-create-type="dummy" data-debug-only="true">Dummy Widget</button>
+        <button type="button" data-create-type="expanded-area">Notes Sheet</button>
+        <button type="button" data-create-type="reference-popup">Reference</button>
+        <button type="button" data-create-type="library-reference">Library Reference</button>
+        <button type="button" data-create-type="pdf-document">PDF Document</button>
       </menu>
     </main>
 

@@ -27,19 +27,13 @@ import { createSuggestionEngine } from "./features/suggestions/suggestion-engine
 import { createSuggestionUiController } from "./features/suggestions/suggestion-ui-controller.js";
 import { createReferenceManagerUi } from "./features/references/reference-manager-ui.js";
 
-const importPdfButton = document.querySelector("#import-pdf");
 const toggleUiModeButton = document.querySelector("#toggle-ui-mode");
 const toggleToolsButton = document.querySelector("#toggle-tools");
 const controlsPanel = document.querySelector("#controls-panel");
 const statusPanel = document.querySelector(".status-panel");
-const detectWhitespaceButton = document.querySelector("#detect-whitespace");
-const startSnipButton = document.querySelector("#start-snip");
 const toggleResearchPanelButton = document.querySelector("#toggle-research-panel");
 const toggleSearchPanelButton = document.querySelector("#toggle-search-panel");
 const holdPeekModeButton = document.querySelector("#hold-peek-mode");
-const instantiateButton = document.querySelector("#instantiate-dummy");
-const instantiateExpandedButton = document.querySelector("#instantiate-expanded");
-const instantiateGraphButton = document.querySelector("#instantiate-graph");
 const enableInkButton = document.querySelector("#enable-ink");
 const toggleInkToolButton = document.querySelector("#toggle-ink-tool");
 const undoInkButton = document.querySelector("#undo-ink");
@@ -53,7 +47,6 @@ const snipStateOutput = document.querySelector("#snip-state");
 const whitespaceStateOutput = document.querySelector("#whitespace-state");
 const peekStateOutput = document.querySelector("#peek-state");
 const whitespaceZoneCountOutput = document.querySelector("#whitespace-zone-count");
-const graphCountOutput = document.querySelector("#graph-count");
 const activeContextOutput = document.querySelector("#active-context");
 const activeSectionOutput = document.querySelector("#active-section");
 const documentCountOutput = document.querySelector("#document-count");
@@ -140,7 +133,6 @@ let inkFeature = null;
 let popupInteractions = null;
 let snipTool = null;
 let whitespaceManager = null;
-let graphInteractions = null;
 let researchPanelController = null;
 let searchIndex = null;
 let searchPanelController = null;
@@ -213,11 +205,9 @@ const onboardingRuntimeSignals = {
 };
 
 const registry = new WidgetRegistry();
-registry.register("dummy", () => import("./widgets/dummy/index.js"));
 registry.register("expanded-area", () => import("./widgets/expanded-area/index.js"));
 registry.register("pdf-document", () => import("./widgets/pdf/index.js"));
 registry.register("reference-popup", () => import("./widgets/reference-popup/index.js"));
-registry.register("graph-widget", () => import("./widgets/graph/index.js"));
 registry.onModuleLoaded((type) => {
   loadedModules.add(type);
   if (loadedModulesOutput) {
@@ -342,9 +332,7 @@ function defaultPlacement(baseX, baseY, stepX, stepY) {
 }
 
 const CREATION_TYPES = new Set([
-  "dummy",
   "expanded-area",
-  "graph-widget",
   "reference-popup",
   "library-reference",
   "pdf-document",
@@ -1141,10 +1129,6 @@ function updateSnipUi({ armed, dragging }) {
       snipStateOutput.textContent = "idle";
     }
   }
-
-  if (startSnipButton) {
-    startSnipButton.textContent = armed ? "Stop Snip" : "Start Snip";
-  }
 }
 
 function syncToolsUi() {
@@ -1172,7 +1156,14 @@ function onboardingHintsCatalog() {
       shouldShow: () => !hasPdf,
       completeWhen: () => hasPdf,
       onAction: () => {
-        importPdfButton?.click();
+        void executeCreationIntent(
+          createCreationIntent({
+            type: "pdf-document",
+            anchor: viewportCenterAnchor(),
+            sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+            createdFrom: "manual",
+          }),
+        );
       },
     },
     {
@@ -1560,6 +1551,7 @@ function syncLinkedNotebookDocumentInstances({ sourceDocumentId = null } = {}) {
         sourceType: source?.sourceType ?? entry.sourceSnapshot?.sourceType ?? entry.sourceType,
       };
       documentManager.setDocumentSourceState(entry.id, {
+        sourceDocumentId: null,
         linkStatus: "frozen",
         sourceSnapshot: frozenSnapshot,
         title: frozenSnapshot.title,
@@ -1571,7 +1563,7 @@ function syncLinkedNotebookDocumentInstances({ sourceDocumentId = null } = {}) {
         widget.metadata = {
           ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
           title: frozenSnapshot.title,
-          sourceDocumentId: linkedSourceId,
+          sourceDocumentId: null,
         };
       }
       changed = true;
@@ -1701,6 +1693,304 @@ async function saveReferenceWidgetToNotebookLibrary(widget) {
     },
   };
   return true;
+}
+
+async function copyWidgetFromContextMenu(widget) {
+  if (!widget) {
+    return false;
+  }
+
+  const baseAnchor = anchorBesideWidget(widget);
+
+  if (widget.type === "expanded-area") {
+    await createExpandedAreaWidget(
+      {
+        metadata: {
+          title: widget.metadata?.title ?? "Notes Sheet",
+          note: widget.metadata?.note ?? "",
+        },
+      },
+      createCreationIntent({
+        type: "expanded-area",
+        anchor: baseAnchor,
+        sourceWidgetId: widget.id,
+        createdFrom: "manual",
+      }),
+    );
+    return true;
+  }
+
+  if (widget.type === "reference-popup") {
+    await createReferencePopupWidget({
+      definition: {
+        metadata: {
+          title: widget.metadata?.title ?? "Reference",
+          librarySourceId: widget.metadata?.librarySourceId ?? null,
+          popupMetadata: {
+            ...(widget.metadata?.popupMetadata ?? {}),
+            title: widget.metadata?.title ?? "Reference",
+          },
+        },
+        dataPayload: {
+          imageDataUrl: widget.imageDataUrl ?? null,
+          textContent: widget.textContent ?? "",
+          sourceLabel: widget.sourceLabel ?? "Reference",
+          contentType: widget.contentType ?? "text",
+          citation: widget.citation ?? null,
+          researchCaptureId: widget.researchCaptureId ?? null,
+        },
+      },
+      intent: createCreationIntent({
+        type: "reference-popup",
+        anchor: baseAnchor,
+        sourceWidgetId: widget.id,
+        createdFrom: "manual",
+      }),
+    });
+    return true;
+  }
+
+  if (widget.type === "pdf-document" && widget.pdfBytes instanceof Uint8Array) {
+    const sourceDocumentId =
+      typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim()
+        ? widget.metadata.sourceDocumentId
+        : null;
+    const sourceDocument = sourceDocumentId && activeContextId
+      ? notebookDocumentLibraryStore.getDocument(activeContextId, sourceDocumentId)
+      : null;
+
+    if (sourceDocument && sourceDocument.status !== "deleted") {
+      await createPdfWidgetFromLibraryEntry(sourceDocument, {
+        linkStatus: "linked",
+        intent: createCreationIntent({
+          type: "pdf-document",
+          anchor: baseAnchor,
+          sourceWidgetId: widget.id,
+          createdFrom: "manual",
+        }),
+      });
+      return true;
+    }
+
+    await createPdfWidgetFromBytes({
+      bytes: widget.pdfBytes,
+      fileName: widget.fileName ?? "document.pdf",
+      definition: {
+        metadata: {
+          title: widget.metadata?.title ?? "Document",
+        },
+      },
+      intent: createCreationIntent({
+        type: "pdf-document",
+        anchor: baseAnchor,
+        sourceWidgetId: widget.id,
+        createdFrom: "manual",
+      }),
+      sourceDocument: null,
+      linkStatus: "frozen",
+    });
+    return true;
+  }
+
+  return false;
+}
+
+function renameWidgetFromContextMenu(widget) {
+  if (!widget) {
+    return false;
+  }
+
+  const currentTitle =
+    typeof widget.metadata?.title === "string" && widget.metadata.title.trim()
+      ? widget.metadata.title.trim()
+      : widget.type === "expanded-area"
+        ? "Notes Sheet"
+        : widget.type === "reference-popup"
+          ? "Reference"
+          : "Document";
+  const nextTitle = window.prompt("Rename:", currentTitle);
+  if (!nextTitle || !nextTitle.trim()) {
+    return false;
+  }
+
+  const normalizedTitle = nextTitle.trim();
+  if (widget.type === "reference-popup") {
+    const sourceId =
+      typeof widget.metadata?.librarySourceId === "string" && widget.metadata.librarySourceId.trim()
+        ? widget.metadata.librarySourceId
+        : null;
+    if (activeContextId && sourceId) {
+      notebookLibraryStore.renameReference(activeContextId, sourceId, normalizedTitle);
+    }
+
+    widget.metadata = {
+      ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+      title: normalizedTitle,
+      popupMetadata: {
+        ...(widget.metadata?.popupMetadata ?? {}),
+        title: normalizedTitle,
+      },
+    };
+    updateWidgetUi();
+    return true;
+  }
+
+  if (widget.type === "expanded-area") {
+    widget.metadata = {
+      ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+      title: normalizedTitle,
+    };
+    updateWidgetUi();
+    return true;
+  }
+
+  if (widget.type === "pdf-document") {
+    const sourceId =
+      typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim()
+        ? widget.metadata.sourceDocumentId
+        : null;
+    if (activeContextId && sourceId) {
+      notebookDocumentLibraryStore.renameDocument(activeContextId, sourceId, normalizedTitle);
+      syncLinkedNotebookDocumentInstances({ sourceDocumentId: sourceId });
+      updateWidgetUi();
+      return true;
+    }
+
+    widget.metadata = {
+      ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+      title: normalizedTitle,
+    };
+    const doc = documentManager.getDocumentByWidgetId(widget.id);
+    if (doc) {
+      documentManager.setDocumentSourceState(doc.id, { title: normalizedTitle });
+    }
+    updateWidgetUi();
+    return true;
+  }
+
+  return false;
+}
+
+function formatWidgetInfo(widget) {
+  if (!widget) {
+    return "No widget selected.";
+  }
+
+  const title =
+    typeof widget.metadata?.title === "string" && widget.metadata.title.trim()
+      ? widget.metadata.title.trim()
+      : "Untitled";
+  const kind =
+    widget.type === "pdf-document"
+      ? "Document"
+      : widget.type === "reference-popup"
+        ? "Reference"
+        : "Notes Sheet";
+  const size = `${Math.round(widget.size.width)} x ${Math.round(widget.size.height)}`;
+
+  const details = [`${kind}`, `Title: ${title}`, `Size: ${size}`];
+
+  if (widget.type === "reference-popup") {
+    const source = typeof widget.sourceLabel === "string" && widget.sourceLabel.trim() ? widget.sourceLabel.trim() : "Unknown";
+    details.push(`Source: ${source}`);
+  }
+
+  if (widget.type === "pdf-document") {
+    const pageCount = Number.isFinite(widget.pageCount) ? widget.pageCount : 0;
+    if (pageCount > 0) {
+      details.push(`Pages: ${pageCount}`);
+    }
+  }
+
+  return details.join("\n");
+}
+
+async function toggleWidgetLibraryFromContextMenu(widget) {
+  if (!activeContextId || !widget) {
+    return false;
+  }
+
+  if (widget.type === "reference-popup") {
+    const sourceId =
+      typeof widget.metadata?.librarySourceId === "string" && widget.metadata.librarySourceId.trim()
+        ? widget.metadata.librarySourceId
+        : null;
+
+    if (sourceId) {
+      const removed = notebookLibraryStore.deleteReference(activeContextId, sourceId);
+      if (removed) {
+        widget.metadata = {
+          ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+          librarySourceId: null,
+        };
+        updateWidgetUi();
+      }
+      return removed;
+    }
+
+    return saveReferenceWidgetToNotebookLibrary(widget);
+  }
+
+  if (widget.type === "pdf-document") {
+    const sourceId =
+      typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim()
+        ? widget.metadata.sourceDocumentId
+        : null;
+
+    if (sourceId) {
+      const removed = notebookDocumentLibraryStore.deleteDocument(activeContextId, sourceId);
+      if (removed) {
+        syncLinkedNotebookDocumentInstances({ sourceDocumentId: sourceId });
+        updateWidgetUi();
+      }
+      return removed;
+    }
+
+    if (!(widget.pdfBytes instanceof Uint8Array)) {
+      return false;
+    }
+
+    const bytesBase64 = encodeBytesToBase64(widget.pdfBytes);
+    if (!bytesBase64) {
+      return false;
+    }
+
+    const source = notebookDocumentLibraryStore.upsertDocument(activeContextId, {
+      title: widget.metadata?.title ?? widget.fileName ?? "Document",
+      sourceType: "pdf",
+      fileName: widget.fileName ?? "document.pdf",
+      bytesBase64,
+      status: "active",
+      tags: ["pdf"],
+    });
+    if (!source) {
+      return false;
+    }
+
+    const owner = documentManager.getDocumentByWidgetId(widget.id);
+    if (owner) {
+      documentManager.setDocumentSourceState(owner.id, {
+        sourceDocumentId: source.id,
+        linkStatus: "linked",
+        sourceSnapshot: {
+          title: source.title,
+          sourceType: source.sourceType,
+        },
+        title: source.title,
+        sourceType: source.sourceType,
+      });
+    }
+
+    widget.metadata = {
+      ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+      sourceDocumentId: source.id,
+      title: source.title,
+    };
+    updateWidgetUi();
+    return true;
+  }
+
+  return false;
 }
 
 function syncLinkedLibraryMetadata() {
@@ -1928,19 +2218,15 @@ async function createReferencePopupFromNotebookLibrary(intent) {
 
 function widgetDisplayLabel(widget) {
   if (widget.type === "reference-popup") {
-    const source = typeof widget.sourceLabel === "string" && widget.sourceLabel.trim() ? widget.sourceLabel : "Ref";
-    return `${source} (${widget.id.slice(0, 6)})`;
+    const source = typeof widget.sourceLabel === "string" && widget.sourceLabel.trim() ? widget.sourceLabel : "Reference";
+    return source;
   }
 
   if (widget.type === "expanded-area") {
-    return `${widget.metadata?.title ?? "Expanded Space"} (${widget.id.slice(0, 6)})`;
+    return widget.metadata?.title ?? "Notes Sheet";
   }
 
-  if (widget.type === "graph-widget") {
-    return `${widget.metadata?.title ?? "Graph"} (${widget.id.slice(0, 6)})`;
-  }
-
-  return `${widget.type} (${widget.id.slice(0, 6)})`;
+  return widget.metadata?.title ?? "Document";
 }
 
 function updateDocumentBindingsUi() {
@@ -1973,9 +2259,7 @@ function updateDocumentBindingsUi() {
 
   if (formulaBindingSelect instanceof HTMLSelectElement) {
     formulaBindingSelect.innerHTML = "";
-    const formulas = widgets.filter((widget) =>
-      widget.type === "expanded-area" || widget.type === "graph-widget",
-    );
+    const formulas = widgets.filter((widget) => widget.type === "expanded-area");
     for (const widget of formulas) {
       const option = document.createElement("option");
       option.value = widget.id;
@@ -2014,7 +2298,7 @@ function updateDocumentSwitcherUi() {
       .map((widget) => widget.id)
       .join(","),
     widgets
-      .filter((widget) => widget.type === "expanded-area" || widget.type === "graph-widget")
+      .filter((widget) => widget.type === "expanded-area")
       .map((widget) => widget.id)
       .join(","),
     activeBindings.defaultReferenceIds.join(","),
@@ -2250,11 +2534,6 @@ function updateWidgetUi() {
   if (referenceCountOutput) {
     const referenceCount = runtime.listWidgets().filter((widget) => widget.type === "reference-popup").length;
     referenceCountOutput.textContent = String(referenceCount);
-  }
-
-  if (graphCountOutput) {
-    const graphCount = runtime.listWidgets().filter((widget) => widget.type === "graph-widget").length;
-    graphCountOutput.textContent = String(graphCount);
   }
 
   pruneActiveDocuments();
@@ -2790,21 +3069,6 @@ async function ensureWhitespaceManager() {
   return whitespaceManager;
 }
 
-async function ensureGraphFeatures() {
-  if (graphInteractions) {
-    return graphInteractions;
-  }
-
-  const graphModule = await import("./features/graph/graph-interactions.js");
-  const manager = graphModule.createGraphInteractions({
-    runtime,
-    onGraphMutated: () => updateWidgetUi(),
-  });
-
-  graphInteractions = manager;
-  return graphInteractions;
-}
-
 async function createReferencePopupFromResearchCapture(capture, intent = null) {
   const normalizedCapture = normalizeResearchCapture(capture);
   if (!normalizedCapture) {
@@ -2908,31 +3172,28 @@ async function createExpandedAreaWidget(definition = {}, intent = null) {
   return widget;
 }
 
-async function createDummyWidget(definition = {}, intent = null) {
-  const normalizedIntent = normalizeCreationIntent(intent);
-  const placement = resolvePlacementForCreation({
-    type: "dummy",
-    intent: normalizedIntent,
-    requestedSize: definition.size,
-    fallbackPlacement: defaultPlacement(-150, -90, 40, 30),
-  });
-  const finalPosition = definition.position ?? placement.position;
-  const finalPlacement = { ...placement, position: finalPosition };
-  const widget = await registry.instantiate("dummy", {
-    id: definition.id ?? makeId("dummy"),
-    position: finalPosition,
-    size: placement.size,
-    metadata: withCreationProvenance(
-      definition.metadata,
-      normalizedIntent,
-      finalPlacement,
-      "dummy",
-    ),
-    collapsed: definition.collapsed,
-  });
-  runtime.addWidget(widget);
-  updateWidgetUi();
-  return widget;
+async function analyzeWhitespaceForPdfWidget(pdfWidget) {
+  if (!pdfWidget || pdfWidget.type !== "pdf-document" || typeof pdfWidget.getWhitespaceZones !== "function") {
+    return;
+  }
+
+  const existingZones = pdfWidget.getWhitespaceZones();
+  if (Array.isArray(existingZones) && existingZones.length > 0) {
+    updateWhitespaceZoneCount();
+    return;
+  }
+
+  setWhitespaceState("analyzing");
+  try {
+    const manager = await ensureWhitespaceManager();
+    const zones = await manager.analyzeWidget(pdfWidget);
+    setWhitespaceState(zones.length > 0 ? "ready" : "none");
+    updateWhitespaceZoneCount();
+    updateWidgetUi();
+  } catch (error) {
+    console.error("Automatic whitespace analysis failed:", error);
+    setWhitespaceState("failed");
+  }
 }
 
 async function createPdfWidgetFromBytes({
@@ -3014,6 +3275,9 @@ async function createPdfWidgetFromBytes({
   }
 
   updateWidgetUi();
+  window.setTimeout(() => {
+    void analyzeWhitespaceForPdfWidget(widget);
+  }, 30);
   return widget;
 }
 
@@ -3327,18 +3591,8 @@ async function executeCreationIntent(intent) {
     });
   }
 
-  if (normalizedIntent.type === "dummy") {
-    await createDummyWidget({}, normalizedIntent);
-    return true;
-  }
-
   if (normalizedIntent.type === "expanded-area") {
     await createExpandedAreaWidget({}, normalizedIntent);
-    return true;
-  }
-
-  if (normalizedIntent.type === "graph-widget") {
-    await createGraphWidget({}, normalizedIntent);
     return true;
   }
 
@@ -3384,7 +3638,7 @@ async function createExpandedFromWhitespaceZone(pdfWidget, zone) {
         height: Math.max(120, Math.min(320, rect.height)),
       },
       metadata: {
-        title: "Expanded Space",
+        title: "Notes Sheet",
         note: `Linked to ${pdfWidget.metadata.title} (${zone.id})`,
       },
     },
@@ -3419,37 +3673,6 @@ async function handleWhitespaceZoneToggle(pdfWidget, zone) {
     pdfWidget.setWhitespaceZoneLinkedWidget(zone.id, null);
     updateWidgetUi();
   }
-}
-
-async function createGraphWidget(definition = {}, intent = null) {
-  const normalizedIntent = normalizeCreationIntent(intent);
-  await ensureGraphFeatures();
-  const placement = resolvePlacementForCreation({
-    type: "graph-widget",
-    intent: normalizedIntent,
-    requestedSize: definition.size,
-    fallbackPlacement: defaultPlacement(-100, -40, 14, 12),
-  });
-  const finalPosition = definition.position ?? placement.position;
-  const finalPlacement = { ...placement, position: finalPosition };
-
-  const widget = await registry.instantiate("graph-widget", {
-    id: definition.id ?? makeId("graph"),
-    position: finalPosition,
-    size: placement.size,
-    metadata: withCreationProvenance(
-      definition.metadata,
-      normalizedIntent,
-      finalPlacement,
-      "graph-widget",
-    ),
-    dataPayload: definition.dataPayload,
-    collapsed: definition.collapsed,
-  });
-
-  runtime.addWidget(widget);
-  updateWidgetUi();
-  return widget;
 }
 
 async function restoreWorkspaceForActiveContext() {
@@ -3540,9 +3763,6 @@ async function restoreWorkspaceForActiveContext() {
         entry.runtimeState.whitespaceZones.length > 0,
     );
 
-    if (widgetTypes.has("graph-widget")) {
-      await ensureGraphFeatures();
-    }
     if (widgetTypes.has("reference-popup")) {
       await ensureReferencePopupInteractions();
     }
@@ -3819,9 +4039,6 @@ async function importWidgetsFromAnotherContext() {
   const selectedWidgets = pickedIndexes.map((index) => sourceWorkspace.widgets[index]);
   const selectedTypes = new Set(selectedWidgets.map((entry) => entry.type));
 
-  if (selectedTypes.has("graph-widget")) {
-    await ensureGraphFeatures();
-  }
   if (selectedTypes.has("reference-popup")) {
     await ensureReferencePopupInteractions();
   }
@@ -4038,89 +4255,6 @@ function wireBaseEventHandlers() {
     { capture: true },
   );
 
-  instantiateButton?.addEventListener("click", async () => {
-    instantiateButton.disabled = true;
-    instantiateButton.textContent = "Loading...";
-
-    try {
-      await executeCreationIntent(
-        createCreationIntent({
-          type: "dummy",
-          anchor: viewportCenterAnchor(),
-          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
-          createdFrom: "manual",
-        }),
-      );
-    } catch (error) {
-      console.error(error);
-      window.alert(`Failed to instantiate widget: ${error.message}`);
-    } finally {
-      instantiateButton.disabled = false;
-      instantiateButton.textContent = "Instantiate Dummy Widget";
-    }
-  });
-
-  instantiateExpandedButton?.addEventListener("click", async () => {
-    instantiateExpandedButton.disabled = true;
-    instantiateExpandedButton.textContent = "Loading...";
-
-    try {
-      await executeCreationIntent(
-        createCreationIntent({
-          type: "expanded-area",
-          anchor: viewportCenterAnchor(),
-          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
-          createdFrom: "manual",
-        }),
-      );
-    } catch (error) {
-      console.error(error);
-      window.alert(`Failed to instantiate expanded widget: ${error.message}`);
-    } finally {
-      instantiateExpandedButton.disabled = false;
-      instantiateExpandedButton.textContent = "Instantiate Expanded-Area Widget";
-    }
-  });
-
-  startSnipButton?.addEventListener("click", async () => {
-    startSnipButton.disabled = true;
-    try {
-      const tool = await ensureSnipTool();
-      if (tool.isArmed()) {
-        tool.disarm();
-      } else {
-        tool.arm();
-      }
-    } catch (error) {
-      console.error(error);
-      window.alert(`Snip tool failed: ${error.message}`);
-    } finally {
-      startSnipButton.disabled = false;
-    }
-  });
-
-  instantiateGraphButton?.addEventListener("click", async () => {
-    instantiateGraphButton.disabled = true;
-    instantiateGraphButton.textContent = "Loading...";
-
-    try {
-      await executeCreationIntent(
-        createCreationIntent({
-          type: "graph-widget",
-          anchor: viewportCenterAnchor(),
-          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
-          createdFrom: "manual",
-        }),
-      );
-    } catch (error) {
-      console.error(error);
-      window.alert(`Graph widget failed: ${error.message}`);
-    } finally {
-      instantiateGraphButton.disabled = false;
-      instantiateGraphButton.textContent = "Instantiate Graph Widget";
-    }
-  });
-
   toggleToolsButton?.addEventListener("click", () => {
     toolsPanelOpen = !toolsPanelOpen;
     window.localStorage.setItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
@@ -4303,54 +4437,8 @@ function wireBaseEventHandlers() {
     });
   });
 
-  detectWhitespaceButton?.addEventListener("click", async () => {
-    if (!(detectWhitespaceButton instanceof HTMLButtonElement)) {
-      return;
-    }
-
-    const pdfWidget = preferredPdfWidget();
-    if (!pdfWidget) {
-      window.alert("Import a PDF before detecting whitespace.");
-      return;
-    }
-
-    detectWhitespaceButton.disabled = true;
-    detectWhitespaceButton.textContent = "Analyzing...";
-    setWhitespaceState("analyzing");
-
-    try {
-      const manager = await ensureWhitespaceManager();
-      const zones = await manager.analyzeWidget(pdfWidget);
-      setWhitespaceState(zones.length > 0 ? "ready" : "none");
-      updateWhitespaceZoneCount();
-      updateWidgetUi();
-    } catch (error) {
-      console.error(error);
-      setWhitespaceState("failed");
-      window.alert(`Whitespace analysis failed: ${error.message}`);
-    } finally {
-      detectWhitespaceButton.disabled = false;
-      detectWhitespaceButton.textContent = "Detect Whitespace";
-    }
-  });
-
-  importPdfButton?.addEventListener("click", () => {
-    void executeCreationIntent(
-      createCreationIntent({
-        type: "pdf-document",
-        anchor: viewportCenterAnchor(),
-        sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
-        createdFrom: "manual",
-      }),
-    );
-  });
-
   pdfFileInput?.addEventListener("change", async (event) => {
     if (!(event.target instanceof HTMLInputElement)) {
-      return;
-    }
-
-    if (!(importPdfButton instanceof HTMLButtonElement)) {
       return;
     }
 
@@ -4359,9 +4447,6 @@ function wireBaseEventHandlers() {
       pendingPdfImportIntent = null;
       return;
     }
-
-    importPdfButton.disabled = true;
-    importPdfButton.textContent = "Importing...";
 
     try {
       const fallbackIntent = createCreationIntent({
@@ -4385,8 +4470,6 @@ function wireBaseEventHandlers() {
       window.alert(`PDF import failed: ${error.message}`);
     } finally {
       pendingPdfImportIntent = null;
-      importPdfButton.disabled = false;
-      importPdfButton.textContent = "Import PDF";
       event.target.value = "";
     }
   });
@@ -4613,22 +4696,11 @@ function wireContextMenu() {
     canvas,
     menuElement: widgetContextMenu,
     runtime,
-    onCreateExpanded: (sourceWidget) =>
-      executeCreationIntent(
-        createCreationIntent({
-          type: "expanded-area",
-          anchor: anchorBesideWidget(sourceWidget ?? null),
-          sourceWidgetId: sourceWidget?.id ?? null,
-          createdFrom: "manual",
-        }),
-      ),
-    onSaveReferenceToLibrary: async (widget) => {
-      const saved = await saveReferenceWidgetToNotebookLibrary(widget);
-      if (!saved) {
-        window.alert("Only reference popups can be saved to the notebook library.");
-      } else {
-        updateWidgetUi();
-      }
+    onCopyWidget: (widget) => copyWidgetFromContextMenu(widget),
+    onRenameWidget: (widget) => renameWidgetFromContextMenu(widget),
+    onToggleLibrary: (widget) => toggleWidgetLibraryFromContextMenu(widget),
+    onShowWidgetInfo: (widget) => {
+      window.alert(formatWidgetInfo(widget));
     },
     onWidgetMutated: () => updateWidgetUi(),
   });

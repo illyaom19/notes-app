@@ -1,12 +1,37 @@
-const LONG_PRESS_MS = 480;
+const LONG_PRESS_MS = 520;
 const MOVE_THRESHOLD_PX = 10;
+
+function isLibraryEligible(widget) {
+  if (!widget) {
+    return false;
+  }
+  return widget.type === "reference-popup" || widget.type === "pdf-document";
+}
+
+function isWidgetInLibrary(widget) {
+  if (!widget) {
+    return false;
+  }
+
+  if (widget.type === "reference-popup") {
+    return typeof widget.metadata?.librarySourceId === "string" && widget.metadata.librarySourceId.trim();
+  }
+
+  if (widget.type === "pdf-document") {
+    return typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim();
+  }
+
+  return false;
+}
 
 export function createWidgetContextMenu({
   canvas,
   menuElement,
   runtime,
-  onCreateExpanded,
-  onSaveReferenceToLibrary,
+  onCopyWidget,
+  onRenameWidget,
+  onToggleLibrary,
+  onShowWidgetInfo,
   onWidgetMutated,
 }) {
   if (!menuElement) {
@@ -17,10 +42,18 @@ export function createWidgetContextMenu({
   let pointerStart = null;
   let pendingPointerId = null;
   let activeWidgetId = null;
+  const activeTouchIds = new Set();
+  let lastPointerDown = {
+    pointerType: null,
+    pointerId: null,
+    button: null,
+    at: 0,
+  };
 
-  const createButton = menuElement.querySelector('[data-action="create-expanded"]');
-  const saveReferenceButton = menuElement.querySelector('[data-action="save-reference-library"]');
-  const toggleButton = menuElement.querySelector('[data-action="toggle-collapse"]');
+  const copyButton = menuElement.querySelector('[data-action="copy-widget"]');
+  const renameButton = menuElement.querySelector('[data-action="rename-widget"]');
+  const libraryButton = menuElement.querySelector('[data-action="toggle-library"]');
+  const infoButton = menuElement.querySelector('[data-action="widget-info"]');
   const removeButton = menuElement.querySelector('[data-action="remove-widget"]');
 
   const closeMenu = () => {
@@ -38,23 +71,36 @@ export function createWidgetContextMenu({
   };
 
   const openMenuAt = (screenX, screenY, widget) => {
-    activeWidgetId = widget?.id ?? null;
-
-    const canActOnWidget = Boolean(widget);
-    const canSaveReference = widget?.type === "reference-popup";
-    if (toggleButton) {
-      toggleButton.disabled = !canActOnWidget;
-      toggleButton.textContent = widget?.collapsed ? "Expand Widget" : "Collapse Widget";
+    if (!widget) {
+      closeMenu();
+      return;
     }
-    if (saveReferenceButton) {
-      saveReferenceButton.disabled = !canSaveReference;
+
+    activeWidgetId = widget.id;
+
+    const canActOnWidget = true;
+    const canLibrary = isLibraryEligible(widget);
+    const inLibrary = canLibrary && isWidgetInLibrary(widget);
+
+    if (copyButton) {
+      copyButton.disabled = !canActOnWidget;
+    }
+    if (renameButton) {
+      renameButton.disabled = !canActOnWidget;
+    }
+    if (libraryButton) {
+      libraryButton.disabled = !canLibrary;
+      libraryButton.textContent = inLibrary ? "Remove From Library" : "Add To Library";
+    }
+    if (infoButton) {
+      infoButton.disabled = !canActOnWidget;
     }
     if (removeButton) {
       removeButton.disabled = !canActOnWidget;
     }
 
-    const maxX = window.innerWidth - 240;
-    const maxY = window.innerHeight - 160;
+    const maxX = window.innerWidth - 280;
+    const maxY = window.innerHeight - 220;
     const nextX = Math.max(8, Math.min(screenX + 8, maxX));
     const nextY = Math.max(8, Math.min(screenY + 8, maxY));
 
@@ -73,21 +119,35 @@ export function createWidgetContextMenu({
   };
 
   const startLongPress = (event) => {
-    if (event.pointerType !== "mouse") {
+    lastPointerDown = {
+      pointerType: event.pointerType ?? null,
+      pointerId: event.pointerId ?? null,
+      button: typeof event.button === "number" ? event.button : null,
+      at: Date.now(),
+    };
+
+    if (event.pointerType !== "touch" || event.button !== 0) {
       return;
     }
 
-    if (event.button !== 0) {
+    activeTouchIds.add(event.pointerId);
+    if (activeTouchIds.size > 1) {
+      clearLongPress();
       return;
     }
 
     const targetWidget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
+    if (!targetWidget) {
+      clearLongPress();
+      return;
+    }
+
     pointerStart = {
       x: event.clientX,
       y: event.clientY,
       screenX: event.clientX,
       screenY: event.clientY,
-      widgetId: targetWidget?.id ?? null,
+      widgetId: targetWidget.id,
     };
     pendingPointerId = event.pointerId;
 
@@ -105,6 +165,11 @@ export function createWidgetContextMenu({
       return;
     }
 
+    if (event.pointerType === "touch" && activeTouchIds.size > 1) {
+      clearLongPress();
+      return;
+    }
+
     const moved = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y);
     if (moved >= MOVE_THRESHOLD_PX) {
       clearLongPress();
@@ -112,19 +177,46 @@ export function createWidgetContextMenu({
   };
 
   const endLongPress = (event) => {
+    if (event.pointerType === "touch") {
+      activeTouchIds.delete(event.pointerId);
+    }
+
     if (pendingPointerId === event.pointerId) {
       clearLongPress();
     }
   };
 
   const handleContextMenu = (event) => {
+    const recentMouseRightClick =
+      Date.now() - lastPointerDown.at < 700 &&
+      lastPointerDown.pointerType === "mouse" &&
+      lastPointerDown.button === 2;
+
+    // Prevent native OS context menus on touch/pen long press.
     event.preventDefault();
-    const widget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
+    if (!recentMouseRightClick) {
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
+    const widget = runtime.pickWidgetAtScreenPoint(offsetX, offsetY);
+    if (!widget) {
+      closeMenu();
+      return;
+    }
+
     openMenuAt(event.clientX, event.clientY, widget);
   };
 
   const handleMenuClick = async (event) => {
-    const button = event.target.closest("button[data-action]");
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const button = target.closest("button[data-action]");
     if (!button) {
       return;
     }
@@ -132,30 +224,39 @@ export function createWidgetContextMenu({
     const action = button.dataset.action;
     const activeWidget = getActiveWidget();
 
-    if (action === "create-expanded") {
-      await onCreateExpanded(activeWidget ?? null);
+    if (action === "copy-widget" && activeWidget) {
+      await onCopyWidget?.(activeWidget);
       closeMenu();
       return;
     }
 
-    if (action === "toggle-collapse" && activeWidget) {
-      activeWidget.setCollapsed(!activeWidget.collapsed);
-      onWidgetMutated();
+    if (action === "rename-widget" && activeWidget) {
+      await onRenameWidget?.(activeWidget);
       closeMenu();
       return;
     }
 
-    if (action === "save-reference-library" && activeWidget?.type === "reference-popup") {
-      await onSaveReferenceToLibrary?.(activeWidget);
+    if (action === "toggle-library" && activeWidget) {
+      await onToggleLibrary?.(activeWidget);
+      closeMenu();
+      return;
+    }
+
+    if (action === "widget-info" && activeWidget) {
+      await onShowWidgetInfo?.(activeWidget);
       closeMenu();
       return;
     }
 
     if (action === "remove-widget" && activeWidget) {
       runtime.removeWidgetById(activeWidget.id);
-      onWidgetMutated();
+      onWidgetMutated?.();
       closeMenu();
     }
+  };
+
+  const onMenuClick = (event) => {
+    void handleMenuClick(event);
   };
 
   const closeIfOutside = (event) => {
@@ -170,9 +271,7 @@ export function createWidgetContextMenu({
     closeMenu();
   };
 
-  menuElement.addEventListener("click", (event) => {
-    void handleMenuClick(event);
-  });
+  menuElement.addEventListener("click", onMenuClick);
   canvas.addEventListener("pointerdown", startLongPress);
   canvas.addEventListener("pointermove", maybeCancelLongPress);
   canvas.addEventListener("pointerup", endLongPress);
@@ -187,6 +286,7 @@ export function createWidgetContextMenu({
     dispose() {
       clearLongPress();
       closeMenu();
+      menuElement.removeEventListener("click", onMenuClick);
       canvas.removeEventListener("pointerdown", startLongPress);
       canvas.removeEventListener("pointermove", maybeCancelLongPress);
       canvas.removeEventListener("pointerup", endLongPress);

@@ -1213,12 +1213,10 @@ body[data-ui-mode="production"] .topbar h1 {
   color: #0f4569;
 }
 
-.creation-menu[data-mode="radial"] button:nth-child(1) { left: 50%; top: 14%; }
-.creation-menu[data-mode="radial"] button:nth-child(2) { left: 79%; top: 29%; }
-.creation-menu[data-mode="radial"] button:nth-child(3) { left: 86%; top: 56%; }
-.creation-menu[data-mode="radial"] button:nth-child(4) { left: 72%; top: 79%; }
-.creation-menu[data-mode="radial"] button:nth-child(5) { left: 28%; top: 79%; }
-.creation-menu[data-mode="radial"] button:nth-child(6) { left: 14%; top: 56%; }
+.creation-menu[data-mode="radial"] button:nth-child(1) { left: 50%; top: 17%; }
+.creation-menu[data-mode="radial"] button:nth-child(2) { left: 82%; top: 50%; }
+.creation-menu[data-mode="radial"] button:nth-child(3) { left: 50%; top: 83%; }
+.creation-menu[data-mode="radial"] button:nth-child(4) { left: 18%; top: 50%; }
 
 @media (max-width: 940px) {
   .topbar {

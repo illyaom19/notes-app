@@ -168,6 +168,13 @@ export function createWidgetCreationController({
         return true;
       }
 
+      const targetWidget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
+      if (targetWidget) {
+        clearHoldTimer();
+        pointerState = null;
+        return false;
+      }
+
       pointerState = {
         pointerId: event.pointerId,
         startClientX: event.clientX,
@@ -264,7 +271,12 @@ export function createWidgetCreationController({
   const detachInput = runtime.registerInputHandler(inputManager);
 
   const onMenuClick = (event) => {
-    const button = event.target.closest("button[data-create-type]");
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const button = target.closest("button[data-create-type]");
     if (!button || !pendingAnchor) {
       return;
     }
@@ -337,18 +349,28 @@ export function createWidgetCreationController({
   };
 
   const onCanvasContextMenu = (event) => {
-    const pointerType = event.pointerType ?? null;
-    const fromMousePointer = pointerType === "mouse";
     const recentMouseRightClick =
       Date.now() - lastPointerDown.at < 700 &&
       lastPointerDown.pointerType === "mouse" &&
       lastPointerDown.button === 2;
 
-    if (!fromMousePointer && !recentMouseRightClick) {
+    // Always suppress native context menus (touch long-press, stylus press-hold, etc).
+    event.preventDefault();
+
+    if (!recentMouseRightClick) {
       return;
     }
 
-    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
+    const targetWidget = runtime.pickWidgetAtScreenPoint(offsetX, offsetY);
+
+    // Right-click on a widget should be handled by the widget context menu.
+    if (targetWidget) {
+      return;
+    }
+
     event.stopImmediatePropagation();
     closeMenu();
     openFromContextMenu(event, runtime.camera);

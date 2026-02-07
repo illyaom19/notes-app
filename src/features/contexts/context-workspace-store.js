@@ -6,6 +6,7 @@ const { workspace: WORKSPACE_SCHEMA } = STORAGE_SCHEMA_REGISTRY;
 const STORAGE_PREFIX = WORKSPACE_SCHEMA.keyPrefix;
 const LEGACY_GRAPH_KEY = "notes-app.graph.widgets.v1";
 const WORKSPACE_SCHEMA_VERSION = WORKSPACE_SCHEMA.schemaVersion;
+const SUPPORTED_WIDGET_TYPES = new Set(["expanded-area", "reference-popup", "pdf-document"]);
 
 const WORKSPACE_MIGRATIONS = {
   2: (candidate) => candidate,
@@ -613,7 +614,7 @@ function sanitizeSerializedWidget(candidate, contextId) {
 
   const id = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : null;
   const type = typeof candidate.type === "string" && candidate.type.trim() ? candidate.type : null;
-  if (!id || !type) {
+  if (!id || !type || !SUPPORTED_WIDGET_TYPES.has(type)) {
     return null;
   }
 
@@ -692,23 +693,6 @@ function sanitizeSerializedWidget(candidate, contextId) {
 
     widget.metadata.popupMetadata = normalizePopupMetadata(widget.metadata.popupMetadata, widget.metadata.title);
     widget.metadata.title = widget.metadata.popupMetadata.title;
-    return widget;
-  }
-
-  if (widget.type === "graph-widget") {
-    const dataPayload = asPlainObject(candidate.dataPayload);
-    widget.dataPayload.equation =
-      typeof dataPayload.equation === "string" && dataPayload.equation
-        ? dataPayload.equation
-        : "sin(x)";
-
-    const view = asPlainObject(dataPayload.view);
-    widget.dataPayload.view = {
-      minX: toSafeNumber(view.minX, -10),
-      maxX: toSafeNumber(view.maxX, 10),
-      minY: toSafeNumber(view.minY, -6),
-      maxY: toSafeNumber(view.maxY, 6),
-    };
     return widget;
   }
 
@@ -888,33 +872,6 @@ function sanitizeWorkspace(candidate, contextId) {
   };
 }
 
-function sanitizeLegacyGraphs(candidate, contextId) {
-  if (!Array.isArray(candidate)) {
-    return [];
-  }
-
-  return candidate
-    .map((entry) => {
-      if (!entry || typeof entry !== "object" || entry.type !== "graph-widget") {
-        return null;
-      }
-
-      return sanitizeSerializedWidget(
-        {
-          id: entry.id,
-          type: "graph-widget",
-          position: entry.position,
-          size: entry.size,
-          collapsed: entry.collapsed,
-          metadata: entry.metadata,
-          dataPayload: entry.dataPayload,
-        },
-        contextId,
-      );
-    })
-    .filter((entry) => entry !== null);
-}
-
 function serializeWidget(widget, contextId, { assetManager = null, refsByAssetId = null } = {}) {
   if (!widget || typeof widget !== "object") {
     return null;
@@ -1010,11 +967,6 @@ function serializeWidget(widget, contextId, { assetManager = null, refsByAssetId
     return sanitizeSerializedWidget(base, contextId);
   }
 
-  if (base.type === "graph-widget") {
-    base.dataPayload = { ...asPlainObject(state.dataPayload) };
-    return sanitizeSerializedWidget(base, contextId);
-  }
-
   return sanitizeSerializedWidget(base, contextId);
 }
 
@@ -1090,23 +1042,17 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
           console.warn(`[storage] failed to read workspace ${contextId}, reset to defaults.`, error);
         },
       });
+      const rawWidgets = Array.isArray(loaded?.data?.widgets) ? loaded.data.widgets : [];
+      const hasUnsupportedWidgetTypes = rawWidgets.some((entry) => {
+        const type = entry && typeof entry.type === "string" ? entry.type : null;
+        return !type || !SUPPORTED_WIDGET_TYPES.has(type);
+      });
       workspace = sanitizeWorkspace(loaded.data, contextId);
 
       try {
         const legacyRaw = storage.getItem(LEGACY_GRAPH_KEY);
         if (legacyRaw) {
-          const parsedLegacy = JSON.parse(legacyRaw);
-          const legacyWidgets = sanitizeLegacyGraphs(parsedLegacy, contextId);
-          const existingIds = new Set(workspace.widgets.map((entry) => entry.id));
-          const additions = legacyWidgets.filter((entry) => !existingIds.has(entry.id));
-          if (additions.length > 0) {
-            workspace = {
-              ...workspace,
-              widgets: [...workspace.widgets, ...additions],
-              updatedAt: nowIso(),
-            };
-            this.saveWorkspace(workspace);
-          }
+          JSON.parse(legacyRaw);
           storage.removeItem(LEGACY_GRAPH_KEY);
         }
       } catch (_error) {
@@ -1116,7 +1062,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       const canonicalized = canonicalizeWorkspaceAssets(workspace, contextId, assetManager);
       workspace = sanitizeWorkspace(canonicalized.workspace, contextId);
       assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
-      if (canonicalized.changed) {
+      if (canonicalized.changed || hasUnsupportedWidgetTypes) {
         this.saveWorkspace(workspace);
       }
 
@@ -1261,13 +1207,6 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
           contentType: normalized.dataPayload.contentType,
           citation: normalized.dataPayload.citation ? { ...normalized.dataPayload.citation } : null,
           researchCaptureId: normalized.dataPayload.researchCaptureId,
-        };
-      }
-
-      if (normalized.type === "graph-widget") {
-        definition.dataPayload = {
-          equation: normalized.dataPayload.equation,
-          view: { ...normalized.dataPayload.view },
         };
       }
 

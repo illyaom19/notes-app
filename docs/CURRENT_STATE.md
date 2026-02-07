@@ -10,11 +10,9 @@
   - `src/core/canvas/`
   - `src/core/widgets/`
 - Implemented widgets:
-  - Dummy: `src/widgets/dummy/`
-  - Expanded area: `src/widgets/expanded-area/`
+  - Expanded area ("Notes Sheet"): `src/widgets/expanded-area/`
   - PDF document (stacked pages + tile virtualization + snapshots): `src/widgets/pdf/`
   - Reference popup: `src/widgets/reference-popup/`
-  - Graph widget (interactive + snapshot): `src/widgets/graph/`
 - Implemented feature modules:
   - Ink engine: `src/features/ink/`
   - Document manager: `src/features/documents/document-manager.js`
@@ -23,7 +21,6 @@
   - Universal widget interaction manager: `src/features/widget-system/widget-interaction-manager.js`
   - Reference popup interactions + snip tool: `src/features/reference-popups/`
   - Whitespace analyzer/manager: `src/features/whitespace/`
-  - Graph interactions: `src/features/graph/`
   - Research panel capture flow (lazy-loaded): `src/features/research/research-panel.js`
   - Search index pipeline + search panel (lazy-loaded): `src/features/search/`
   - Pen gesture recognizer + bindings: `src/features/gestures/pen-gestures.js`
@@ -112,11 +109,12 @@
   - Touch-and-hold radial creation is primary (`src/features/widget-system/widget-creation-controller.js`).
   - Creation menu supports drag-to-highlight and release-to-select.
   - Creation menu includes notebook-library insertion (`library-reference`).
+  - Production creation catalog is limited to `expanded-area`, `reference-popup`, `library-reference`, and `pdf-document`.
 - Notebook library now follows:
   - Shared notebook reference library store at `notes-app.notebook.library.v1`.
   - Shared notebook document source library store at `notes-app.notebook.documents.v1`.
   - Reference and document library entries now support rename/delete APIs.
-  - Reference popup long-press menu supports `Save Ref To Notebook`.
+  - Widget context menu supports `Copy`, `Rename`, `Add/Remove Library`, `Info`, and `Delete`.
   - Linked instances carry `metadata.librarySourceId` and sync metadata-only from the notebook library.
   - PDF creation flow now offers:
     - Import new PDF into notebook source library, then instantiate in current section.
@@ -145,7 +143,7 @@
   - Touch radial menu opens only from a long stationary single-touch press.
   - Multi-touch immediately cancels hold-to-open, preventing pinch/pan false positives.
   - Raw touch pointer movement now cancels pending hold-open even when runtime is handling camera pan/pinch, preventing false positives during navigation.
-  - Desktop right-click opens radial menu for mouse pointers only; stylus-origin context menus are excluded.
+  - Desktop right-click opens radial creation on empty canvas and opens widget context actions when clicking an existing widget.
 - Search UX now follows:
   - Search results are grouped by current section and other sections in the active notebook.
   - Search panel supports non-selectable group headers.
@@ -166,6 +164,8 @@
 4. Decide whether to fully remove hidden/deferred research panel wiring or retain compatibility mode.
 
 ## Verification Status
+- `node --check /home/illya/io_dev/notes-app/src/main.js /home/illya/io_dev/notes-app/src/features/widget-system/long-press-menu.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-creation-controller.js /home/illya/io_dev/notes-app/src/features/contexts/context-workspace-store.js` passed.
+- `node --test /home/illya/io_dev/notes-app/tests` passed (including updated `tests/storage/context-workspace-store-assets.test.mjs`).
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.
 - `node --test tests/storage/*.test.mjs` passed.
 - `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed.

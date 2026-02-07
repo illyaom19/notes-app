@@ -14,7 +14,7 @@ function intersects(a, b) {
 
 function shortName(name) {
   if (!name) {
-    return "PDF";
+    return "Document";
   }
   return name.length > 20 ? `${name.slice(0, 17)}...` : name;
 }
@@ -356,7 +356,7 @@ export class PdfDocumentWidget extends WidgetBase {
     fillPill(ctx, chipX, chipY, chipW, chipH, zone.collapsed ? "#2d5f84" : "#337eab");
     ctx.fillStyle = "#f1f7fb";
     ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(zone.collapsed ? "v" : "^", chipX + 6 * camera.zoom, chipY + 13 * camera.zoom);
+    ctx.fillText(zone.collapsed ? "+" : "-", chipX + 6 * camera.zoom, chipY + 13 * camera.zoom);
 
     const chipWorld = camera.screenToWorld(chipX, chipY);
     this._whitespaceHitRegions.push({
@@ -459,14 +459,14 @@ export class PdfDocumentWidget extends WidgetBase {
     if (this.loading) {
       ctx.fillStyle = "#1e3548";
       ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("PDF", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
+      ctx.fillText("Loading document...", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
       return;
     }
 
     if (this.loadError) {
       ctx.fillStyle = "#9b2b2b";
       ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("PDF x", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
+      ctx.fillText("Document unavailable", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
       return;
     }
 
@@ -475,7 +475,7 @@ export class PdfDocumentWidget extends WidgetBase {
       return;
     }
 
-    const docLabel = `${shortName(this.metadata.title)} • ${this.pageCount}p`;
+    const docLabel = `${shortName(this.metadata.title)} • ${this.pageCount} pages`;
     ctx.fillStyle = "#1e3548";
     ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
     ctx.fillText(docLabel, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
@@ -537,8 +537,8 @@ export class PdfDocumentWidget extends WidgetBase {
     if (firstVisiblePage !== null && lastVisiblePage !== null) {
       const visibleLabel =
         firstVisiblePage === lastVisiblePage
-          ? `v ${firstVisiblePage}`
-          : `v ${firstVisiblePage}-${lastVisiblePage}`;
+          ? `Page ${firstVisiblePage}`
+          : `Pages ${firstVisiblePage}-${lastVisiblePage}`;
 
       ctx.fillStyle = "#5a6f83";
       ctx.font = `${Math.max(9, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
@@ -552,7 +552,7 @@ export class PdfDocumentWidget extends WidgetBase {
 
     ctx.fillStyle = "#1e3548";
     ctx.font = `${Math.max(10, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(`PDF ^ ${this.pageCount}p`, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
+    ctx.fillText(`${shortName(this.metadata.title)} • ${this.pageCount} pages`, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
 
     const inset = 10;
     const thumbX = frame.screen.x + inset;

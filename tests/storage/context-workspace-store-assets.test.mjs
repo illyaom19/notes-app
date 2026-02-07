@@ -165,3 +165,61 @@ test("workspace store persists section suggestions", () => {
     restoreEnv();
   }
 });
+
+test("workspace load drops unsupported legacy widget types and rewrites storage", () => {
+  const storage = createMemoryStorage();
+  const restoreEnv = installBrowserEnv(storage);
+
+  try {
+    const store = createContextWorkspaceStore({ storage });
+    const contextId = "ctx-prune-legacy";
+    const envelope = {
+      schemaVersion: WORKSPACE_SCHEMA.schemaVersion,
+      data: emptyWorkspace(contextId, [
+        {
+          id: "legacy-graph-1",
+          type: "graph-widget",
+          position: { x: 0, y: 0 },
+          size: { width: 240, height: 180 },
+          collapsed: false,
+          metadata: { title: "Legacy Graph" },
+          dataPayload: { equation: "sin(x)" },
+          runtimeState: {},
+        },
+        {
+          id: "legacy-dummy-1",
+          type: "dummy",
+          position: { x: 20, y: 20 },
+          size: { width: 220, height: 160 },
+          collapsed: false,
+          metadata: { title: "Legacy Dummy" },
+          dataPayload: {},
+          runtimeState: {},
+        },
+        {
+          id: "sheet-1",
+          type: "expanded-area",
+          position: { x: 48, y: 38 },
+          size: { width: 320, height: 220 },
+          collapsed: false,
+          metadata: { title: "Notes Sheet" },
+          dataPayload: {},
+          runtimeState: {},
+        },
+      ]),
+    };
+    storage.setItem(workspaceKey(contextId), JSON.stringify(envelope));
+
+    const loaded = store.loadWorkspace(contextId);
+    assert.equal(loaded.widgets.length, 1);
+    assert.equal(loaded.widgets[0].id, "sheet-1");
+    assert.equal(loaded.widgets[0].type, "expanded-area");
+
+    const rewritten = JSON.parse(storage.getItem(workspaceKey(contextId)));
+    assert.equal(rewritten.data.widgets.length, 1);
+    assert.equal(rewritten.data.widgets[0].id, "sheet-1");
+    assert.equal(rewritten.data.widgets[0].type, "expanded-area");
+  } finally {
+    restoreEnv();
+  }
+});
