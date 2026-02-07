@@ -74,6 +74,7 @@ export class ReferencePopupWidget extends WidgetBase {
     this.imageDataUrl = definition.dataPayload?.imageDataUrl ?? null;
     this._image = null;
     this.sourceLabel = definition.dataPayload?.sourceLabel ?? "Snip";
+    this.citation = definition.metadata?.citation ?? null;
 
     if (this.imageDataUrl) {
       this._image = new Image();
@@ -244,6 +245,14 @@ export class ReferencePopupWidget extends WidgetBase {
     } else {
       ctx.fillStyle = "#50697f";
       ctx.fillText("No capture", screen.x + 16, bodyY + 24);
+    }
+
+    if (this.citation && typeof this.citation.url === "string") {
+      const citationLabel = `${this.citation.sourceTitle ?? "Source"} · ${this.citation.url}`;
+      const clipped = citationLabel.length > 64 ? `${citationLabel.slice(0, 61)}...` : citationLabel;
+      ctx.fillStyle = "#34566e";
+      ctx.font = `${Math.max(8, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillText(clipped, screen.x + 16, screen.y + height - 12 * camera.zoom);
     }
 
     const resizeRect = this._resizeHandleRect();

@@ -18,6 +18,7 @@ export class CanvasRuntime {
     this._overlayLayers = [];
     this._selectedWidgetId = null;
     this._focusedWidgetId = null;
+    this._renderMode = "normal";
 
     if (!this.ctx) {
       throw new Error("Canvas 2D context unavailable.");
@@ -132,6 +133,14 @@ export class CanvasRuntime {
 
   getFocusedWidgetId() {
     return this._focusedWidgetId;
+  }
+
+  setRenderMode(mode) {
+    this._renderMode = mode === "peek" ? "peek" : "normal";
+  }
+
+  getRenderMode() {
+    return this._renderMode;
   }
 
   _bindEvents() {
@@ -376,9 +385,11 @@ export class CanvasRuntime {
     this.ctx.clearRect(0, 0, width, height);
     this._drawGrid(width, height);
 
+    const peekMode = this._renderMode === "peek";
+
     for (const widget of this.widgets) {
       widget.update(dt);
-      if (widget.collapsed && typeof widget.renderSnapshot === "function") {
+      if ((peekMode || widget.collapsed) && typeof widget.renderSnapshot === "function") {
         widget.renderSnapshot(this.ctx, this.camera, renderContext);
       } else {
         widget.render(this.ctx, this.camera, renderContext);
@@ -390,7 +401,9 @@ export class CanvasRuntime {
       if (typeof layer.update === "function") {
         layer.update(dt);
       }
-      if (typeof layer.render === "function") {
+      if (peekMode && typeof layer.renderPeek === "function") {
+        layer.renderPeek(this.ctx, this.camera, renderContext);
+      } else if (!peekMode && typeof layer.render === "function") {
         layer.render(this.ctx, this.camera, renderContext);
       }
     }

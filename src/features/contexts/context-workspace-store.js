@@ -1,3 +1,6 @@
+import { createAssetManager } from "../storage/asset-manager.js";
+import { readEnvelope, SCHEMA_VERSION, wrapEnvelope } from "../storage/schema-storage.js";
+
 const STORAGE_PREFIX = "notes-app.context.workspace.v1.";
 const LEGACY_GRAPH_KEY = "notes-app.graph.widgets.v1";
 
@@ -502,6 +505,8 @@ function copyDocumentBinding(entry) {
 }
 
 export function createContextWorkspaceStore({ storage = window.localStorage } = {}) {
+  const assetManager = createAssetManager({ storage });
+
   return {
     loadWorkspace(contextId) {
       const key = keyForContext(contextId);
@@ -509,9 +514,12 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
 
       try {
         const raw = storage.getItem(key);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          workspace = sanitizeWorkspace(parsed, contextId);
+        const envelope = readEnvelope(raw);
+        if (envelope?.data) {
+          workspace = sanitizeWorkspace(envelope.data, contextId);
+          if (envelope.schemaVersion < SCHEMA_VERSION) {
+            storage.setItem(key, JSON.stringify(wrapEnvelope(workspace)));
+          }
         }
       } catch (_error) {
         workspace = defaultWorkspace(contextId);
@@ -568,7 +576,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         contextId,
       );
 
-      storage.setItem(keyForContext(contextId), JSON.stringify(normalized));
+      storage.setItem(keyForContext(contextId), JSON.stringify(wrapEnvelope(normalized)));
       return true;
     },
 
@@ -585,6 +593,8 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         .listWidgets()
         .map((widget) => serializeWidget(widget, contextId))
         .filter((entry) => entry !== null);
+
+      assetManager.recalculateFromWidgets(serializedWidgets);
 
       return this.saveWorkspace({
         contextId,
@@ -649,6 +659,10 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       }
 
       return definition;
+    },
+
+    getAssetCatalog() {
+      return assetManager.getCatalog();
     },
 
     cloneForImport(serializedWidget, targetContextId) {

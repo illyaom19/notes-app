@@ -1,8 +1,8 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 13 (`docs/SPRINT_13_Advanced_Popup_Behavior_and_Metadata.md`) has now been implemented onto current `main`.
-- Sprint 10 and Sprint 12 remain implemented; Sprint 11 remains skipped per directive.
+- Sprints 14-18 are now implemented on this branch in one integrated pass and aligned against `docs/FINAL_DESIGN.md` for production-readiness polish.
+- Sprint 10/12/13 remain implemented; Sprint 11 remains skipped per directive.
 
 ## What Exists Today
 - Core runtime and modular widget architecture:
@@ -26,59 +26,34 @@
   - Context metadata store: `src/features/contexts/context-store.js`
   - Context-scoped workspace persistence: `src/features/contexts/context-workspace-store.js`
   - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
+  - Research panel/citation capture (lazy-loaded): `src/features/research/research-panel.js`
+  - Search indexing and navigation: `src/features/search/search-index.js`
+  - Pen gesture preference manager: `src/features/input/gesture-manager.js`
+  - UI mode + onboarding hint services: `src/features/ui/ui-mode.js`, `src/features/ui/onboarding.js`
+  - Schema envelope + asset catalog lifecycle: `src/features/storage/schema-storage.js`, `src/features/storage/asset-manager.js`
 
 ## In Progress
-- No active blocker.
-- Sprint 13 popup behavior and metadata are now active:
-  - Popup identity metadata model persisted in widget metadata (`popupMetadata`).
-  - Header identity labels/badges rendered for reference popups.
-  - Stylus-aware avoidance nudges enabled with motion preference gating.
-  - UI toggles for `avoidStylus` and `motionReduced` persisted via local storage.
+- None.
 
 ## Blockers
 - None.
 
 ## Decisions Made
-- All heavy paths remain lazy-loaded via dynamic import/registry.
-- Sprint 8 persistence will be partitioned by context id to satisfy scope isolation.
-- Active context will be resolved before restoring workspace widgets at boot.
-- Legacy/missing context metadata will be normalized into the default context during load.
-- Context-scoped widget/document state is persisted via `notes-app.context.workspace.v1.<contextId>`.
-- Cross-context import regenerates widget ids to avoid conflicts and preserves document bindings where possible.
-- Sprint 9 interaction model will standardize move/resize/collapse affordances across widget types via one shared manager.
-- Stylus will remain ink-only; widget manipulation will be touch/mouse driven.
-- Runtime pointer routing now dispatches touch events to widget handlers before camera pan/pinch fallback.
-- Shared move/resize/collapse is centralized in `WidgetInteractionManager`; specialized handlers keep only widget-specific actions.
-- Widget serializable state now carries `interactionFlags` capability contract.
-- Canvas runtime now renders ink layers after widgets so stylus strokes remain visible on expanded-space, reference popup, and PDF widget surfaces.
-- PDF whitespace collapse now uses segment-based tile mapping so only collapsed whitespace regions compress while surrounding PDF content remains unscaled.
-- Ink now persists with layer semantics:
-  - Global layer strokes stay in world space.
-  - PDF layer strokes stay attached to PDF widgets.
-  - Widget layer strokes stay attached to widgets and collapse with collapsed widget bounds.
-- Document registry is now independent from runtime widgets and persisted with explicit bindings:
-  - `DocumentEntry`: `{ id, contextId, title, sourceType, widgetId, openedAt, pinned }`
-  - `DocumentBindings`: `{ documentId, defaultReferenceIds, formulaSheetIds }`
-- Active document focus brings the document widget plus its bound references/formula widgets to front.
-- Workspace schema now persists `documentBindings` with backward compatibility migration from legacy `referenceWidgetIds`.
-- UI now includes:
-  - Open-document tab strip and list switcher.
-  - Document settings panel for reference/formula binding assignment.
-  - Pin/unpin and focus-bound-widget actions.
-- Creation intents now carry provenance metadata (`createdFrom`, source/context fields) across manual, suggestion-accepted, and imported paths.
-- Whitespace-driven expanded-space creation now records `createdFrom: suggestion-accepted`.
-- Popup metadata now follows:
-  - `PopupMetadata`: `{ id, title, type, sourceDocumentId, tags[], createdAt }`
-- Popup behavior preferences now follow:
-  - `PopupBehaviorPrefs`: `{ avoidStylus, motionReduced }` (stored at `notes-app.popup.behavior.v1`)
+- Sprints 14-18 were delivered in a single cohesive branch with lazy boundaries preserved (research panel remains lazy-loaded on first use).
+- Workspace persistence migrated to an explicit envelope with schema compatibility (`{ schemaVersion, data }`) while retaining transparent v1 reads.
+- Asset lifecycle is tracked via bounded local asset catalog recomputed from serialized widgets during persistence.
+- Peek mode is render-mode based and transient (`normal` vs `peek`) with snapshot-first rendering in peek.
+- World-size insertion semantics are explicit via per-widget-type world defaults and provenance placement metadata.
+- Production UI minimalism is the default mode; debug affordances are still available via explicit mode switch.
 
 ## Next Actions
-1. Run tablet QA for Sprint 13 stylus proximity behavior and reduced-motion gating.
-2. Validate popup metadata persistence through save/restore and cross-context import flows.
-3. Add regression tests for popup metadata normalization and behavior-pref toggles.
+1. Perform tablet/stylus QA pass for gesture detection and peek interactions under real pen hardware.
+2. Add deeper migration regression coverage for malformed historical payloads (schema v1 edge cases).
+3. Validate citation capture UX copy and hint text with user feedback before release cut.
 
 ## Verification Status
-- `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.
+- `for f in $(rg --files src | rg '\.js$'); do node --check "$f" || exit 1; done` passed.
+- `python3 -m http.server 4173` + Playwright smoke flow (tools toggle, research panel open, search input, screenshot capture) passed.
 
 ## Last Updated
-- 2026-02-06 (local environment time)
+- 2026-02-07 (local environment time)

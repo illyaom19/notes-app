@@ -19,6 +19,7 @@
           <button id="rename-context" type="button">Rename</button>
           <button id="delete-context" type="button">Delete</button>
           <button id="import-context-widget" type="button">Import Widgets</button>
+          <button id="toggle-ui-mode" type="button">Production Mode</button>
           <button id="toggle-tools" type="button" class="tools-toggle">Show Tools</button>
         </div>
       </header>
@@ -35,6 +36,8 @@
           <button id="undo-ink" type="button" disabled>Undo</button>
           <button id="redo-ink" type="button" disabled>Redo</button>
           <button id="start-worker" type="button">Start Worker</button>
+          <button id="toggle-research" type="button">Research Panel</button>
+          <button id="toggle-peek" type="button">Peek</button>
           <label class="toggle-control" for="popup-avoid-stylus">
             <input id="popup-avoid-stylus" type="checkbox" checked />
             <span>Avoid Stylus</span>
@@ -62,7 +65,41 @@
         <span><strong>Strokes:</strong> <output id="stroke-count">0</output></span>
         <span><strong>Worker:</strong> <output id="worker-state">idle</output></span>
         <span><strong>Camera:</strong> <output id="camera-state">x=0, y=0, zoom=1.00</output></span>
+        <span><strong>UI Mode:</strong> <output id="ui-mode-state">production</output></span>
+        <span><strong>Peek:</strong> <output id="peek-state">off</output></span>
+        <span><strong>Search:</strong> <output id="search-state">idle</output></span>
       </section>
+
+      <section class="utility-panel" aria-label="Search">
+        <label for="search-query">
+          <span>Search workspace</span>
+          <input id="search-query" type="search" placeholder="Title, tags, source..." />
+        </label>
+        <button id="run-search" type="button">Find</button>
+        <button id="next-search-result" type="button">Next Result</button>
+      </section>
+
+      <aside id="research-panel" class="research-panel" hidden aria-label="Research capture panel">
+        <h2>Research Capture</h2>
+        <label for="research-title">Source title</label>
+        <input id="research-title" type="text" placeholder="Source title" />
+        <label for="research-url">URL</label>
+        <input id="research-url" type="url" placeholder="https://example.org" />
+        <label for="research-attribution">Attribution</label>
+        <input id="research-attribution" type="text" placeholder="Author, publication, etc." />
+        <label for="research-snippet">Snippet</label>
+        <textarea id="research-snippet" rows="5" placeholder="Paste excerpt, definition, or note"></textarea>
+        <label for="research-type">Snippet type</label>
+        <select id="research-type">
+          <option value="definition">Definition</option>
+          <option value="quote">Quote</option>
+          <option value="note">Note</option>
+          <option value="image">Image Note</option>
+        </select>
+        <button id="capture-research" type="button">Capture as Citation Widget</button>
+      </aside>
+
+      <aside id="onboarding-hint" class="onboarding-hint" hidden aria-live="polite"></aside>
 
       <section class="documents-panel" aria-label="Open Documents">
         <div class="documents-strip">

@@ -8,6 +8,7 @@ import { createWidgetInteractionManager } from "./features/widget-system/widget-
 
 const importPdfButton = document.querySelector("#import-pdf");
 const toggleToolsButton = document.querySelector("#toggle-tools");
+const toggleUiModeButton = document.querySelector("#toggle-ui-mode");
 const controlsPanel = document.querySelector("#controls-panel");
 const detectWhitespaceButton = document.querySelector("#detect-whitespace");
 const startSnipButton = document.querySelector("#start-snip");
@@ -18,6 +19,8 @@ const enableInkButton = document.querySelector("#enable-ink");
 const undoInkButton = document.querySelector("#undo-ink");
 const redoInkButton = document.querySelector("#redo-ink");
 const startWorkerButton = document.querySelector("#start-worker");
+const toggleResearchButton = document.querySelector("#toggle-research");
+const togglePeekButton = document.querySelector("#toggle-peek");
 const loadedModulesOutput = document.querySelector("#loaded-modules");
 const widgetCountOutput = document.querySelector("#widget-count");
 const referenceCountOutput = document.querySelector("#reference-count");
@@ -31,11 +34,25 @@ const documentCountOutput = document.querySelector("#document-count");
 const inkStateOutput = document.querySelector("#ink-state");
 const strokeCountOutput = document.querySelector("#stroke-count");
 const cameraOutput = document.querySelector("#camera-state");
+const uiModeOutput = document.querySelector("#ui-mode-state");
+const peekStateOutput = document.querySelector("#peek-state");
+const searchStateOutput = document.querySelector("#search-state");
 const workerStateOutput = document.querySelector("#worker-state");
 const canvas = document.querySelector("#workspace-canvas");
 const widgetContextMenu = document.querySelector("#widget-context-menu");
 const creationCommandMenu = document.querySelector("#creation-command-menu");
 const pdfFileInput = document.querySelector("#pdf-file-input");
+const searchQueryInput = document.querySelector("#search-query");
+const runSearchButton = document.querySelector("#run-search");
+const nextSearchResultButton = document.querySelector("#next-search-result");
+const researchPanelElement = document.querySelector("#research-panel");
+const researchTitleInput = document.querySelector("#research-title");
+const researchUrlInput = document.querySelector("#research-url");
+const researchAttributionInput = document.querySelector("#research-attribution");
+const researchSnippetInput = document.querySelector("#research-snippet");
+const researchTypeInput = document.querySelector("#research-type");
+const captureResearchButton = document.querySelector("#capture-research");
+const onboardingHintElement = document.querySelector("#onboarding-hint");
 const documentTabs = document.querySelector("#document-tabs");
 const documentSwitcher = document.querySelector("#document-switcher");
 const documentSettingsHint = document.querySelector("#document-settings-hint");
@@ -77,6 +94,14 @@ let popupBehaviorPrefs = null;
 let contextStore = null;
 let contextWorkspaceStore = null;
 let contextUiController = null;
+let researchPanelController = null;
+let searchIndex = null;
+let gestureManager = null;
+let uiModeController = null;
+let onboardingHints = null;
+let searchResults = [];
+let activeSearchResultIndex = -1;
+let peekModeActive = false;
 
 let activeContextId = null;
 const documentManager = createDocumentManager();
@@ -127,6 +152,22 @@ function defaultPlacement(baseX, baseY, stepX, stepY) {
     y: baseY + runtime.getWidgetCount() * stepY,
   };
 }
+
+function worldSizeForType(type, explicitSize) {
+  const defaults = WORLD_SIZE_DEFAULTS[type] ?? { width: 280, height: 200 };
+  return {
+    width: Math.max(20, explicitSize?.width ?? defaults.width),
+    height: Math.max(20, explicitSize?.height ?? defaults.height),
+  };
+}
+
+const WORLD_SIZE_DEFAULTS = {
+  dummy: { width: 300, height: 180 },
+  "expanded-area": { width: 420, height: 260 },
+  "graph-widget": { width: 420, height: 280 },
+  "reference-popup": { width: 280, height: 210 },
+  "pdf-document": { width: 480, height: 680 },
+};
 
 const CREATION_TYPES = new Set([
   "dummy",
@@ -366,6 +407,7 @@ function withCreationProvenance(metadata, intent) {
     creationSourceWidgetId: normalized.sourceWidgetId,
     creationContextId: normalized.contextId,
     creationCreatedAt: nowIso(),
+    placement: normalized.anchor ? { x: normalized.anchor.x, y: normalized.anchor.y, worldUnits: true } : null,
   };
 }
 
@@ -911,6 +953,7 @@ function updateWidgetUi() {
 
   updateWhitespaceZoneCount();
   updateContextUi();
+  searchIndex?.rebuild();
   scheduleWorkspacePersist();
 }
 
@@ -1003,7 +1046,7 @@ async function ensureGraphFeatures() {
 
 async function createExpandedAreaWidget(definition = {}, intent = null) {
   const normalizedIntent = normalizeCreationIntent(intent);
-  const requestedSize = definition.size ?? { width: 420, height: 260 };
+  const requestedSize = worldSizeForType("expanded-area", definition.size);
   const widget = await registry.instantiate("expanded-area", {
     id: definition.id ?? makeId("expanded"),
     position:
@@ -1025,7 +1068,7 @@ async function createExpandedAreaWidget(definition = {}, intent = null) {
 
 async function createDummyWidget(definition = {}, intent = null) {
   const normalizedIntent = normalizeCreationIntent(intent);
-  const requestedSize = definition.size ?? { width: 300, height: 180 };
+  const requestedSize = worldSizeForType("dummy", definition.size);
   const widget = await registry.instantiate("dummy", {
     id: definition.id ?? makeId("dummy"),
     position:
@@ -1046,7 +1089,7 @@ async function createDummyWidget(definition = {}, intent = null) {
 
 async function createPdfWidgetFromFile(file, definition = {}, intent = null) {
   const normalizedIntent = normalizeCreationIntent(intent);
-  const requestedSize = definition.size ?? { width: 480, height: 680 };
+  const requestedSize = worldSizeForType("pdf-document", definition.size);
   const bytes = new Uint8Array(await file.arrayBuffer());
   const widget = await registry.instantiate("pdf-document", {
     id: definition.id ?? makeId("pdf"),
@@ -1087,7 +1130,7 @@ async function createPdfWidgetFromFile(file, definition = {}, intent = null) {
 
 async function createReferencePopupWidget({ definition = {}, intent = null } = {}) {
   const normalizedIntent = normalizeCreationIntent(intent);
-  const requestedSize = definition.size ?? { width: 280, height: 210 };
+  const requestedSize = worldSizeForType("reference-popup", definition.size);
 
   await ensureReferencePopupInteractions();
 
@@ -1286,7 +1329,7 @@ async function handleWhitespaceZoneToggle(pdfWidget, zone) {
 async function createGraphWidget(definition = {}, intent = null) {
   const normalizedIntent = normalizeCreationIntent(intent);
   await ensureGraphFeatures();
-  const requestedSize = definition.size ?? { width: 420, height: 280 };
+  const requestedSize = worldSizeForType("graph-widget", definition.size);
 
   const widget = await registry.instantiate("graph-widget", {
     id: definition.id ?? makeId("graph"),
@@ -1619,6 +1662,85 @@ async function importWidgetsFromAnotherContext() {
   window.alert(`Imported ${importedWidgets.length} widget(s) from "${sourceContext.name}".`);
 }
 
+function setPeekMode(nextPeek) {
+  peekModeActive = Boolean(nextPeek);
+  runtime.setRenderMode(peekModeActive ? "peek" : "normal");
+  if (peekStateOutput) {
+    peekStateOutput.textContent = peekModeActive ? "on" : "off";
+  }
+}
+
+function focusSearchResult(index) {
+  if (index < 0 || index >= searchResults.length) {
+    return;
+  }
+  activeSearchResultIndex = index;
+  const entry = searchResults[index];
+  const widget = runtime.getWidgetById(entry.widgetId);
+  if (!widget) {
+    return;
+  }
+
+  runtime.bringWidgetToFront(widget.id);
+  runtime.setFocusedWidgetId(widget.id);
+  runtime.setSelectedWidgetId(widget.id);
+
+  const center = {
+    x: widget.position.x + widget.size.width / 2,
+    y: widget.position.y + widget.size.height / 2,
+  };
+  runtime.camera.offsetX = canvas.clientWidth / 2 - center.x * runtime.camera.zoom;
+  runtime.camera.offsetY = canvas.clientHeight / 2 - center.y * runtime.camera.zoom;
+
+  if (searchStateOutput) {
+    searchStateOutput.textContent = `${index + 1}/${searchResults.length}`;
+  }
+}
+
+async function ensureResearchPanel() {
+  if (researchPanelController) {
+    return researchPanelController;
+  }
+
+  const module = await import("./features/research/research-panel.js");
+  researchPanelController = module.createResearchPanel({
+    panelElement: researchPanelElement,
+    titleInput: researchTitleInput,
+    urlInput: researchUrlInput,
+    attributionInput: researchAttributionInput,
+    snippetInput: researchSnippetInput,
+    snippetTypeInput: researchTypeInput,
+    captureButton: captureResearchButton,
+    getActiveContextId: () => activeContextId,
+    onCapture: (capture) => {
+      void createReferencePopupWidget({
+        intent: createCreationIntent({
+          type: "reference-popup",
+          anchor: viewportCenterAnchor(),
+          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+          createdFrom: "research-capture",
+        }),
+        definition: {
+          metadata: {
+            title: capture.citation.sourceTitle,
+            citation: capture.citation,
+            note: capture.content,
+            popupMetadata: {
+              tags: ["citation", capture.contentType],
+            },
+          },
+          dataPayload: {
+            imageDataUrl: null,
+            sourceLabel: "Research",
+          },
+        },
+      });
+    },
+  });
+
+  return researchPanelController;
+}
+
 function wireBaseEventHandlers() {
   const reducedMotionQuery = window.matchMedia(REDUCED_MOTION_MEDIA);
   if (typeof reducedMotionQuery.addEventListener === "function") {
@@ -1712,6 +1834,36 @@ function wireBaseEventHandlers() {
     toolsPanelOpen = !toolsPanelOpen;
     window.localStorage.setItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
     syncToolsUi();
+  });
+
+  togglePeekButton?.addEventListener("click", () => {
+    setPeekMode(!peekModeActive);
+  });
+
+  toggleResearchButton?.addEventListener("click", async () => {
+    const panel = await ensureResearchPanel();
+    panel.toggle();
+  });
+
+  runSearchButton?.addEventListener("click", () => {
+    const query = searchQueryInput instanceof HTMLInputElement ? searchQueryInput.value : "";
+    searchResults = searchIndex?.search(query) ?? [];
+    if (searchResults.length < 1) {
+      activeSearchResultIndex = -1;
+      if (searchStateOutput) {
+        searchStateOutput.textContent = query.trim() ? "0 results" : "idle";
+      }
+      return;
+    }
+    focusSearchResult(0);
+  });
+
+  nextSearchResultButton?.addEventListener("click", () => {
+    if (searchResults.length < 1) {
+      return;
+    }
+    const nextIndex = (activeSearchResultIndex + 1) % searchResults.length;
+    focusSearchResult(nextIndex);
   });
 
   popupAvoidStylusToggle?.addEventListener("change", (event) => {
@@ -1965,6 +2117,11 @@ function wireBaseEventHandlers() {
       return;
     }
 
+    if (key === "escape" && peekModeActive) {
+      setPeekMode(false);
+      return;
+    }
+
     if (!inkFeature) {
       return;
     }
@@ -2052,6 +2209,8 @@ function wireDocumentFocusSync() {
 
   detachDocumentFocusSync = runtime.registerInputHandler({
     onPointerDown(event) {
+      gestureManager?.handlePointerDown(event);
+
       if (event.pointerType === "pen") {
         return false;
       }
@@ -2186,6 +2345,28 @@ async function bootstrap() {
   popupBehaviorPrefs = loadPopupBehaviorPrefs();
   updatePopupBehaviorUi();
 
+  const [searchModule, gestureModule, uiModeModule, onboardingModule] = await Promise.all([
+    import("./features/search/search-index.js"),
+    import("./features/input/gesture-manager.js"),
+    import("./features/ui/ui-mode.js"),
+    import("./features/ui/onboarding.js"),
+  ]);
+
+  searchIndex = searchModule.createSearchIndex({ runtime, getActiveContextId: () => activeContextId });
+  gestureManager = gestureModule.createGestureManager({
+    onAction: (action) => {
+      if (action === "toggle-peek") {
+        setPeekMode(!peekModeActive);
+      }
+    },
+  });
+  uiModeController = uiModeModule.createUiModeController({
+    root: document.body,
+    statusOutput: uiModeOutput,
+    toggleButton: toggleUiModeButton,
+  });
+  onboardingHints = onboardingModule.createOnboardingHints({ element: onboardingHintElement });
+
   wireBaseEventHandlers();
   wireWidgetInteractionManager();
   wireWidgetCreationController();
@@ -2202,6 +2383,10 @@ async function bootstrap() {
 
   await setupContextFeatures();
   updateWidgetUi();
+  setPeekMode(false);
+
+  onboardingHints?.maybeShow("core-flow", "Tip: Use Import PDF, Snip, and Research Panel to build citation-safe notes quickly.");
+  onboardingHints?.maybeShow("search", "Use Search to jump directly to widgets by title, tags, and metadata.");
 }
 
 void bootstrap();
