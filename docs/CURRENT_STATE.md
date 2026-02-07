@@ -1,7 +1,7 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 13 (`docs/SPRINT_13_Advanced_Popup_Behavior_and_Metadata.md`) has now been implemented onto current `main`.
+- Sprint 14 (`docs/SPRINT_14_Research_Panel_and_Citation_Model.md`) has now been implemented onto current `main`.
 - Sprint 10 and Sprint 12 remain implemented; Sprint 11 remains skipped per directive.
 
 ## What Exists Today
@@ -23,17 +23,18 @@
   - Reference popup interactions + snip tool: `src/features/reference-popups/`
   - Whitespace analyzer/manager: `src/features/whitespace/`
   - Graph interactions: `src/features/graph/`
+  - Research panel capture flow (lazy-loaded): `src/features/research/research-panel.js`
   - Context metadata store: `src/features/contexts/context-store.js`
   - Context-scoped workspace persistence: `src/features/contexts/context-workspace-store.js`
   - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
 
 ## In Progress
 - No active blocker.
-- Sprint 13 popup behavior and metadata are now active:
-  - Popup identity metadata model persisted in widget metadata (`popupMetadata`).
-  - Header identity labels/badges rendered for reference popups.
-  - Stylus-aware avoidance nudges enabled with motion preference gating.
-  - UI toggles for `avoidStylus` and `motionReduced` persisted via local storage.
+- Sprint 14 research/citation flow is now active:
+  - Research panel is loaded on demand and captures text/definition/image snippets with citation fields.
+  - `ResearchCapture` records are persisted per context and deduped by citation/content key.
+  - Reference popup payloads now persist citation metadata, snippet content type, and capture id linkage.
+  - Reference popups render citation cards and provide a source-jump action.
 
 ## Blockers
 - None.
@@ -71,14 +72,18 @@
   - `PopupMetadata`: `{ id, title, type, sourceDocumentId, tags[], createdAt }`
 - Popup behavior preferences now follow:
   - `PopupBehaviorPrefs`: `{ avoidStylus, motionReduced }` (stored at `notes-app.popup.behavior.v1`)
+- Research capture and citation model now follows:
+  - `Citation`: `{ sourceTitle, url, accessedAt, author?, publisher?, snippetType, attributionText }`
+  - `ResearchCapture`: `{ id, contextId, contentType, content, citation }`
+  - Workspace schema now persists `researchCaptures[]` alongside widget state.
 
 ## Next Actions
-1. Run tablet QA for Sprint 13 stylus proximity behavior and reduced-motion gating.
-2. Validate popup metadata persistence through save/restore and cross-context import flows.
-3. Add regression tests for popup metadata normalization and behavior-pref toggles.
+1. Run QA for each capture type (`text`, `definition`, `image`) and verify save/restore per context.
+2. Validate source-link action and citation card rendering across zoom levels and collapsed/minimized popup states.
+3. Add regression tests for `researchCaptures` normalization/migration and citation payload import behavior.
 
 ## Verification Status
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.
 
 ## Last Updated
-- 2026-02-06 (local environment time)
+- 2026-02-07 (local environment time)

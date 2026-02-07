@@ -4,6 +4,7 @@ import { WidgetBase } from "../../core/widgets/widget-base.js";
 const HEADER_HEIGHT = 34;
 const MIN_BODY_HEIGHT = 90;
 const MIN_SIZE = { width: 180, height: 120 };
+const SOURCE_BUTTON_SIZE = { width: 90, height: 18 };
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -53,6 +54,115 @@ function normalizePopupMetadata(candidate, fallbackTitle) {
   };
 }
 
+function normalizeContentType(value, fallback = "text") {
+  if (value === "image" || value === "definition") {
+    return value;
+  }
+  if (fallback === "image" || fallback === "definition") {
+    return fallback;
+  }
+  return "text";
+}
+
+function normalizeCitation(candidate, fallbackSourceTitle, snippetType) {
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+
+  const sourceTitle =
+    typeof candidate.sourceTitle === "string" && candidate.sourceTitle.trim()
+      ? candidate.sourceTitle.trim()
+      : typeof fallbackSourceTitle === "string" && fallbackSourceTitle.trim()
+        ? fallbackSourceTitle.trim()
+        : "Source";
+  const url = typeof candidate.url === "string" && candidate.url.trim() ? candidate.url.trim() : "";
+  const attributionText =
+    typeof candidate.attributionText === "string" && candidate.attributionText.trim()
+      ? candidate.attributionText.trim()
+      : sourceTitle;
+
+  const citation = {
+    sourceTitle,
+    url,
+    accessedAt:
+      typeof candidate.accessedAt === "string" && candidate.accessedAt.trim()
+        ? candidate.accessedAt
+        : new Date().toISOString(),
+    snippetType: normalizeContentType(candidate.snippetType, snippetType),
+    attributionText,
+  };
+
+  if (typeof candidate.author === "string" && candidate.author.trim()) {
+    citation.author = candidate.author.trim();
+  }
+  if (typeof candidate.publisher === "string" && candidate.publisher.trim()) {
+    citation.publisher = candidate.publisher.trim();
+  }
+
+  return citation;
+}
+
+function isLikelyHttpUrl(candidate) {
+  if (typeof candidate !== "string" || !candidate.trim()) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function ellipsis(value, maxLength) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(1, maxLength - 3))}...`;
+}
+
+function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
+  const source = typeof text === "string" ? text.trim() : "";
+  if (!source) {
+    return 0;
+  }
+
+  const words = source.split(/\s+/);
+  const lines = [];
+  let current = "";
+
+  for (const word of words) {
+    const test = current ? `${current} ${word}` : word;
+    if (ctx.measureText(test).width <= maxWidth || !current) {
+      current = test;
+      continue;
+    }
+
+    lines.push(current);
+    current = word;
+    if (lines.length >= maxLines) {
+      break;
+    }
+  }
+
+  if (lines.length < maxLines && current) {
+    lines.push(current);
+  } else if (lines.length >= maxLines && current) {
+    lines[maxLines - 1] = ellipsis(lines[maxLines - 1], Math.max(4, Math.floor(maxWidth / 6)));
+  }
+
+  let rendered = 0;
+  for (const line of lines.slice(0, maxLines)) {
+    ctx.fillText(line, x, y + rendered * lineHeight);
+    rendered += 1;
+  }
+  return rendered;
+}
+
 export class ReferencePopupWidget extends WidgetBase {
   constructor(definition) {
     const title = definition.metadata?.title ?? "Ref";
@@ -72,12 +182,36 @@ export class ReferencePopupWidget extends WidgetBase {
     });
 
     this.imageDataUrl = definition.dataPayload?.imageDataUrl ?? null;
+    this.textContent =
+      typeof definition.dataPayload?.textContent === "string" ? definition.dataPayload.textContent : "";
     this._image = null;
     this.sourceLabel = definition.dataPayload?.sourceLabel ?? "Snip";
+    this.contentType = normalizeContentType(
+      definition.dataPayload?.contentType,
+      this.imageDataUrl ? "image" : "text",
+    );
+    this.citation = normalizeCitation(definition.dataPayload?.citation, this.sourceLabel, this.contentType);
+    this.researchCaptureId =
+      typeof definition.dataPayload?.researchCaptureId === "string" &&
+      definition.dataPayload.researchCaptureId.trim()
+        ? definition.dataPayload.researchCaptureId
+        : null;
 
     if (this.imageDataUrl) {
       this._image = new Image();
       this._image.src = this.imageDataUrl;
+    }
+
+    const hasImage = Boolean(this.imageDataUrl);
+    const hasText = Boolean(this.textContent.trim());
+    if (this.contentType === "image" && !hasImage && hasText) {
+      this.contentType = "text";
+    } else if (this.contentType !== "image" && !hasText && hasImage) {
+      this.contentType = "image";
+    }
+
+    if (this.citation?.sourceTitle) {
+      this.sourceLabel = this.citation.sourceTitle;
     }
   }
 
@@ -125,6 +259,19 @@ export class ReferencePopupWidget extends WidgetBase {
     };
   }
 
+  _sourceButtonRect() {
+    return {
+      x: this.position.x + this.size.width - SOURCE_BUTTON_SIZE.width - 12,
+      y: this.position.y + HEADER_HEIGHT + 10,
+      width: SOURCE_BUTTON_SIZE.width,
+      height: SOURCE_BUTTON_SIZE.height,
+    };
+  }
+
+  hasSourceAction() {
+    return isLikelyHttpUrl(this.citation?.url);
+  }
+
   containsWorldPoint(worldX, worldY) {
     const minX = this.position.x;
     const minY = this.position.y;
@@ -151,6 +298,18 @@ export class ReferencePopupWidget extends WidgetBase {
       }
     }
 
+    if (!this.metadata.minimized && this.hasSourceAction()) {
+      const sourceRect = this._sourceButtonRect();
+      if (
+        worldX >= sourceRect.x &&
+        worldX <= sourceRect.x + sourceRect.width &&
+        worldY >= sourceRect.y &&
+        worldY <= sourceRect.y + sourceRect.height
+      ) {
+        return "open-source";
+      }
+    }
+
     const header = this._headerRect();
     if (
       worldX >= header.x &&
@@ -174,6 +333,8 @@ export class ReferencePopupWidget extends WidgetBase {
 
   setImageData(dataUrl) {
     this.imageDataUrl = dataUrl;
+    this.contentType = "image";
+    this.textContent = "";
     this._image = new Image();
     this._image.src = dataUrl;
   }
@@ -236,14 +397,98 @@ export class ReferencePopupWidget extends WidgetBase {
 
     const bodyY = screen.y + headerHeight;
     const bodyH = Math.max(MIN_BODY_HEIGHT * camera.zoom, height - headerHeight);
+    const panelX = screen.x + 8;
+    const panelY = bodyY + 8;
+    const panelW = width - 16;
+    const panelH = bodyH - 16;
 
-    fillStrokeRoundedRect(ctx, screen.x + 8, bodyY + 8, width - 16, bodyH - 16, 12, "#f4f8fb", "#dbe7f2", 1);
+    fillStrokeRoundedRect(ctx, panelX, panelY, panelW, panelH, 12, "#f4f8fb", "#dbe7f2", 1);
 
-    if (this._image) {
-      ctx.drawImage(this._image, screen.x + 10, bodyY + 10, width - 20, bodyH - 20);
+    const sourceRect = this._sourceButtonRect();
+    const sourceScreen = camera.worldToScreen(sourceRect.x, sourceRect.y);
+    const sourceButtonVisible = this.hasSourceAction();
+    if (sourceButtonVisible) {
+      fillPill(
+        ctx,
+        sourceScreen.x,
+        sourceScreen.y,
+        sourceRect.width * camera.zoom,
+        sourceRect.height * camera.zoom,
+        "#dbe9f5",
+      );
+      ctx.fillStyle = "#2d536f";
+      ctx.font = `${Math.max(8, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillText("Open Source", sourceScreen.x + 8 * camera.zoom, sourceScreen.y + 12 * camera.zoom);
+    }
+
+    const topInset = sourceButtonVisible ? 34 : 12;
+    const citationVisible = Boolean(this.citation);
+    const citationHeight = citationVisible ? Math.max(56 * camera.zoom, panelH * 0.3) : 0;
+    const contentX = panelX + 8;
+    const contentY = panelY + topInset;
+    const contentW = panelW - 16;
+    const contentH = Math.max(
+      26 * camera.zoom,
+      panelH - topInset - (citationVisible ? citationHeight + 10 : 10),
+    );
+
+    fillStrokeRoundedRect(ctx, contentX, contentY, contentW, contentH, 10, "#ffffff", "#d7e6f2", 1);
+
+    if (this.contentType === "image" && this._image) {
+      ctx.drawImage(this._image, contentX + 4, contentY + 4, Math.max(10, contentW - 8), Math.max(10, contentH - 8));
     } else {
       ctx.fillStyle = "#50697f";
-      ctx.fillText("No capture", screen.x + 16, bodyY + 24);
+      ctx.font = `${Math.max(9, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      const text = this.textContent.trim() || "No capture";
+      drawWrappedText(
+        ctx,
+        text,
+        contentX + 8,
+        contentY + 18 * camera.zoom,
+        Math.max(10, contentW - 16),
+        14 * camera.zoom,
+        Math.max(2, Math.floor(contentH / (14 * camera.zoom))),
+      );
+    }
+
+    if (citationVisible) {
+      const cardX = panelX + 8;
+      const cardY = panelY + panelH - citationHeight - 8;
+      const cardW = panelW - 16;
+      const cardH = citationHeight;
+      fillStrokeRoundedRect(ctx, cardX, cardY, cardW, cardH, 10, "#eaf3fa", "#d1e2ef", 1);
+
+      ctx.fillStyle = "#21445d";
+      ctx.font = `${Math.max(9, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      const sourceTitle = ellipsis(this.citation.sourceTitle, 72);
+      ctx.fillText(sourceTitle, cardX + 8, cardY + 14 * camera.zoom);
+
+      const details = [];
+      if (this.citation.author) {
+        details.push(this.citation.author);
+      }
+      if (this.citation.publisher) {
+        details.push(this.citation.publisher);
+      }
+      details.push(this.citation.attributionText);
+
+      ctx.fillStyle = "#43637b";
+      ctx.font = `${Math.max(8, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      drawWrappedText(
+        ctx,
+        details.join(" • "),
+        cardX + 8,
+        cardY + 28 * camera.zoom,
+        Math.max(10, cardW - 16),
+        12 * camera.zoom,
+        2,
+      );
+
+      if (this.citation.url) {
+        ctx.fillStyle = "#345e7d";
+        const urlLabel = ellipsis(this.citation.url, 74);
+        ctx.fillText(urlLabel, cardX + 8, cardY + cardH - 10 * camera.zoom);
+      }
     }
 
     const resizeRect = this._resizeHandleRect();

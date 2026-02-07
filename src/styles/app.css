@@ -289,6 +289,100 @@ body {
   cursor: not-allowed;
 }
 
+.research-panel {
+  border-bottom: 1px solid var(--line);
+  background: #f8fbff;
+  padding: 0.7rem 1rem 0.8rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.research-panel[hidden] {
+  display: none;
+}
+
+.research-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.research-panel-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #123c5a;
+}
+
+.research-panel-header button {
+  border: 1px solid #7fa2bf;
+  background: #ffffff;
+  color: #29506d;
+  border-radius: 999px;
+  padding: 0.26rem 0.66rem;
+  cursor: pointer;
+}
+
+.research-status {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #46647d;
+}
+
+.research-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.research-grid label {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.research-grid span {
+  font-size: 0.76rem;
+  color: #3f5e77;
+}
+
+.research-grid textarea,
+.research-grid input,
+.research-grid select {
+  border: 1px solid #bfd2e2;
+  border-radius: 0.55rem;
+  background: #ffffff;
+  color: #17354a;
+  font: inherit;
+  padding: 0.35rem 0.42rem;
+}
+
+.research-grid label[data-research-field="text"] {
+  grid-column: span 2;
+}
+
+.research-grid label[data-research-field="image"] {
+  grid-column: span 2;
+}
+
+.research-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.research-actions button {
+  border: 1px solid var(--accent);
+  background: #ffffff;
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.36rem 0.78rem;
+  cursor: pointer;
+}
+
+.research-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .canvas-wrap {
   position: relative;
   min-height: 0;
@@ -413,5 +507,17 @@ body {
 
   .document-settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .research-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .research-grid label[data-research-field="text"] {
+    grid-column: span 1;
+  }
+
+  .research-grid label[data-research-field="image"] {
+    grid-column: span 1;
   }
 }

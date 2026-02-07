@@ -73,6 +73,14 @@ export function createReferencePopupInteractions({ runtime, onPopupMutated, getB
         return true;
       }
 
+      if (control === "open-source") {
+        const sourceUrl = typeof widget.citation?.url === "string" ? widget.citation.url.trim() : "";
+        if (sourceUrl) {
+          window.open(sourceUrl, "_blank", "noopener,noreferrer");
+        }
+        return true;
+      }
+
       return false;
     },
 

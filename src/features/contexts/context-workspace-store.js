@@ -132,6 +132,135 @@ function normalizePopupMetadata(candidate, fallbackTitle) {
   };
 }
 
+function normalizeContentType(candidate, fallback = "text") {
+  if (candidate === "image" || candidate === "definition") {
+    return candidate;
+  }
+  if (fallback === "image" || fallback === "definition") {
+    return fallback;
+  }
+  return "text";
+}
+
+function normalizeCitation(candidate, { snippetType = "text", fallbackSourceTitle = "Source" } = {}) {
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+
+  const sourceTitle =
+    typeof candidate.sourceTitle === "string" && candidate.sourceTitle.trim()
+      ? candidate.sourceTitle.trim()
+      : typeof fallbackSourceTitle === "string" && fallbackSourceTitle.trim()
+        ? fallbackSourceTitle.trim()
+        : "Source";
+  const url =
+    typeof candidate.url === "string" && candidate.url.trim() ? candidate.url.trim() : "";
+  const attributionText =
+    typeof candidate.attributionText === "string" && candidate.attributionText.trim()
+      ? candidate.attributionText.trim()
+      : sourceTitle;
+
+  const citation = {
+    sourceTitle,
+    url,
+    accessedAt:
+      typeof candidate.accessedAt === "string" && candidate.accessedAt.trim()
+        ? candidate.accessedAt
+        : nowIso(),
+    snippetType: normalizeContentType(candidate.snippetType, snippetType),
+    attributionText,
+  };
+
+  if (typeof candidate.author === "string" && candidate.author.trim()) {
+    citation.author = candidate.author.trim();
+  }
+  if (typeof candidate.publisher === "string" && candidate.publisher.trim()) {
+    citation.publisher = candidate.publisher.trim();
+  }
+
+  return citation;
+}
+
+function normalizeResearchCapture(candidate, contextId) {
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+
+  const contentType = normalizeContentType(candidate.contentType);
+  const content = typeof candidate.content === "string" ? candidate.content.trim() : "";
+  if (!content) {
+    return null;
+  }
+
+  const citation = normalizeCitation(candidate.citation, {
+    snippetType: contentType,
+  });
+
+  if (!citation || !citation.sourceTitle || !citation.url || !citation.attributionText) {
+    return null;
+  }
+
+  return {
+    id:
+      typeof candidate.id === "string" && candidate.id.trim()
+        ? candidate.id
+        : makeId("capture"),
+    contextId:
+      typeof candidate.contextId === "string" && candidate.contextId.trim()
+        ? candidate.contextId
+        : contextId,
+    contentType,
+    content,
+    citation,
+  };
+}
+
+function researchCaptureKey(candidate) {
+  if (!candidate || typeof candidate !== "object") {
+    return "";
+  }
+
+  return [
+    candidate.contextId ?? "",
+    candidate.contentType ?? "",
+    candidate.content ?? "",
+    candidate.citation?.url ?? "",
+    candidate.citation?.attributionText ?? "",
+  ].join("|");
+}
+
+function normalizeResearchCaptures(candidate, contextId) {
+  if (!Array.isArray(candidate)) {
+    return [];
+  }
+
+  const deduped = [];
+  const seenById = new Set();
+  const seenByKey = new Set();
+
+  for (const entry of candidate) {
+    const normalized = normalizeResearchCapture(entry, contextId);
+    if (!normalized) {
+      continue;
+    }
+
+    if (seenById.has(normalized.id)) {
+      continue;
+    }
+
+    const key = researchCaptureKey(normalized);
+    if (seenByKey.has(key)) {
+      continue;
+    }
+
+    seenById.add(normalized.id);
+    seenByKey.add(key);
+    deduped.push(normalized);
+  }
+
+  return deduped;
+}
+
 function encodeBytes(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
     return null;
@@ -169,6 +298,7 @@ function defaultWorkspace(contextId) {
     contextId,
     updatedAt: nowIso(),
     widgets: [],
+    researchCaptures: [],
     documents: [],
     documentBindings: [],
     activeWorkspaceState: {
@@ -221,10 +351,40 @@ function sanitizeSerializedWidget(candidate, contextId) {
     const dataPayload = asPlainObject(candidate.dataPayload);
     widget.dataPayload.imageDataUrl =
       typeof dataPayload.imageDataUrl === "string" ? dataPayload.imageDataUrl : null;
+    widget.dataPayload.textContent =
+      typeof dataPayload.textContent === "string" ? dataPayload.textContent : "";
     widget.dataPayload.sourceLabel =
       typeof dataPayload.sourceLabel === "string" && dataPayload.sourceLabel
         ? dataPayload.sourceLabel
         : "Imported";
+    widget.dataPayload.contentType = normalizeContentType(
+      dataPayload.contentType,
+      widget.dataPayload.imageDataUrl ? "image" : "text",
+    );
+    widget.dataPayload.researchCaptureId =
+      typeof dataPayload.researchCaptureId === "string" && dataPayload.researchCaptureId.trim()
+        ? dataPayload.researchCaptureId
+        : null;
+    widget.dataPayload.citation = normalizeCitation(dataPayload.citation, {
+      snippetType: widget.dataPayload.contentType,
+      fallbackSourceTitle: widget.dataPayload.sourceLabel,
+    });
+
+    const hasImage = Boolean(widget.dataPayload.imageDataUrl);
+    const hasText = Boolean(widget.dataPayload.textContent.trim());
+    if (widget.dataPayload.contentType === "image" && !hasImage && hasText) {
+      widget.dataPayload.contentType = "text";
+    } else if (widget.dataPayload.contentType !== "image" && !hasText && hasImage) {
+      widget.dataPayload.contentType = "image";
+    }
+
+    if (widget.dataPayload.citation) {
+      widget.dataPayload.citation = normalizeCitation(widget.dataPayload.citation, {
+        snippetType: widget.dataPayload.contentType,
+        fallbackSourceTitle: widget.dataPayload.sourceLabel,
+      });
+    }
+
     widget.metadata.popupMetadata = normalizePopupMetadata(widget.metadata.popupMetadata, widget.metadata.title);
     widget.metadata.title = widget.metadata.popupMetadata.title;
     return widget;
@@ -359,12 +519,14 @@ function sanitizeWorkspace(candidate, contextId) {
   const documentBindings = Array.from(bindingsByDocumentId.values());
 
   const activeWorkspaceState = asPlainObject(candidate.activeWorkspaceState);
+  const researchCaptures = normalizeResearchCaptures(candidate.researchCaptures, contextId);
 
   return {
     version: 1,
     contextId,
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
     widgets: dedupedWidgets,
+    researchCaptures,
     documents: documents.map((entry) => ({
       id: entry.id,
       contextId: entry.contextId,
@@ -468,8 +630,21 @@ function serializeWidget(widget, contextId) {
 
   if (base.type === "reference-popup") {
     base.dataPayload.imageDataUrl = typeof widget.imageDataUrl === "string" ? widget.imageDataUrl : null;
+    base.dataPayload.textContent = typeof widget.textContent === "string" ? widget.textContent : "";
     base.dataPayload.sourceLabel =
       typeof widget.sourceLabel === "string" && widget.sourceLabel ? widget.sourceLabel : "Snip";
+    base.dataPayload.contentType = normalizeContentType(
+      widget.contentType,
+      base.dataPayload.imageDataUrl ? "image" : "text",
+    );
+    base.dataPayload.researchCaptureId =
+      typeof widget.researchCaptureId === "string" && widget.researchCaptureId.trim()
+        ? widget.researchCaptureId
+        : null;
+    base.dataPayload.citation = normalizeCitation(widget.citation, {
+      snippetType: base.dataPayload.contentType,
+      fallbackSourceTitle: base.dataPayload.sourceLabel,
+    });
     return sanitizeSerializedWidget(base, contextId);
   }
 
@@ -498,6 +673,18 @@ function copyDocumentBinding(entry) {
     documentId: entry.documentId,
     defaultReferenceIds: [...normalizeIdList(entry.defaultReferenceIds)],
     formulaSheetIds: [...normalizeIdList(entry.formulaSheetIds)],
+  };
+}
+
+function copyResearchCapture(entry, contextId) {
+  const normalized = normalizeResearchCapture(entry, contextId);
+  if (!normalized) {
+    return null;
+  }
+
+  return {
+    ...normalized,
+    citation: { ...normalized.citation },
   };
 }
 
@@ -541,6 +728,9 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       return {
         ...workspace,
         widgets: workspace.widgets.map((entry) => ({ ...entry })),
+        researchCaptures: workspace.researchCaptures
+          .map((entry) => copyResearchCapture(entry, contextId))
+          .filter((entry) => entry !== null),
         documents: workspace.documents.map((entry) => copyDocument(entry, contextId)),
         documentBindings: workspace.documentBindings.map((entry) => copyDocumentBinding(entry)),
         activeWorkspaceState: {
@@ -575,6 +765,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
     saveFromRuntime({
       contextId,
       runtime,
+      researchCaptures = [],
       documents = [],
       documentBindings = [],
       activeDocumentId = null,
@@ -589,6 +780,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       return this.saveWorkspace({
         contextId,
         widgets: serializedWidgets,
+        researchCaptures,
         documents,
         documentBindings,
         activeWorkspaceState: {
@@ -637,7 +829,11 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       if (normalized.type === "reference-popup") {
         definition.dataPayload = {
           imageDataUrl: normalized.dataPayload.imageDataUrl,
+          textContent: normalized.dataPayload.textContent,
           sourceLabel: normalized.dataPayload.sourceLabel,
+          contentType: normalized.dataPayload.contentType,
+          citation: normalized.dataPayload.citation ? { ...normalized.dataPayload.citation } : null,
+          researchCaptureId: normalized.dataPayload.researchCaptureId,
         };
       }
 

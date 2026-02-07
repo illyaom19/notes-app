@@ -11,6 +11,7 @@ const toggleToolsButton = document.querySelector("#toggle-tools");
 const controlsPanel = document.querySelector("#controls-panel");
 const detectWhitespaceButton = document.querySelector("#detect-whitespace");
 const startSnipButton = document.querySelector("#start-snip");
+const toggleResearchPanelButton = document.querySelector("#toggle-research-panel");
 const instantiateButton = document.querySelector("#instantiate-dummy");
 const instantiateExpandedButton = document.querySelector("#instantiate-expanded");
 const instantiateGraphButton = document.querySelector("#instantiate-graph");
@@ -36,6 +37,7 @@ const canvas = document.querySelector("#workspace-canvas");
 const widgetContextMenu = document.querySelector("#widget-context-menu");
 const creationCommandMenu = document.querySelector("#creation-command-menu");
 const pdfFileInput = document.querySelector("#pdf-file-input");
+const researchPanel = document.querySelector("#research-panel");
 const documentTabs = document.querySelector("#document-tabs");
 const documentSwitcher = document.querySelector("#document-switcher");
 const documentSettingsHint = document.querySelector("#document-settings-hint");
@@ -64,6 +66,7 @@ let popupInteractions = null;
 let snipTool = null;
 let whitespaceManager = null;
 let graphInteractions = null;
+let researchPanelController = null;
 let widgetInteractionManager = null;
 let widgetCreationController = null;
 let detachDocumentFocusSync = null;
@@ -83,6 +86,7 @@ const documentManager = createDocumentManager();
 let lastPdfWidgetId = null;
 let lastReferenceWidgetId = null;
 let lastDocumentUiRenderKey = "";
+let researchCaptures = [];
 
 let restoringContext = false;
 let persistTimer = null;
@@ -441,6 +445,118 @@ function buildPopupMetadata({
           : nowIso(),
     },
   };
+}
+
+function normalizeCitation(candidate = {}, defaults = {}) {
+  const source = candidate && typeof candidate === "object" ? candidate : {};
+  const sourceTitle =
+    typeof source.sourceTitle === "string" && source.sourceTitle.trim()
+      ? source.sourceTitle.trim()
+      : typeof defaults.sourceTitle === "string"
+        ? defaults.sourceTitle
+        : "Source";
+  const url =
+    typeof source.url === "string" && source.url.trim()
+      ? source.url.trim()
+      : typeof defaults.url === "string"
+        ? defaults.url
+        : "";
+  const snippetType =
+    source.snippetType === "image" || source.snippetType === "definition"
+      ? source.snippetType
+      : defaults.snippetType === "image" || defaults.snippetType === "definition"
+        ? defaults.snippetType
+        : "text";
+  const attributionText =
+    typeof source.attributionText === "string" && source.attributionText.trim()
+      ? source.attributionText.trim()
+      : typeof defaults.attributionText === "string"
+        ? defaults.attributionText
+        : sourceTitle;
+
+  const citation = {
+    sourceTitle,
+    url,
+    accessedAt:
+      typeof source.accessedAt === "string" && source.accessedAt.trim() ? source.accessedAt : nowIso(),
+    snippetType,
+    attributionText,
+  };
+
+  if (typeof source.author === "string" && source.author.trim()) {
+    citation.author = source.author.trim();
+  }
+  if (typeof source.publisher === "string" && source.publisher.trim()) {
+    citation.publisher = source.publisher.trim();
+  }
+
+  return citation;
+}
+
+function normalizeResearchCapture(candidate) {
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+
+  const contentType =
+    candidate.contentType === "image" || candidate.contentType === "definition"
+      ? candidate.contentType
+      : "text";
+  const content = typeof candidate.content === "string" ? candidate.content.trim() : "";
+  if (!content) {
+    return null;
+  }
+
+  const citation = normalizeCitation(candidate.citation, {
+    snippetType: contentType,
+  });
+  if (!citation.url || !citation.sourceTitle || !citation.attributionText) {
+    return null;
+  }
+
+  return {
+    id:
+      typeof candidate.id === "string" && candidate.id.trim()
+        ? candidate.id
+        : makeId("capture"),
+    contextId:
+      typeof candidate.contextId === "string" && candidate.contextId.trim()
+        ? candidate.contextId
+        : activeContextId ?? null,
+    contentType,
+    content,
+    citation,
+  };
+}
+
+function researchCaptureKey(capture) {
+  return [
+    capture.contextId ?? "",
+    capture.contentType,
+    capture.content,
+    capture.citation.url,
+    capture.citation.attributionText,
+  ].join("|");
+}
+
+function upsertResearchCapture(captureCandidate) {
+  const normalized = normalizeResearchCapture(captureCandidate);
+  if (!normalized) {
+    return null;
+  }
+
+  const key = researchCaptureKey(normalized);
+  const existing = researchCaptures.find((entry) => researchCaptureKey(entry) === key);
+  if (existing) {
+    return existing;
+  }
+
+  researchCaptures.push(normalized);
+  return normalized;
+}
+
+function getResearchCaptureById(captureId) {
+  return researchCaptures.find((entry) => entry.id === captureId) ?? null;
 }
 
 function clearRuntimeWidgets() {
@@ -857,6 +973,7 @@ function persistActiveWorkspace() {
   contextWorkspaceStore.saveFromRuntime({
     contextId: activeContextId,
     runtime,
+    researchCaptures,
     documents: persisted.documents,
     documentBindings: persisted.documentBindings,
     activeDocumentId: persisted.activeDocumentId,
@@ -1001,6 +1118,81 @@ async function ensureGraphFeatures() {
   return graphInteractions;
 }
 
+async function createReferencePopupFromResearchCapture(capture, intent = null) {
+  const normalizedCapture = normalizeResearchCapture(capture);
+  if (!normalizedCapture) {
+    throw new Error("Invalid research capture payload.");
+  }
+
+  const persistedCapture = upsertResearchCapture(normalizedCapture);
+  if (!persistedCapture) {
+    throw new Error("Research capture is incomplete.");
+  }
+
+  const citation = persistedCapture.citation;
+  const hasImage = persistedCapture.contentType === "image";
+
+  return createReferencePopupWidget({
+    intent:
+      normalizeCreationIntent(intent) ??
+      createCreationIntent({
+        type: "reference-popup",
+        anchor: viewportCenterAnchor(),
+        sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+        createdFrom: "manual",
+      }),
+    definition: {
+      size: hasImage ? { width: 360, height: 280 } : { width: 360, height: 260 },
+      metadata: {
+        title: citation.attributionText,
+        popupMetadata: {
+          type: persistedCapture.contentType === "definition" ? "definition-citation" : "research-citation",
+          tags: ["research", persistedCapture.contentType],
+          sourceDocumentId: resolvePopupSourceDocumentId(intent),
+        },
+      },
+      dataPayload: {
+        imageDataUrl: hasImage ? persistedCapture.content : null,
+        sourceLabel: citation.sourceTitle,
+        contentType: persistedCapture.contentType,
+        textContent: hasImage ? "" : persistedCapture.content,
+        citation,
+        researchCaptureId: persistedCapture.id,
+      },
+    },
+  });
+}
+
+async function ensureResearchPanel() {
+  if (researchPanelController) {
+    return researchPanelController;
+  }
+
+  const researchModule = await import("./features/research/research-panel.js");
+  loadedModules.add("research-panel");
+  if (loadedModulesOutput) {
+    loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
+  }
+
+  researchPanelController = researchModule.createResearchPanelController({
+    panelElement: researchPanel,
+    toggleButton: toggleResearchPanelButton,
+    getActiveContextId: () => activeContextId,
+    getActiveSourceWidgetId: () => runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+    onCapture: async (capture) => {
+      const intent = createCreationIntent({
+        type: "reference-popup",
+        anchor: viewportCenterAnchor(),
+        sourceWidgetId: capture.sourceWidgetId ?? runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+        createdFrom: "manual",
+      });
+      await createReferencePopupFromResearchCapture(capture, intent);
+    },
+  });
+
+  return researchPanelController;
+}
+
 async function createExpandedAreaWidget(definition = {}, intent = null) {
   const normalizedIntent = normalizeCreationIntent(intent);
   const requestedSize = definition.size ?? { width: 420, height: 260 };
@@ -1114,7 +1306,11 @@ async function createReferencePopupWidget({ definition = {}, intent = null } = {
     ),
     dataPayload: {
       imageDataUrl: definition.dataPayload?.imageDataUrl ?? null,
+      textContent: definition.dataPayload?.textContent ?? "",
       sourceLabel: definition.dataPayload?.sourceLabel ?? "Manual",
+      contentType: definition.dataPayload?.contentType ?? "text",
+      citation: definition.dataPayload?.citation ?? null,
+      researchCaptureId: definition.dataPayload?.researchCaptureId ?? null,
     },
     collapsed: definition.collapsed,
   });
@@ -1159,6 +1355,10 @@ async function createReferencePopupFromSnip({ dataUrl, width, height, intent = n
       },
       dataPayload: {
         imageDataUrl: dataUrl,
+        contentType: "image",
+        textContent: "",
+        citation: null,
+        researchCaptureId: null,
         sourceLabel: "Quick Snip",
       },
     },
@@ -1325,6 +1525,7 @@ async function restoreWorkspaceForActiveContext() {
       activeDocumentId: null,
       validWidgetIds: [],
     });
+    researchCaptures = [];
     lastPdfWidgetId = null;
     lastReferenceWidgetId = null;
 
@@ -1336,6 +1537,9 @@ async function restoreWorkspaceForActiveContext() {
       activeDocumentId: workspace.activeWorkspaceState.activeDocumentId,
       validWidgetIds: workspace.widgets.map((entry) => entry.id),
     });
+    researchCaptures = Array.isArray(workspace.researchCaptures)
+      ? workspace.researchCaptures.map((entry) => normalizeResearchCapture(entry)).filter((entry) => entry !== null)
+      : [];
     lastPdfWidgetId = workspace.activeWorkspaceState.lastPdfWidgetId;
     lastReferenceWidgetId = workspace.activeWorkspaceState.lastReferenceWidgetId;
 
@@ -1377,6 +1581,42 @@ async function restoreWorkspaceForActiveContext() {
         runtime.addWidget(widget);
       } catch (error) {
         console.error(`Failed to restore widget ${serializedWidget.id}:`, error);
+      }
+    }
+
+    for (const widget of runtime.listWidgets()) {
+      if (!widget || widget.type !== "reference-popup") {
+        continue;
+      }
+
+      const contentType =
+        widget.contentType === "image" || widget.contentType === "definition" ? widget.contentType : "text";
+      const content =
+        contentType === "image"
+          ? typeof widget.imageDataUrl === "string"
+            ? widget.imageDataUrl
+            : ""
+          : typeof widget.textContent === "string"
+            ? widget.textContent
+            : "";
+
+      if (!content) {
+        continue;
+      }
+
+      const normalized = upsertResearchCapture({
+        id:
+          typeof widget.researchCaptureId === "string" && widget.researchCaptureId.trim()
+            ? widget.researchCaptureId
+            : makeId("capture"),
+        contextId: activeContextId,
+        contentType,
+        content,
+        citation: widget.citation,
+      });
+
+      if (normalized) {
+        widget.researchCaptureId = normalized.id;
       }
     }
 
@@ -1605,7 +1845,70 @@ async function importWidgetsFromAnotherContext() {
   }
 
   const importedReferenceWidgets = importedWidgets.filter((widget) => widget.type === "reference-popup");
+  const sourceCaptureById = new Map(
+    (sourceWorkspace.researchCaptures ?? []).map((entry) => [entry.id, entry]),
+  );
+  const captureIdMap = new Map();
   for (const widget of importedReferenceWidgets) {
+    if (typeof widget.researchCaptureId === "string" && widget.researchCaptureId.trim()) {
+      const sourceCapture = sourceCaptureById.get(widget.researchCaptureId);
+      if (sourceCapture) {
+        let mappedCaptureId = captureIdMap.get(sourceCapture.id) ?? null;
+        if (!mappedCaptureId) {
+          const importedCapture = upsertResearchCapture({
+            ...sourceCapture,
+            id: makeId("capture"),
+            contextId: activeContextId,
+          });
+          if (importedCapture) {
+            mappedCaptureId = importedCapture.id;
+            captureIdMap.set(sourceCapture.id, importedCapture.id);
+          }
+        }
+
+        if (mappedCaptureId) {
+          const importedCapture = getResearchCaptureById(mappedCaptureId);
+          widget.researchCaptureId = mappedCaptureId;
+          if (importedCapture) {
+            widget.contentType = importedCapture.contentType;
+            widget.citation = { ...importedCapture.citation };
+            if (importedCapture.contentType === "image") {
+              widget.imageDataUrl = importedCapture.content;
+              widget.textContent = "";
+            } else {
+              widget.textContent = importedCapture.content;
+            }
+            if (importedCapture.citation.sourceTitle) {
+              widget.sourceLabel = importedCapture.citation.sourceTitle;
+            }
+          }
+        }
+      }
+    }
+
+    if (!widget.researchCaptureId && widget.citation) {
+      const contentType =
+        widget.contentType === "image" || widget.contentType === "definition" ? widget.contentType : "text";
+      const content =
+        contentType === "image"
+          ? typeof widget.imageDataUrl === "string"
+            ? widget.imageDataUrl
+            : ""
+          : typeof widget.textContent === "string"
+            ? widget.textContent
+            : "";
+      const importedCapture = upsertResearchCapture({
+        id: makeId("capture"),
+        contextId: activeContextId,
+        contentType,
+        content,
+        citation: widget.citation,
+      });
+      if (importedCapture) {
+        widget.researchCaptureId = importedCapture.id;
+      }
+    }
+
     bindReferenceToActiveDocument(widget.id);
   }
 
@@ -1712,6 +2015,19 @@ function wireBaseEventHandlers() {
     toolsPanelOpen = !toolsPanelOpen;
     window.localStorage.setItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
     syncToolsUi();
+  });
+
+  toggleResearchPanelButton?.addEventListener("click", async () => {
+    toggleResearchPanelButton.disabled = true;
+    try {
+      const panel = await ensureResearchPanel();
+      panel.toggle();
+    } catch (error) {
+      console.error(error);
+      window.alert(`Research panel failed: ${error.message}`);
+    } finally {
+      toggleResearchPanelButton.disabled = false;
+    }
   });
 
   popupAvoidStylusToggle?.addEventListener("change", (event) => {
