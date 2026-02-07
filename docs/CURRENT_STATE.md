@@ -1,7 +1,7 @@
 # CURRENT_STATE
 
 ## Current Sprint
-- Sprint 15 (`docs/SPRINT_15_Ink_Gestures_and_Search_Indexing.md`) has now been implemented onto current `main`.
+- Sprint 16 (`docs/SPRINT_16_Peek_Mode_and_World_Scale_Semantics.md`) has now been implemented onto current `main`.
 - Sprint 10 and Sprint 12 remain implemented; Sprint 11 remains skipped per directive.
 
 ## What Exists Today
@@ -26,17 +26,18 @@
   - Research panel capture flow (lazy-loaded): `src/features/research/research-panel.js`
   - Search index pipeline + search panel (lazy-loaded): `src/features/search/`
   - Pen gesture recognizer + bindings: `src/features/gestures/pen-gestures.js`
+  - World-size normalization utilities: `src/features/widget-system/world-sizing.js`
   - Context metadata store: `src/features/contexts/context-store.js`
   - Context-scoped workspace persistence: `src/features/contexts/context-workspace-store.js`
   - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
 
 ## In Progress
 - No active blocker.
-- Sprint 15 gestures/search flow is now active:
-  - Search panel provides query, next/prev navigation, and jump-to-widget focus.
-  - Search index entries are rebuilt incrementally from widget metadata/content and batched with debounce.
-  - Pen gesture preferences support enable flags and configurable bindings.
-  - Ink now supports tool mode switching (`pen` / `eraser`) with gesture-triggered actions.
+- Sprint 16 peek/scale flow is now active:
+  - Transient peek mode is available via hold controls (button hold and spacebar hold).
+  - Canvas runtime exposes explicit view mode (`interactive` / `peek`) and renders low-detail snapshots in peek.
+  - Widget creators now normalize requested sizes to deterministic world-unit defaults.
+  - New widget placement includes world-space placement metadata at insertion time.
 
 ## Blockers
 - None.
@@ -82,11 +83,15 @@
   - `GesturePrefs`: enable flags + per-gesture bindings (`doubleTap`, `barrelTap`)
   - `SearchIndexEntry`: `{ id, contextId, widgetId, fields, updatedAt }`
   - Search indexing remains in-memory, context-aware, and debounced on widget mutations.
+- World sizing and placement now follow:
+  - Optional world-size config by type loaded from `notes-app.world-size-config.v1`.
+  - Creator defaults are normalized in world units per widget type.
+  - Placement metadata is attached to created widgets under `metadata.placementMetadata`.
 
 ## Next Actions
-1. Run tablet/stylus QA for double-tap and barrel-tap gesture paths across supported and unsupported hardware.
-2. Stress test search indexing with large widget counts and validate jump-to-result camera focus behavior.
-3. Add regression tests for eraser interactions and search result ranking/index invalidation.
+1. Run QA for peek mode with mixed widget density and active search/gesture states.
+2. Validate deterministic creator sizing/placement across multiple zoom levels and insertion paths (toolbar, creation menu, snip flow).
+3. Add regression tests for peek render policy and world-size normalization edge cases.
 
 ## Verification Status
 - `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.

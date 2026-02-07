@@ -1,12 +1,13 @@
 import { Camera2D } from "./camera.js";
 
 export class CanvasRuntime {
-  constructor({ canvas, onCameraChange }) {
+  constructor({ canvas, onCameraChange, onViewModeChange }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.camera = new Camera2D();
     this.widgets = [];
     this.onCameraChange = onCameraChange;
+    this.onViewModeChange = onViewModeChange;
     this._lastFrameAt = performance.now();
     this._dragging = false;
     this._lastPointer = { x: 0, y: 0 };
@@ -18,6 +19,7 @@ export class CanvasRuntime {
     this._overlayLayers = [];
     this._selectedWidgetId = null;
     this._focusedWidgetId = null;
+    this._viewMode = "interactive";
 
     if (!this.ctx) {
       throw new Error("Canvas 2D context unavailable.");
@@ -132,6 +134,29 @@ export class CanvasRuntime {
 
   getFocusedWidgetId() {
     return this._focusedWidgetId;
+  }
+
+  getViewMode() {
+    return this._viewMode;
+  }
+
+  isPeekMode() {
+    return this._viewMode === "peek";
+  }
+
+  setViewMode(nextMode) {
+    const mode = nextMode === "peek" ? "peek" : "interactive";
+    if (mode === this._viewMode) {
+      return this._viewMode;
+    }
+
+    this._viewMode = mode;
+    if (typeof this.onViewModeChange === "function") {
+      this.onViewModeChange({
+        mode: this._viewMode,
+      });
+    }
+    return this._viewMode;
   }
 
   _bindEvents() {
@@ -344,9 +369,14 @@ export class CanvasRuntime {
         continue;
       }
 
+      if (this._viewMode === "peek" && handler.allowInPeek !== true) {
+        continue;
+      }
+
       const handled = handler[handlerName](event, {
         camera: this.camera,
         canvas: this.canvas,
+        viewMode: this._viewMode,
       });
       if (handled) {
         return true;
@@ -371,22 +401,34 @@ export class CanvasRuntime {
       height,
       canvas: this.canvas,
       dpr: window.devicePixelRatio || 1,
+      viewMode: this._viewMode,
+      lod: this._viewMode === "peek" ? "low" : "full",
     };
+    const visibleWorld = this._visibleWorldBounds(width, height);
+    const peekMode = this._viewMode === "peek";
 
     this.ctx.clearRect(0, 0, width, height);
-    this._drawGrid(width, height);
+    this._drawGrid(width, height, this._viewMode);
 
     for (const widget of this.widgets) {
+      if (!this._isWidgetVisible(widget, visibleWorld)) {
+        continue;
+      }
+
       widget.update(dt);
-      if (widget.collapsed && typeof widget.renderSnapshot === "function") {
+      if ((peekMode || widget.collapsed) && typeof widget.renderSnapshot === "function") {
         widget.renderSnapshot(this.ctx, this.camera, renderContext);
       } else {
         widget.render(this.ctx, this.camera, renderContext);
       }
     }
 
+    const renderLayers = peekMode
+      ? this._renderLayers.filter((layer) => layer?.renderInPeek === true)
+      : this._renderLayers;
+
     // Render layers (for example ink) are painted after widgets so strokes remain visible on top.
-    for (const layer of this._renderLayers) {
+    for (const layer of renderLayers) {
       if (typeof layer.update === "function") {
         layer.update(dt);
       }
@@ -395,7 +437,11 @@ export class CanvasRuntime {
       }
     }
 
-    for (const layer of this._overlayLayers) {
+    const overlayLayers = peekMode
+      ? this._overlayLayers.filter((layer) => layer?.renderInPeek === true)
+      : this._overlayLayers;
+
+    for (const layer of overlayLayers) {
       if (typeof layer.update === "function") {
         layer.update(dt);
       }
@@ -405,9 +451,9 @@ export class CanvasRuntime {
     }
   }
 
-  _drawGrid(width, height) {
+  _drawGrid(width, height, viewMode = "interactive") {
     const { ctx, camera } = this;
-    const spacing = 80;
+    const spacing = viewMode === "peek" ? 180 : 80;
     const minWorld = camera.screenToWorld(0, 0);
     const maxWorld = camera.screenToWorld(width, height);
 
@@ -416,7 +462,7 @@ export class CanvasRuntime {
     const startY = Math.floor(minWorld.y / spacing) * spacing;
     const endY = Math.ceil(maxWorld.y / spacing) * spacing;
 
-    ctx.strokeStyle = "#d6dde5";
+    ctx.strokeStyle = viewMode === "peek" ? "#dbe3ea" : "#d6dde5";
     ctx.lineWidth = 1;
 
     for (let x = startX; x <= endX; x += spacing) {
@@ -436,13 +482,48 @@ export class CanvasRuntime {
     }
 
     const origin = camera.worldToScreen(0, 0);
-    ctx.strokeStyle = "#8ba0b2";
+    ctx.strokeStyle = viewMode === "peek" ? "#a2b4c4" : "#8ba0b2";
     ctx.beginPath();
     ctx.moveTo(origin.x - 12, origin.y);
     ctx.lineTo(origin.x + 12, origin.y);
     ctx.moveTo(origin.x, origin.y - 12);
     ctx.lineTo(origin.x, origin.y + 12);
     ctx.stroke();
+  }
+
+  _visibleWorldBounds(width, height) {
+    const worldA = this.camera.screenToWorld(0, 0);
+    const worldB = this.camera.screenToWorld(width, height);
+    return {
+      minX: Math.min(worldA.x, worldB.x),
+      maxX: Math.max(worldA.x, worldB.x),
+      minY: Math.min(worldA.y, worldB.y),
+      maxY: Math.max(worldA.y, worldB.y),
+    };
+  }
+
+  _isWidgetVisible(widget, visibleWorld) {
+    if (!widget || !visibleWorld) {
+      return false;
+    }
+
+    const bounds =
+      typeof widget.getInteractionBounds === "function"
+        ? widget.getInteractionBounds()
+        : { width: widget.size?.width ?? 0, height: widget.size?.height ?? 0 };
+
+    const margin = 140 / Math.max(0.25, this.camera.zoom);
+    const minX = widget.position.x;
+    const minY = widget.position.y;
+    const maxX = minX + Math.max(1, bounds.width);
+    const maxY = minY + Math.max(1, bounds.height);
+
+    return !(
+      maxX < visibleWorld.minX - margin ||
+      minX > visibleWorld.maxX + margin ||
+      maxY < visibleWorld.minY - margin ||
+      minY > visibleWorld.maxY + margin
+    );
   }
 
   _computeTouchMetrics() {

@@ -2,6 +2,12 @@ import { CanvasRuntime } from "./core/canvas/canvas-runtime.js";
 import { WidgetRegistry } from "./core/widgets/widget-registry.js";
 import { BackgroundWorkerClient } from "./core/workers/background-worker-client.js";
 import { createDocumentManager } from "./features/documents/document-manager.js";
+import {
+  loadWorldSizeConfig,
+  normalizeWorldSizeForType,
+  placementMetadata,
+  worldSizeFromScreenPixels,
+} from "./features/widget-system/world-sizing.js";
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 import { createWidgetCreationController } from "./features/widget-system/widget-creation-controller.js";
 import { createWidgetInteractionManager } from "./features/widget-system/widget-interaction-manager.js";
@@ -13,6 +19,7 @@ const detectWhitespaceButton = document.querySelector("#detect-whitespace");
 const startSnipButton = document.querySelector("#start-snip");
 const toggleResearchPanelButton = document.querySelector("#toggle-research-panel");
 const toggleSearchPanelButton = document.querySelector("#toggle-search-panel");
+const holdPeekModeButton = document.querySelector("#hold-peek-mode");
 const instantiateButton = document.querySelector("#instantiate-dummy");
 const instantiateExpandedButton = document.querySelector("#instantiate-expanded");
 const instantiateGraphButton = document.querySelector("#instantiate-graph");
@@ -27,6 +34,7 @@ const referenceCountOutput = document.querySelector("#reference-count");
 const popupBehaviorOutput = document.querySelector("#popup-behavior-state");
 const snipStateOutput = document.querySelector("#snip-state");
 const whitespaceStateOutput = document.querySelector("#whitespace-state");
+const peekStateOutput = document.querySelector("#peek-state");
 const whitespaceZoneCountOutput = document.querySelector("#whitespace-zone-count");
 const graphCountOutput = document.querySelector("#graph-count");
 const activeContextOutput = document.querySelector("#active-context");
@@ -98,6 +106,7 @@ let lastGestureStatus = {
   lastGesture: "idle",
   lastBinding: "none",
 };
+let worldSizeConfig = loadWorldSizeConfig();
 let inkStateSnapshot = {
   completedStrokes: 0,
   undoDepth: 0,
@@ -106,6 +115,9 @@ let inkStateSnapshot = {
   activeTool: "pen",
   enabled: false,
 };
+let peekModeActive = false;
+let peekModeHoldKeyboard = false;
+let peekModeHoldPointer = false;
 
 let contextStore = null;
 let contextWorkspaceStore = null;
@@ -139,6 +151,12 @@ const runtime = new CanvasRuntime({
   onCameraChange: ({ x, y, zoom }) => {
     if (cameraOutput) {
       cameraOutput.textContent = `x=${x.toFixed(1)}, y=${y.toFixed(1)}, zoom=${zoom.toFixed(2)}`;
+    }
+  },
+  onViewModeChange: ({ mode }) => {
+    peekModeActive = mode === "peek";
+    if (peekStateOutput) {
+      peekStateOutput.textContent = peekModeActive ? "on (LOD)" : "off";
     }
   },
 });
@@ -376,6 +394,63 @@ function setGesturePrefs(nextPrefs) {
   updateGestureUi();
 }
 
+function isTypingTarget(target) {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
+function resolveWorldSize(type, requestedSize = null) {
+  return normalizeWorldSizeForType(worldSizeConfig, type, requestedSize);
+}
+
+function resolvePlacementForCreation({ type, intent, requestedSize, fallbackPlacement }) {
+  const resolvedSize = resolveWorldSize(type, requestedSize);
+  const resolvedPosition = positionFromCreationIntent(intent, resolvedSize, fallbackPlacement);
+  const normalizedIntent = normalizeCreationIntent(intent);
+  const resolvedAnchor =
+    normalizedIntent?.anchor ??
+    anchorFromSourceWidget(normalizedIntent?.sourceWidgetId) ??
+    {
+      x: resolvedPosition.x + resolvedSize.width / 2,
+      y: resolvedPosition.y + resolvedSize.height / 2,
+    };
+
+  return {
+    size: resolvedSize,
+    position: resolvedPosition,
+    anchor: resolvedAnchor,
+  };
+}
+
+function setPeekMode(nextEnabled, source = "manual") {
+  const wantsPeek = Boolean(nextEnabled);
+  if (wantsPeek && inkStateSnapshot.activePointers > 0) {
+    if (peekStateOutput) {
+      peekStateOutput.textContent = "blocked (ink-active)";
+    }
+    return false;
+  }
+
+  runtime.setViewMode(wantsPeek ? "peek" : "interactive");
+  peekModeActive = runtime.isPeekMode();
+  if (peekStateOutput) {
+    peekStateOutput.textContent = peekModeActive ? `on (LOD/${source})` : "off";
+  }
+  if (holdPeekModeButton instanceof HTMLButtonElement) {
+    holdPeekModeButton.textContent = peekModeActive ? "Release Peek" : "Hold Peek";
+  }
+  return peekModeActive;
+}
+
+function updatePeekModeFromHolds(source) {
+  const shouldPeek = peekModeHoldKeyboard || peekModeHoldPointer;
+  setPeekMode(shouldPeek, source);
+}
+
 function viewportCenterAnchor() {
   return runtime.camera.screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
 }
@@ -496,20 +571,50 @@ function positionFromCreationIntent(intent, size, fallback) {
   };
 }
 
-function withCreationProvenance(metadata, intent) {
+function withCreationProvenance(metadata, intent, placement = null, widgetType = null) {
   const base = metadata && typeof metadata === "object" ? { ...metadata } : {};
   const normalized = normalizeCreationIntent(intent);
 
   if (!normalized) {
-    return base;
+    if (!placement) {
+      return base;
+    }
+
+    return {
+      ...base,
+      placementMetadata: placementMetadata({
+        type: widgetType ?? "reference-popup",
+        intent: null,
+        size: placement.size,
+        position: placement.position,
+        anchor: placement.anchor,
+        zoom: runtime.camera.zoom,
+      }),
+    };
   }
 
-  return {
+  const enriched = {
     ...base,
     createdFrom: normalized.createdFrom,
     creationSourceWidgetId: normalized.sourceWidgetId,
     creationContextId: normalized.contextId,
     creationCreatedAt: nowIso(),
+  };
+
+  if (!placement) {
+    return enriched;
+  }
+
+  return {
+    ...enriched,
+    placementMetadata: placementMetadata({
+      type: widgetType ?? normalized.type,
+      intent: normalized,
+      size: placement.size,
+      position: placement.position,
+      anchor: placement.anchor,
+      zoom: runtime.camera.zoom,
+    }),
   };
 }
 
@@ -744,10 +849,16 @@ function updateInkUi(state) {
 
   if (activePointers > 0) {
     inkStateOutput.textContent = activeTool === "eraser" ? "erasing" : "writing";
+    if (peekModeActive) {
+      setPeekMode(false, "ink-active");
+    }
     return;
   }
 
   inkStateOutput.textContent = inkFeature ? (enabled ? "active" : "paused") : "idle";
+  if ((peekModeHoldKeyboard || peekModeHoldPointer) && !peekModeActive) {
+    updatePeekModeFromHolds("hold");
+  }
 }
 
 function currentInkTool() {
@@ -1616,18 +1727,24 @@ async function ensureResearchPanel() {
 
 async function createExpandedAreaWidget(definition = {}, intent = null) {
   const normalizedIntent = normalizeCreationIntent(intent);
-  const requestedSize = definition.size ?? { width: 420, height: 260 };
+  const placement = resolvePlacementForCreation({
+    type: "expanded-area",
+    intent: normalizedIntent,
+    requestedSize: definition.size,
+    fallbackPlacement: defaultPlacement(-120, -60, 35, 28),
+  });
+  const finalPosition = definition.position ?? placement.position;
+  const finalPlacement = { ...placement, position: finalPosition };
   const widget = await registry.instantiate("expanded-area", {
     id: definition.id ?? makeId("expanded"),
-    position:
-      definition.position ??
-      positionFromCreationIntent(
-        normalizedIntent,
-        requestedSize,
-        defaultPlacement(-120, -60, 35, 28),
-      ),
-    size: definition.size,
-    metadata: withCreationProvenance(definition.metadata, normalizedIntent),
+    position: finalPosition,
+    size: placement.size,
+    metadata: withCreationProvenance(
+      definition.metadata,
+      normalizedIntent,
+      finalPlacement,
+      "expanded-area",
+    ),
     collapsed: definition.collapsed,
   });
 
@@ -1638,18 +1755,24 @@ async function createExpandedAreaWidget(definition = {}, intent = null) {
 
 async function createDummyWidget(definition = {}, intent = null) {
   const normalizedIntent = normalizeCreationIntent(intent);
-  const requestedSize = definition.size ?? { width: 300, height: 180 };
+  const placement = resolvePlacementForCreation({
+    type: "dummy",
+    intent: normalizedIntent,
+    requestedSize: definition.size,
+    fallbackPlacement: defaultPlacement(-150, -90, 40, 30),
+  });
+  const finalPosition = definition.position ?? placement.position;
+  const finalPlacement = { ...placement, position: finalPosition };
   const widget = await registry.instantiate("dummy", {
     id: definition.id ?? makeId("dummy"),
-    position:
-      definition.position ??
-      positionFromCreationIntent(
-        normalizedIntent,
-        requestedSize,
-        defaultPlacement(-150, -90, 40, 30),
-      ),
-    size: definition.size,
-    metadata: withCreationProvenance(definition.metadata, normalizedIntent),
+    position: finalPosition,
+    size: placement.size,
+    metadata: withCreationProvenance(
+      definition.metadata,
+      normalizedIntent,
+      finalPlacement,
+      "dummy",
+    ),
     collapsed: definition.collapsed,
   });
   runtime.addWidget(widget);
@@ -1659,22 +1782,23 @@ async function createDummyWidget(definition = {}, intent = null) {
 
 async function createPdfWidgetFromFile(file, definition = {}, intent = null) {
   const normalizedIntent = normalizeCreationIntent(intent);
-  const requestedSize = definition.size ?? { width: 480, height: 680 };
+  const placement = resolvePlacementForCreation({
+    type: "pdf-document",
+    intent: normalizedIntent,
+    requestedSize: definition.size,
+    fallbackPlacement: defaultPlacement(-180, -120, 36, 30),
+  });
+  const finalPosition = definition.position ?? placement.position;
+  const finalPlacement = { ...placement, position: finalPosition };
   const bytes = new Uint8Array(await file.arrayBuffer());
   const widget = await registry.instantiate("pdf-document", {
     id: definition.id ?? makeId("pdf"),
-    position:
-      definition.position ??
-      positionFromCreationIntent(
-        normalizedIntent,
-        requestedSize,
-        defaultPlacement(-180, -120, 36, 30),
-      ),
-    size: definition.size,
+    position: finalPosition,
+    size: placement.size,
     metadata: withCreationProvenance({
       title: definition.metadata?.title ?? file.name,
       ...(definition.metadata ?? {}),
-    }, normalizedIntent),
+    }, normalizedIntent, finalPlacement, "pdf-document"),
     dataPayload: {
       bytes,
       fileName: file.name,
@@ -1700,20 +1824,21 @@ async function createPdfWidgetFromFile(file, definition = {}, intent = null) {
 
 async function createReferencePopupWidget({ definition = {}, intent = null } = {}) {
   const normalizedIntent = normalizeCreationIntent(intent);
-  const requestedSize = definition.size ?? { width: 280, height: 210 };
+  const placement = resolvePlacementForCreation({
+    type: "reference-popup",
+    intent: normalizedIntent,
+    requestedSize: definition.size,
+    fallbackPlacement: defaultPlacement(-80, -80, 16, 14),
+  });
+  const finalPosition = definition.position ?? placement.position;
+  const finalPlacement = { ...placement, position: finalPosition };
 
   await ensureReferencePopupInteractions();
 
   const widget = await registry.instantiate("reference-popup", {
     id: definition.id ?? makeId("ref"),
-    position:
-      definition.position ??
-      positionFromCreationIntent(
-        normalizedIntent,
-        requestedSize,
-        defaultPlacement(-80, -80, 16, 14),
-      ),
-    size: definition.size,
+    position: finalPosition,
+    size: placement.size,
     metadata: withCreationProvenance(
       buildPopupMetadata({
         metadata: {
@@ -1724,6 +1849,8 @@ async function createReferencePopupWidget({ definition = {}, intent = null } = {
         fallbackTitle: definition.metadata?.title ?? "Reference",
       }),
       normalizedIntent,
+      finalPlacement,
+      "reference-popup",
     ),
     dataPayload: {
       imageDataUrl: definition.dataPayload?.imageDataUrl ?? null,
@@ -1760,13 +1887,18 @@ async function createReferencePopupWidget({ definition = {}, intent = null } = {
 async function createReferencePopupFromSnip({ dataUrl, width, height, intent = null }) {
   const normalizedIntent = normalizeCreationIntent(intent);
   await ensureReferencePopupInteractions();
+  const worldFromPixels = worldSizeFromScreenPixels(runtime.camera.zoom, { width, height });
+  const normalizedSnipSize = resolveWorldSize("reference-popup", {
+    width: worldFromPixels.width * 0.78,
+    height: worldFromPixels.height * 0.78 + 52,
+  });
 
   return createReferencePopupWidget({
     intent: normalizedIntent,
     definition: {
       size: {
-        width: Math.max(220, Math.min(420, Math.round(width * 0.78))),
-        height: Math.max(150, Math.min(360, Math.round(height * 0.78 + 52))),
+        width: Math.round(normalizedSnipSize.width),
+        height: Math.round(normalizedSnipSize.height),
       },
       metadata: {
         title: "Reference",
@@ -1907,19 +2039,25 @@ async function handleWhitespaceZoneToggle(pdfWidget, zone) {
 async function createGraphWidget(definition = {}, intent = null) {
   const normalizedIntent = normalizeCreationIntent(intent);
   await ensureGraphFeatures();
-  const requestedSize = definition.size ?? { width: 420, height: 280 };
+  const placement = resolvePlacementForCreation({
+    type: "graph-widget",
+    intent: normalizedIntent,
+    requestedSize: definition.size,
+    fallbackPlacement: defaultPlacement(-100, -40, 14, 12),
+  });
+  const finalPosition = definition.position ?? placement.position;
+  const finalPlacement = { ...placement, position: finalPosition };
 
   const widget = await registry.instantiate("graph-widget", {
     id: definition.id ?? makeId("graph"),
-    position:
-      definition.position ??
-      positionFromCreationIntent(
-        normalizedIntent,
-        requestedSize,
-        defaultPlacement(-100, -40, 14, 12),
-      ),
-    size: definition.size,
-    metadata: withCreationProvenance(definition.metadata, normalizedIntent),
+    position: finalPosition,
+    size: placement.size,
+    metadata: withCreationProvenance(
+      definition.metadata,
+      normalizedIntent,
+      finalPlacement,
+      "graph-widget",
+    ),
     dataPayload: definition.dataPayload,
     collapsed: definition.collapsed,
   });
@@ -2444,6 +2582,38 @@ function wireBaseEventHandlers() {
     syncToolsUi();
   });
 
+  const beginPeekHold = () => {
+    peekModeHoldPointer = true;
+    updatePeekModeFromHolds("button");
+  };
+  const endPeekHold = () => {
+    peekModeHoldPointer = false;
+    updatePeekModeFromHolds("button");
+  };
+
+  holdPeekModeButton?.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    holdPeekModeButton.setPointerCapture(event.pointerId);
+    beginPeekHold();
+  });
+  holdPeekModeButton?.addEventListener("pointerup", (event) => {
+    event.preventDefault();
+    if (holdPeekModeButton.hasPointerCapture(event.pointerId)) {
+      holdPeekModeButton.releasePointerCapture(event.pointerId);
+    }
+    endPeekHold();
+  });
+  holdPeekModeButton?.addEventListener("pointercancel", (event) => {
+    event.preventDefault();
+    if (holdPeekModeButton.hasPointerCapture(event.pointerId)) {
+      holdPeekModeButton.releasePointerCapture(event.pointerId);
+    }
+    endPeekHold();
+  });
+  holdPeekModeButton?.addEventListener("pointerleave", () => {
+    endPeekHold();
+  });
+
   toggleResearchPanelButton?.addEventListener("click", async () => {
     toggleResearchPanelButton.disabled = true;
     try {
@@ -2782,6 +2952,15 @@ function wireBaseEventHandlers() {
 
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
+    if ((key === " " || key === "spacebar") && !isTypingTarget(event.target)) {
+      if (!event.repeat) {
+        peekModeHoldKeyboard = true;
+        updatePeekModeFromHolds("space");
+      }
+      event.preventDefault();
+      return;
+    }
+
     if ((event.ctrlKey || event.metaKey) && key === "f") {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -2827,6 +3006,21 @@ function wireBaseEventHandlers() {
       event.preventDefault();
       inkFeature.redo();
     }
+  });
+
+  window.addEventListener("keyup", (event) => {
+    const key = event.key.toLowerCase();
+    if (key === " " || key === "spacebar") {
+      peekModeHoldKeyboard = false;
+      updatePeekModeFromHolds("space");
+      event.preventDefault();
+    }
+  });
+
+  window.addEventListener("blur", () => {
+    peekModeHoldKeyboard = false;
+    peekModeHoldPointer = false;
+    updatePeekModeFromHolds("blur");
   });
 
   window.addEventListener("beforeunload", () => {
@@ -3038,6 +3232,7 @@ async function bootstrap() {
 
   toolsPanelOpen = window.localStorage.getItem("notes-app.tools-panel.open") === "1";
   syncToolsUi();
+  setPeekMode(false, "boot");
   updateInkUi({
     completedStrokes: 0,
     undoDepth: 0,
