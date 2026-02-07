@@ -1,5 +1,16 @@
-const STORAGE_PREFIX = "notes-app.context.workspace.v1.";
+import { createAssetManager } from "../storage/asset-manager.js";
+import { readMigratedEnvelope, writeEnvelope } from "../storage/schema-migrations.js";
+import { STORAGE_SCHEMA_REGISTRY } from "../storage/schema-registry.js";
+
+const { workspace: WORKSPACE_SCHEMA } = STORAGE_SCHEMA_REGISTRY;
+const STORAGE_PREFIX = WORKSPACE_SCHEMA.keyPrefix;
 const LEGACY_GRAPH_KEY = "notes-app.graph.widgets.v1";
+const WORKSPACE_SCHEMA_VERSION = WORKSPACE_SCHEMA.schemaVersion;
+
+const WORKSPACE_MIGRATIONS = {
+  2: (candidate) => candidate,
+  3: (candidate) => candidate,
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -292,6 +303,163 @@ function decodeBytes(base64Value) {
   }
 }
 
+function appendAssetRef(refsByAssetId, assetId, ownerRef) {
+  if (!(refsByAssetId instanceof Map)) {
+    return;
+  }
+  if (typeof assetId !== "string" || !assetId.trim()) {
+    return;
+  }
+  if (typeof ownerRef !== "string" || !ownerRef.trim()) {
+    return;
+  }
+
+  const existing = refsByAssetId.get(assetId);
+  if (existing instanceof Set) {
+    existing.add(ownerRef);
+    return;
+  }
+
+  refsByAssetId.set(assetId, new Set([ownerRef]));
+}
+
+function canonicalizeWidgetAssets({ widget, contextId, assetManager, refsByAssetId }) {
+  if (!widget || typeof widget !== "object") {
+    return { widget, changed: false };
+  }
+
+  const ownerRef = assetManager.ownerRef(contextId, widget.id);
+  let changed = false;
+  const nextWidget = {
+    ...widget,
+    dataPayload: {
+      ...asPlainObject(widget.dataPayload),
+    },
+  };
+
+  if (nextWidget.type === "pdf-document") {
+    const pdfAssetId =
+      typeof nextWidget.dataPayload.pdfAssetId === "string" && nextWidget.dataPayload.pdfAssetId.trim()
+        ? nextWidget.dataPayload.pdfAssetId
+        : null;
+    if (pdfAssetId) {
+      const bytesFromAsset = assetManager.loadPdfBytes(pdfAssetId);
+      if (bytesFromAsset instanceof Uint8Array && bytesFromAsset.length > 0) {
+        appendAssetRef(refsByAssetId, pdfAssetId, ownerRef);
+        if (typeof nextWidget.dataPayload.bytesBase64 === "string" && nextWidget.dataPayload.bytesBase64) {
+          nextWidget.dataPayload.bytesBase64 = null;
+          changed = true;
+        }
+        return { widget: nextWidget, changed };
+      }
+
+      // Asset record was stale; fall back to inline bytes when available.
+      nextWidget.dataPayload.pdfAssetId = null;
+      changed = true;
+    }
+
+    const bytesBase64 =
+      typeof nextWidget.dataPayload.bytesBase64 === "string" ? nextWidget.dataPayload.bytesBase64 : null;
+    const bytes = decodeBytes(bytesBase64);
+    if (!(bytes instanceof Uint8Array)) {
+      return { widget: nextWidget, changed };
+    }
+
+    const registered = assetManager.registerPdfBytes(bytes, {
+      ownerId: ownerRef,
+    });
+    if (!registered) {
+      return { widget: nextWidget, changed };
+    }
+
+    nextWidget.dataPayload.pdfAssetId = registered.id;
+    nextWidget.dataPayload.bytesBase64 = null;
+    appendAssetRef(refsByAssetId, registered.id, ownerRef);
+    changed = true;
+    return { widget: nextWidget, changed };
+  }
+
+  if (nextWidget.type === "reference-popup") {
+    const imageAssetId =
+      typeof nextWidget.dataPayload.imageAssetId === "string" && nextWidget.dataPayload.imageAssetId.trim()
+        ? nextWidget.dataPayload.imageAssetId
+        : null;
+    if (imageAssetId) {
+      const dataUrlFromAsset = assetManager.loadImageDataUrl(imageAssetId);
+      if (typeof dataUrlFromAsset === "string" && dataUrlFromAsset.trim()) {
+        appendAssetRef(refsByAssetId, imageAssetId, ownerRef);
+        if (typeof nextWidget.dataPayload.imageDataUrl === "string" && nextWidget.dataPayload.imageDataUrl) {
+          nextWidget.dataPayload.imageDataUrl = null;
+          changed = true;
+        }
+        return { widget: nextWidget, changed };
+      }
+
+      // Asset record was stale; fall back to inline image data when available.
+      nextWidget.dataPayload.imageAssetId = null;
+      changed = true;
+    }
+
+    const imageDataUrl =
+      typeof nextWidget.dataPayload.imageDataUrl === "string" && nextWidget.dataPayload.imageDataUrl.trim()
+        ? nextWidget.dataPayload.imageDataUrl
+        : null;
+    if (!imageDataUrl) {
+      return { widget: nextWidget, changed };
+    }
+
+    const registered = assetManager.registerImageDataUrl(imageDataUrl, {
+      ownerId: ownerRef,
+      derivedFrom:
+        typeof nextWidget.dataPayload.researchCaptureId === "string"
+          ? nextWidget.dataPayload.researchCaptureId
+          : null,
+    });
+    if (!registered) {
+      return { widget: nextWidget, changed };
+    }
+
+    nextWidget.dataPayload.imageAssetId = registered.id;
+    nextWidget.dataPayload.imageDataUrl = null;
+    appendAssetRef(refsByAssetId, registered.id, ownerRef);
+    changed = true;
+    return { widget: nextWidget, changed };
+  }
+
+  return { widget: nextWidget, changed };
+}
+
+function canonicalizeWorkspaceAssets(workspace, contextId, assetManager) {
+  const refsByAssetId = new Map();
+  const nextWidgets = [];
+  let changed = false;
+
+  for (const widget of workspace.widgets) {
+    const result = canonicalizeWidgetAssets({
+      widget,
+      contextId,
+      assetManager,
+      refsByAssetId,
+    });
+    if (result.changed) {
+      changed = true;
+    }
+    nextWidgets.push(result.widget);
+  }
+
+  return {
+    workspace: changed
+      ? {
+          ...workspace,
+          widgets: nextWidgets,
+          updatedAt: nowIso(),
+        }
+      : workspace,
+    refsByAssetId,
+    changed,
+  };
+}
+
 function defaultWorkspace(contextId) {
   return {
     version: 1,
@@ -339,6 +507,10 @@ function sanitizeSerializedWidget(candidate, contextId) {
       typeof dataPayload.fileName === "string" && dataPayload.fileName
         ? dataPayload.fileName
         : "document.pdf";
+    widget.dataPayload.pdfAssetId =
+      typeof dataPayload.pdfAssetId === "string" && dataPayload.pdfAssetId.trim()
+        ? dataPayload.pdfAssetId
+        : null;
     widget.dataPayload.bytesBase64 =
       typeof dataPayload.bytesBase64 === "string" ? dataPayload.bytesBase64 : null;
 
@@ -349,6 +521,10 @@ function sanitizeSerializedWidget(candidate, contextId) {
 
   if (widget.type === "reference-popup") {
     const dataPayload = asPlainObject(candidate.dataPayload);
+    widget.dataPayload.imageAssetId =
+      typeof dataPayload.imageAssetId === "string" && dataPayload.imageAssetId.trim()
+        ? dataPayload.imageAssetId
+        : null;
     widget.dataPayload.imageDataUrl =
       typeof dataPayload.imageDataUrl === "string" ? dataPayload.imageDataUrl : null;
     widget.dataPayload.textContent =
@@ -359,7 +535,7 @@ function sanitizeSerializedWidget(candidate, contextId) {
         : "Imported";
     widget.dataPayload.contentType = normalizeContentType(
       dataPayload.contentType,
-      widget.dataPayload.imageDataUrl ? "image" : "text",
+      widget.dataPayload.imageDataUrl || widget.dataPayload.imageAssetId ? "image" : "text",
     );
     widget.dataPayload.researchCaptureId =
       typeof dataPayload.researchCaptureId === "string" && dataPayload.researchCaptureId.trim()
@@ -370,7 +546,7 @@ function sanitizeSerializedWidget(candidate, contextId) {
       fallbackSourceTitle: widget.dataPayload.sourceLabel,
     });
 
-    const hasImage = Boolean(widget.dataPayload.imageDataUrl);
+    const hasImage = Boolean(widget.dataPayload.imageDataUrl || widget.dataPayload.imageAssetId);
     const hasText = Boolean(widget.dataPayload.textContent.trim());
     if (widget.dataPayload.contentType === "image" && !hasImage && hasText) {
       widget.dataPayload.contentType = "text";
@@ -582,7 +758,7 @@ function sanitizeLegacyGraphs(candidate, contextId) {
     .filter((entry) => entry !== null);
 }
 
-function serializeWidget(widget, contextId) {
+function serializeWidget(widget, contextId, { assetManager = null, refsByAssetId = null } = {}) {
   if (!widget || typeof widget !== "object") {
     return null;
   }
@@ -612,6 +788,8 @@ function serializeWidget(widget, contextId) {
   };
 
   if (base.type === "pdf-document") {
+    const ownerRef = assetManager?.ownerRef?.(contextId, base.id) ?? null;
+
     base.dataPayload.fileName =
       typeof widget.fileName === "string" && widget.fileName
         ? widget.fileName
@@ -619,7 +797,18 @@ function serializeWidget(widget, contextId) {
           ? state.metadata.title
           : "document.pdf";
 
-    base.dataPayload.bytesBase64 = encodeBytes(widget.pdfBytes);
+    const registeredPdfAsset =
+      assetManager && widget.pdfBytes instanceof Uint8Array
+        ? assetManager.registerPdfBytes(widget.pdfBytes, { ownerId: ownerRef })
+        : null;
+    if (registeredPdfAsset) {
+      base.dataPayload.pdfAssetId = registeredPdfAsset.id;
+      base.dataPayload.bytesBase64 = null;
+      appendAssetRef(refsByAssetId, registeredPdfAsset.id, ownerRef);
+    } else {
+      base.dataPayload.pdfAssetId = null;
+      base.dataPayload.bytesBase64 = encodeBytes(widget.pdfBytes);
+    }
 
     if (typeof widget.getWhitespaceZones === "function") {
       base.runtimeState.whitespaceZones = normalizeWhitespaceZones(widget.getWhitespaceZones());
@@ -629,7 +818,19 @@ function serializeWidget(widget, contextId) {
   }
 
   if (base.type === "reference-popup") {
-    base.dataPayload.imageDataUrl = typeof widget.imageDataUrl === "string" ? widget.imageDataUrl : null;
+    const ownerRef = assetManager?.ownerRef?.(contextId, base.id) ?? null;
+    const imageDataUrl = typeof widget.imageDataUrl === "string" ? widget.imageDataUrl : null;
+    const registeredImageAsset =
+      assetManager && imageDataUrl
+        ? assetManager.registerImageDataUrl(imageDataUrl, {
+            ownerId: ownerRef,
+            derivedFrom:
+              typeof widget.researchCaptureId === "string" ? widget.researchCaptureId : null,
+          })
+        : null;
+
+    base.dataPayload.imageAssetId = registeredImageAsset ? registeredImageAsset.id : null;
+    base.dataPayload.imageDataUrl = registeredImageAsset ? null : imageDataUrl;
     base.dataPayload.textContent = typeof widget.textContent === "string" ? widget.textContent : "";
     base.dataPayload.sourceLabel =
       typeof widget.sourceLabel === "string" && widget.sourceLabel ? widget.sourceLabel : "Snip";
@@ -645,6 +846,10 @@ function serializeWidget(widget, contextId) {
       snippetType: base.dataPayload.contentType,
       fallbackSourceTitle: base.dataPayload.sourceLabel,
     });
+
+    if (registeredImageAsset) {
+      appendAssetRef(refsByAssetId, registeredImageAsset.id, ownerRef);
+    }
     return sanitizeSerializedWidget(base, contextId);
   }
 
@@ -689,20 +894,28 @@ function copyResearchCapture(entry, contextId) {
 }
 
 export function createContextWorkspaceStore({ storage = window.localStorage } = {}) {
+  const assetManager = createAssetManager({ storage });
+
   return {
     loadWorkspace(contextId) {
       const key = keyForContext(contextId);
       let workspace = defaultWorkspace(contextId);
 
-      try {
-        const raw = storage.getItem(key);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          workspace = sanitizeWorkspace(parsed, contextId);
-        }
-      } catch (_error) {
-        workspace = defaultWorkspace(contextId);
-      }
+      const loaded = readMigratedEnvelope({
+        storage,
+        key,
+        targetSchemaVersion: WORKSPACE_SCHEMA_VERSION,
+        legacySchemaVersion: 1,
+        defaultData: defaultWorkspace(contextId),
+        migrations: WORKSPACE_MIGRATIONS,
+        onMigrationStep: ({ from, to }) => {
+          console.info(`[storage] migrated workspace ${contextId} ${from} -> ${to}`);
+        },
+        onError: (error) => {
+          console.warn(`[storage] failed to read workspace ${contextId}, reset to defaults.`, error);
+        },
+      });
+      workspace = sanitizeWorkspace(loaded.data, contextId);
 
       try {
         const legacyRaw = storage.getItem(LEGACY_GRAPH_KEY);
@@ -723,6 +936,13 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         }
       } catch (_error) {
         // Ignore legacy migration errors and continue with sanitized workspace.
+      }
+
+      const canonicalized = canonicalizeWorkspaceAssets(workspace, contextId, assetManager);
+      workspace = sanitizeWorkspace(canonicalized.workspace, contextId);
+      assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
+      if (canonicalized.changed) {
+        this.saveWorkspace(workspace);
       }
 
       return {
@@ -758,7 +978,17 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         contextId,
       );
 
-      storage.setItem(keyForContext(contextId), JSON.stringify(normalized));
+      const canonicalized = canonicalizeWorkspaceAssets(normalized, contextId, assetManager);
+      const workspace = sanitizeWorkspace(canonicalized.workspace, contextId);
+
+      assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
+      writeEnvelope({
+        storage,
+        key: keyForContext(contextId),
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        data: workspace,
+      });
+
       return true;
     },
 
@@ -774,10 +1004,10 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
     }) {
       const serializedWidgets = runtime
         .listWidgets()
-        .map((widget) => serializeWidget(widget, contextId))
+        .map((widget) => serializeWidget(widget, contextId, { assetManager }))
         .filter((entry) => entry !== null);
 
-      return this.saveWorkspace({
+      const saved = this.saveWorkspace({
         contextId,
         widgets: serializedWidgets,
         researchCaptures,
@@ -789,10 +1019,14 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
           lastReferenceWidgetId,
         },
       });
+
+      return saved;
     },
 
     deleteWorkspace(contextId) {
       storage.removeItem(keyForContext(contextId));
+      assetManager.removeContextReferences(contextId);
+      assetManager.scheduleGarbageCollection({ delayMs: 120 });
     },
 
     toWidgetDefinition(serializedWidget) {
@@ -812,7 +1046,11 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       };
 
       if (normalized.type === "pdf-document") {
-        const bytes = decodeBytes(normalized.dataPayload.bytesBase64);
+        const bytesFromAsset =
+          typeof normalized.dataPayload.pdfAssetId === "string"
+            ? assetManager.loadPdfBytes(normalized.dataPayload.pdfAssetId)
+            : null;
+        const bytes = bytesFromAsset ?? decodeBytes(normalized.dataPayload.bytesBase64);
         if (!(bytes instanceof Uint8Array)) {
           return null;
         }
@@ -820,6 +1058,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         definition.dataPayload = {
           bytes,
           fileName: normalized.dataPayload.fileName,
+          pdfAssetId: normalized.dataPayload.pdfAssetId,
         };
         definition.runtimeState = {
           whitespaceZones: normalizeWhitespaceZones(normalized.runtimeState.whitespaceZones),
@@ -827,8 +1066,14 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       }
 
       if (normalized.type === "reference-popup") {
+        const imageDataUrl =
+          typeof normalized.dataPayload.imageAssetId === "string"
+            ? assetManager.loadImageDataUrl(normalized.dataPayload.imageAssetId)
+            : normalized.dataPayload.imageDataUrl;
+
         definition.dataPayload = {
-          imageDataUrl: normalized.dataPayload.imageDataUrl,
+          imageDataUrl,
+          imageAssetId: normalized.dataPayload.imageAssetId,
           textContent: normalized.dataPayload.textContent,
           sourceLabel: normalized.dataPayload.sourceLabel,
           contentType: normalized.dataPayload.contentType,
@@ -906,6 +1151,11 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       }
 
       return clone;
+    },
+
+    runMaintenance() {
+      assetManager.scheduleGarbageCollection({ delayMs: 20, enforceBudget: false });
+      return assetManager.snapshot();
     },
   };
 }
