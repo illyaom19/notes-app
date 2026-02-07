@@ -131,17 +131,20 @@ function loadState(storage) {
 export function createContextStore({ storage = window.localStorage } = {}) {
   let state = loadState(storage);
 
-  function persist() {
-    storage.setItem(STORAGE_KEY, JSON.stringify(state));
+  function persist(nextState) {
+    try {
+      storage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+      return true;
+    } catch (error) {
+      console.warn("[storage] failed to persist context state.", error);
+      return false;
+    }
   }
 
-  function setActiveContextState(activeContextId) {
-    state = {
-      ...state,
-      activeContextState: {
-        activeContextId,
-        lastOpenedAt: nowIso(),
-      },
+  function nextActiveContextState(activeContextId) {
+    return {
+      activeContextId,
+      lastOpenedAt: nowIso(),
     };
   }
 
@@ -170,14 +173,27 @@ export function createContextStore({ storage = window.localStorage } = {}) {
       if (!state.contexts.some((entry) => entry.id === contextId)) {
         return false;
       }
-      setActiveContextState(contextId);
-      persist();
+      const nextState = {
+        ...state,
+        activeContextState: nextActiveContextState(contextId),
+      };
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
       return true;
     },
 
     touchActiveContext() {
-      setActiveContextState(state.activeContextState.activeContextId);
-      persist();
+      const nextState = {
+        ...state,
+        activeContextState: nextActiveContextState(state.activeContextState.activeContextId),
+      };
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
+      return true;
     },
 
     createContext(name, type = DEFAULT_CONTEXT_TYPE) {
@@ -195,12 +211,15 @@ export function createContextStore({ storage = window.localStorage } = {}) {
         updatedAt: timestamp,
       };
 
-      state = {
+      const nextState = {
         ...state,
         contexts: [...state.contexts, nextContext],
+        activeContextState: nextActiveContextState(nextContext.id),
       };
-      setActiveContextState(nextContext.id);
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
 
       return cloneContext(nextContext);
     },
@@ -228,11 +247,14 @@ export function createContextStore({ storage = window.localStorage } = {}) {
         return false;
       }
 
-      state = {
+      const nextState = {
         ...state,
         contexts: nextContexts,
       };
-      persist();
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
       return true;
     },
 
@@ -251,12 +273,15 @@ export function createContextStore({ storage = window.localStorage } = {}) {
           ? nextContexts[0].id
           : state.activeContextState.activeContextId;
 
-      state = {
+      const nextState = {
         ...state,
         contexts: nextContexts,
+        activeContextState: nextActiveContextState(nextActiveContextId),
       };
-      setActiveContextState(nextActiveContextId);
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
 
       return {
         deletedContextId: contextId,

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createNotebookDocumentLibraryStore } from "../../src/features/notebooks/notebook-document-library-store.js";
+import { STORAGE_SCHEMA_REGISTRY } from "../../src/features/storage/schema-registry.js";
 import { createMemoryStorage, installBrowserEnv } from "../helpers/browser-env.mjs";
 
 function createStore() {
@@ -52,6 +53,40 @@ test("notebook document library upserts and preserves source records", () => {
     const updatedBytes = store.loadDocumentBytes("nb-a", created.id);
     assert.ok(updatedBytes instanceof Uint8Array);
     assert.deepEqual(Array.from(updatedBytes), [97, 98, 99, 100]);
+  } finally {
+    restore();
+  }
+});
+
+test("document library rolls back asset refs when document persistence fails", () => {
+  const baseStorage = createMemoryStorage();
+  const storage = {
+    ...baseStorage,
+    setItem(key, value) {
+      if (key === "notes-app.notebook.documents.v1") {
+        throw new Error("QuotaExceededError");
+      }
+      baseStorage.setItem(key, value);
+    },
+  };
+  const restore = installBrowserEnv(storage);
+
+  try {
+    const store = createNotebookDocumentLibraryStore({ storage });
+    const created = store.upsertDocument("nb-fail", {
+      title: "Too Big",
+      sourceType: "pdf",
+      fileName: "too-big.pdf",
+      bytesBase64: "YWJj",
+    });
+    assert.equal(created, null);
+
+    const catalogRaw = storage.getItem(STORAGE_SCHEMA_REGISTRY.assets.catalogKey);
+    const catalog = catalogRaw ? JSON.parse(catalogRaw) : { data: { records: [] } };
+    const leakedRefs = (catalog.data?.records ?? [])
+      .flatMap((entry) => (Array.isArray(entry.refs) ? entry.refs : []))
+      .filter((ref) => typeof ref === "string" && ref.startsWith("doclib/nb-fail:"));
+    assert.equal(leakedRefs.length, 0);
   } finally {
     restore();
   }

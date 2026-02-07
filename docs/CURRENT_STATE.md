@@ -39,6 +39,23 @@
   - Production mode hides debug-heavy chrome (status + advanced controls) and keeps an intent-first quick action surface.
   - A lazy-loaded onboarding hint overlay now guides first-run flows and persists per-context dismissal/completion state.
 
+## Recent Fixes (2026-02-07)
+- Snip flow:
+  - Snip mode now auto-exits after one successful capture.
+  - Added explicit top-left snip notifier with `Exit snip mode` control (`#snip-mode-notifier`, `#snip-exit`).
+- Suggestion UX:
+  - Suggestion chips are now anchored per-suggestion (vertical alignment follows each suggestion source anchor), rather than a single stacked rail origin.
+- Context menu accessibility:
+  - Keyboard-triggered context menus are now supported for focused/selected widgets.
+  - Canvas creation context menu remains touch/pen-safe while allowing keyboard/open-center fallback on empty canvas.
+- Storage/quota resilience:
+  - Added guarded persistence (`try/catch`) for context store, notebook sections store, notebook library store, UI mode store, and world-size config store.
+  - Notebook document upsert now rolls back notebook asset references when notebook document state fails to persist, preventing leaked owner refs.
+  - Workspace canonicalization/legacy migration save failures are now surfaced with warnings and user-visible storage warning where applicable.
+- Terminology cleanup:
+  - Replaced remaining `Notes Sheet` UI labels/defaults with `Notes`.
+  - Removed stale onboarding copy referencing `Hold Peek`.
+
 ## Blockers
 - None.
 
@@ -178,6 +195,15 @@
 4. Decide whether to fully remove hidden/deferred research panel wiring or retain compatibility mode.
 
 ## Verification Status
+- `for f in $(git status --short | awk '{print $2}' | rg '\\.(js|mjs)$'); do node --check "$f" || exit 1; done` passed.
+- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (12/12), including new:
+  - `tests/ui/context-store.test.mjs`
+  - `tests/ui/world-sizing.test.mjs`
+  - storage failure-path coverage updates in:
+    - `tests/ui/notebook-document-library-store.test.mjs`
+    - `tests/ui/notebook-library-store.test.mjs`
+    - `tests/ui/notebook-sections-store.test.mjs`
+    - `tests/ui/ui-mode-store.test.mjs`
 - `for f in /home/illya/io_dev/notes-app/src/main.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-interaction-manager.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-creation-controller.js /home/illya/io_dev/notes-app/src/widgets/pdf/pdf-document-widget.js /home/illya/io_dev/notes-app/src/features/suggestions/suggestion-ui-controller.js /home/illya/io_dev/notes-app/tests/storage/context-workspace-store-assets.test.mjs; do node --check "$f" || exit 1; done` passed.
 - `node --test /home/illya/io_dev/notes-app/tests` passed (including new PDF persistence round-trip coverage in `tests/storage/context-workspace-store-assets.test.mjs`).
 - `node --check /home/illya/io_dev/notes-app/src/main.js /home/illya/io_dev/notes-app/src/features/widget-system/long-press-menu.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-creation-controller.js /home/illya/io_dev/notes-app/src/features/contexts/context-workspace-store.js` passed.

@@ -166,6 +166,11 @@ export function createWidgetCreationController({
     setActiveButton(buttonAtClientPoint(event.clientX, event.clientY));
   }
 
+  function focusedOrSelectedWidget() {
+    const widgetId = runtime.getFocusedWidgetId?.() ?? runtime.getSelectedWidgetId?.() ?? null;
+    return widgetId ? runtime.getWidgetById(widgetId) : null;
+  }
+
   const inputManager = {
     onPointerDown(event, { camera }) {
       lastPointerDown = {
@@ -376,15 +381,43 @@ export function createWidgetCreationController({
   };
 
   const onCanvasContextMenu = (event) => {
+    const hasScreenPoint =
+      Number.isFinite(event.clientX) &&
+      Number.isFinite(event.clientY) &&
+      (event.clientX !== 0 || event.clientY !== 0);
     const recentMouseRightClick =
       Date.now() - lastPointerDown.at < 700 &&
       lastPointerDown.pointerType === "mouse" &&
       lastPointerDown.button === 2;
+    const keyboardWidget = !hasScreenPoint ? focusedOrSelectedWidget() : null;
 
     // Always suppress native context menus (touch long-press, stylus press-hold, etc).
     event.preventDefault();
 
-    if (!recentMouseRightClick) {
+    if (!recentMouseRightClick && hasScreenPoint) {
+      return;
+    }
+
+    if (keyboardWidget) {
+      // Let the widget context-menu controller handle keyboard-triggered context menus.
+      return;
+    }
+
+    if (!recentMouseRightClick && !hasScreenPoint) {
+      const rect = canvas.getBoundingClientRect();
+      const centerOffsetX = rect.width / 2;
+      const centerOffsetY = rect.height / 2;
+      const anchor = runtime.camera.screenToWorld(centerOffsetX, centerOffsetY);
+      closeMenu();
+      event.stopImmediatePropagation();
+      openMenuAt({
+        clientX: rect.left + centerOffsetX,
+        clientY: rect.top + centerOffsetY,
+        anchor,
+        sourceWidgetId: null,
+        pointerId: null,
+      });
+      setActiveButton(null);
       return;
     }
 

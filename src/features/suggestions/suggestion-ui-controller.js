@@ -10,20 +10,28 @@ function compactLabel(suggestion) {
   return base.length > 36 ? `${base.slice(0, 33)}...` : base;
 }
 
-function railPositionForWidget(runtime, widget) {
+function railLeftForWidget(runtime, widget) {
   const bounds =
     typeof widget.getInteractionBounds === "function"
       ? widget.getInteractionBounds()
       : widget.size;
 
   const worldX = widget.position.x + Math.max(1, bounds.width) + 14;
-  const worldY = widget.position.y + 52;
-  const screen = runtime.camera.worldToScreen(worldX, worldY);
+  const screen = runtime.camera.worldToScreen(worldX, widget.position.y);
+  return clamp(screen.x, 8, window.innerWidth - 178);
+}
 
-  return {
-    left: clamp(screen.x, 8, window.innerWidth - 178),
-    top: clamp(screen.y, 8, window.innerHeight - 150),
-  };
+function suggestionWorldY(widget, suggestion, fallbackIndex) {
+  if (Number.isFinite(suggestion?.anchor?.y)) {
+    return suggestion.anchor.y;
+  }
+  return widget.position.y + 52 + fallbackIndex * 26;
+}
+
+function desiredScreenTop(runtime, widget, suggestion, fallbackIndex) {
+  const worldY = suggestionWorldY(widget, suggestion, fallbackIndex);
+  const screen = runtime.camera.worldToScreen(widget.position.x, worldY);
+  return clamp(screen.y - 12, 8, window.innerHeight - 40);
 }
 
 function buildActiveChip(suggestion) {
@@ -157,18 +165,46 @@ export function createSuggestionUiController({
       rootElement.hidden = false;
       rootElement.dataset.open = "true";
       rootElement.innerHTML = "";
+      rootElement.style.left = "0px";
+      rootElement.style.top = "0px";
 
-      const stack = document.createElement("div");
-      stack.className = "suggestion-rail-stack";
+      const railLeft = railLeftForWidget(runtime, focusedWidget);
+      const entries = [
+        ...proposed.slice(0, 6).map((suggestion, index) => ({
+          suggestion,
+          chip: buildActiveChip(suggestion),
+          rank: index,
+          desiredTop: desiredScreenTop(runtime, focusedWidget, suggestion, index),
+        })),
+        ...ghosted.slice(0, 8).map((suggestion, index) => ({
+          suggestion,
+          chip: buildGhostChip(suggestion),
+          rank: 100 + index,
+          desiredTop: desiredScreenTop(runtime, focusedWidget, suggestion, 6 + index),
+        })),
+      ];
 
-      for (const suggestion of proposed.slice(0, 6)) {
-        stack.append(buildActiveChip(suggestion));
+      entries.sort((a, b) => {
+        if (a.desiredTop !== b.desiredTop) {
+          return a.desiredTop - b.desiredTop;
+        }
+        return a.rank - b.rank;
+      });
+
+      let previousTop = -Infinity;
+      for (const entry of entries) {
+        const chip = entry.chip;
+        chip.classList.add("suggestion-rail-item");
+        let top = entry.desiredTop;
+        if (Number.isFinite(previousTop)) {
+          top = Math.max(top, previousTop + 34);
+        }
+        top = clamp(top, 8, window.innerHeight - 40);
+        chip.style.left = `${railLeft}px`;
+        chip.style.top = `${top}px`;
+        previousTop = top;
+        rootElement.append(chip);
       }
-      for (const suggestion of ghosted.slice(0, 8)) {
-        stack.append(buildGhostChip(suggestion));
-      }
-
-      rootElement.append(stack);
     },
 
     dispose() {

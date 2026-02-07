@@ -49,7 +49,11 @@ export function loadUiModeState({
 
 export function saveUiModeState(state, { storage = window.localStorage } = {}) {
   const normalized = normalizeUiModeState(state);
-  storage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+  try {
+    storage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+  } catch (error) {
+    console.warn("[storage] failed to persist ui mode.", error);
+  }
   return normalized;
 }
 
@@ -63,4 +67,3 @@ export function toggleUiMode(state) {
 export function isProductionMode(state) {
   return normalizeUiModeState(state).mode !== "debug";
 }
-

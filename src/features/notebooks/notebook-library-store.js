@@ -147,8 +147,14 @@ function loadState(storage) {
 export function createNotebookLibraryStore({ storage = window.localStorage } = {}) {
   let state = loadState(storage);
 
-  function persist() {
-    storage.setItem(STORAGE_KEY, JSON.stringify(state));
+  function persist(nextState) {
+    try {
+      storage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+      return true;
+    } catch (error) {
+      console.warn("[storage] failed to persist notebook library.", error);
+      return false;
+    }
   }
 
   function ensureNotebook(notebookId) {
@@ -157,7 +163,7 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
     }
 
     if (!state.notebooks[notebookId]) {
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -166,7 +172,10 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
           },
         },
       };
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
     }
 
     return state.notebooks[notebookId];
@@ -211,7 +220,7 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
         nextReferences[existingIndex] = updated;
       }
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -222,7 +231,10 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
         },
       };
 
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
       return cloneReference(updated);
     },
 
@@ -255,7 +267,7 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
       };
       nextReferences[existingIndex] = updated;
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -265,7 +277,10 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
           },
         },
       };
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
       return cloneReference(updated);
     },
 
@@ -280,7 +295,7 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
         return false;
       }
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -290,7 +305,10 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
           },
         },
       };
-      persist();
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
       return true;
     },
 
@@ -301,11 +319,14 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
 
       const notebooks = { ...state.notebooks };
       delete notebooks[notebookId];
-      state = {
+      const nextState = {
         ...state,
         notebooks,
       };
-      persist();
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
       return true;
     },
   };

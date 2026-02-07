@@ -339,6 +339,8 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
       };
 
       if (!persist(nextState)) {
+        // Roll back owner refs for any newly registered asset when the notebook state write fails.
+        syncNotebookAssetReferences(notebookId, notebook);
         return null;
       }
       state = nextState;

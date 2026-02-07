@@ -43,6 +43,9 @@ const widgetCountOutput = document.querySelector("#widget-count");
 const referenceCountOutput = document.querySelector("#reference-count");
 const popupBehaviorOutput = document.querySelector("#popup-behavior-state");
 const snipStateOutput = document.querySelector("#snip-state");
+const snipModeNotifier = document.querySelector("#snip-mode-notifier");
+const snipModeLabel = document.querySelector("#snip-mode-label");
+const snipExitButton = document.querySelector("#snip-exit");
 const whitespaceStateOutput = document.querySelector("#whitespace-state");
 const peekStateOutput = document.querySelector("#peek-state");
 const whitespaceZoneCountOutput = document.querySelector("#whitespace-zone-count");
@@ -1075,6 +1078,13 @@ function updateSnipUi({ armed, dragging }) {
       snipStateOutput.textContent = "idle";
     }
   }
+
+  if (snipModeNotifier instanceof HTMLElement) {
+    snipModeNotifier.hidden = !armed;
+  }
+  if (snipModeLabel instanceof HTMLElement) {
+    snipModeLabel.textContent = dragging ? "Snip mode: capturing..." : "Snip mode: drag to capture area";
+  }
 }
 
 function syncToolsUi() {
@@ -1136,7 +1146,7 @@ function onboardingHintsCatalog() {
     {
       id: "peek-search-gesture",
       title: "Use Fast Navigation",
-      body: "Hold Peek for overview and open Search with Ctrl/Cmd+F. Gesture bindings are enabled by default.",
+      body: "Use Search with Ctrl/Cmd+F and keep navigating with touch gestures. Gesture bindings are enabled by default.",
       actionLabel: "Open Search",
       shouldShow: () => widgets.length > 1,
       completeWhen: () =>
@@ -1662,7 +1672,7 @@ async function copyWidgetFromContextMenu(widget) {
     await createExpandedAreaWidget(
       {
         metadata: {
-          title: widget.metadata?.title ?? "Notes Sheet",
+          title: widget.metadata?.title ?? "Notes",
           note: widget.metadata?.note ?? "",
         },
       },
@@ -1760,7 +1770,7 @@ function renameWidgetFromContextMenu(widget) {
     typeof widget.metadata?.title === "string" && widget.metadata.title.trim()
       ? widget.metadata.title.trim()
       : widget.type === "expanded-area"
-        ? "Notes Sheet"
+        ? "Notes"
         : widget.type === "reference-popup"
           ? "Reference"
           : "Document";
@@ -1841,7 +1851,7 @@ function formatWidgetInfo(widget) {
       ? "Document"
       : widget.type === "reference-popup"
         ? "Reference"
-        : "Notes Sheet";
+        : "Notes";
   const size = `${Math.round(widget.size.width)} x ${Math.round(widget.size.height)}`;
 
   const details = [`${kind}`, `Title: ${title}`, `Size: ${size}`];
@@ -2174,7 +2184,7 @@ function widgetDisplayLabel(widget) {
   }
 
   if (widget.type === "expanded-area") {
-    return widget.metadata?.title ?? "Notes Sheet";
+    return widget.metadata?.title ?? "Notes";
   }
 
   return widget.metadata?.title ?? "Document";
@@ -3644,7 +3654,7 @@ async function createExpandedFromWhitespaceZone(pdfWidget, zone) {
         height: Math.max(120, Math.min(320, rect.height)),
       },
       metadata: {
-        title: "Notes Sheet",
+        title: "Notes",
         note: `Linked to ${pdfWidget.metadata.title} (${zone.id})`,
       },
     },
@@ -3736,7 +3746,11 @@ async function restoreWorkspaceForActiveContext() {
           contextId: scopeId,
         };
 
-        contextWorkspaceStore.saveWorkspace(workspace);
+        const migrated = contextWorkspaceStore.saveWorkspace(workspace);
+        if (!migrated && !hasShownWorkspaceStorageWarning) {
+          hasShownWorkspaceStorageWarning = true;
+          window.alert("Storage is full. Recent PDF/widget changes may not persist until space is freed.");
+        }
       }
     }
 
@@ -4274,6 +4288,12 @@ function wireBaseEventHandlers() {
     toolsPanelOpen = !toolsPanelOpen;
     window.localStorage.setItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
     syncToolsUi();
+  });
+  snipExitButton?.addEventListener("click", () => {
+    if (!snipTool || typeof snipTool.disarm !== "function") {
+      return;
+    }
+    snipTool.disarm();
   });
 
   window.addEventListener("pointerdown", (event) => {

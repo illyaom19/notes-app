@@ -261,7 +261,7 @@ test("workspace load drops unsupported legacy widget types and rewrites storage"
           position: { x: 48, y: 38 },
           size: { width: 320, height: 220 },
           collapsed: false,
-          metadata: { title: "Notes Sheet" },
+          metadata: { title: "Notes" },
           dataPayload: {},
           runtimeState: {},
         },

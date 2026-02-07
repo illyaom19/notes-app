@@ -111,6 +111,7 @@ export function createSnipTool({ runtime, onSnipReady, onStateChange }) {
           rect,
         });
       }
+      state.armed = false;
       emitState();
       return true;
     },

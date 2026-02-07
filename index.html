@@ -117,6 +117,10 @@
       </aside>
 
       <aside id="suggestion-rail" class="suggestion-rail" aria-label="Widget Suggestions" hidden></aside>
+      <aside id="snip-mode-notifier" class="snip-mode-notifier" aria-live="polite" hidden>
+        <span id="snip-mode-label">Snip mode active</span>
+        <button id="snip-exit" type="button">Exit snip mode</button>
+      </aside>
 
       <section class="canvas-wrap">
         <canvas id="workspace-canvas" aria-label="Workspace Canvas"></canvas>
@@ -168,7 +172,7 @@
       </menu>
 
       <menu id="creation-command-menu" class="creation-menu" aria-label="Creation Menu">
-        <button type="button" data-create-type="expanded-area">Notes Sheet</button>
+        <button type="button" data-create-type="expanded-area">Notes</button>
         <button type="button" data-create-type="snip">Snip</button>
         <button type="button" data-create-type="pdf-document">PDF Document</button>
       </menu>

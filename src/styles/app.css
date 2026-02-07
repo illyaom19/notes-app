@@ -774,18 +774,19 @@ body[data-ui-mode="production"] .topbar h1 {
 
 .suggestion-rail {
   position: fixed;
+  inset: 0;
   z-index: 48;
-  width: min(170px, 46vw);
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .suggestion-rail[hidden] {
   display: none !important;
 }
 
-.suggestion-rail-stack {
-  display: grid;
-  gap: 0.28rem;
+.suggestion-rail-item {
+  position: absolute;
+  width: min(170px, 46vw);
+  pointer-events: auto;
 }
 
 .suggestion-chip {
@@ -849,6 +850,43 @@ body[data-ui-mode="production"] .topbar h1 {
   background: rgba(255, 255, 255, 0.48);
   font-size: 0.71rem;
   padding: 0.24rem 0.5rem;
+  cursor: pointer;
+}
+
+.snip-mode-notifier {
+  position: fixed;
+  left: 0.8rem;
+  top: 0.8rem;
+  z-index: 58;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  border: 1px solid #89acc5;
+  background: rgba(245, 251, 255, 0.95);
+  border-radius: 999px;
+  padding: 0.26rem 0.42rem 0.26rem 0.56rem;
+  box-shadow: 0 10px 24px rgba(15, 23, 32, 0.14);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.snip-mode-notifier[hidden] {
+  display: none;
+}
+
+.snip-mode-notifier span {
+  font-size: 0.74rem;
+  color: #204f6f;
+  white-space: nowrap;
+}
+
+.snip-mode-notifier button {
+  border: 1px solid #86abc4;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1f5677;
+  font-size: 0.72rem;
+  padding: 0.16rem 0.58rem;
   cursor: pointer;
 }
 

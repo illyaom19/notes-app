@@ -69,3 +69,21 @@ test("library store can rename and delete a specific reference entry", () => {
   assert.equal(removed, true);
   assert.equal(store.listReferences("nb-a").length, 0);
 });
+
+test("library store returns null/false when persistence fails", () => {
+  const baseStorage = createMemoryStorage();
+  const storage = {
+    ...baseStorage,
+    setItem(key, value) {
+      if (key === "notes-app.notebook.library.v1") {
+        throw new Error("QuotaExceededError");
+      }
+      baseStorage.setItem(key, value);
+    },
+  };
+  const store = createNotebookLibraryStore({ storage });
+
+  const saved = store.upsertReference("nb-a", { title: "Will Fail" });
+  assert.equal(saved, null);
+  assert.equal(store.listReferences("nb-a").length, 0);
+});

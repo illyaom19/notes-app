@@ -118,6 +118,11 @@ export function createWidgetContextMenu({
     pendingPointerId = null;
   };
 
+  const focusedOrSelectedWidget = () => {
+    const widgetId = runtime.getFocusedWidgetId?.() ?? runtime.getSelectedWidgetId?.() ?? null;
+    return widgetId ? runtime.getWidgetById(widgetId) : null;
+  };
+
   const startLongPress = (event) => {
     lastPointerDown = {
       pointerType: event.pointerType ?? null,
@@ -187,6 +192,10 @@ export function createWidgetContextMenu({
   };
 
   const handleContextMenu = (event) => {
+    const hasScreenPoint =
+      Number.isFinite(event.clientX) &&
+      Number.isFinite(event.clientY) &&
+      (event.clientX !== 0 || event.clientY !== 0);
     const recentMouseRightClick =
       Date.now() - lastPointerDown.at < 700 &&
       lastPointerDown.pointerType === "mouse" &&
@@ -194,20 +203,41 @@ export function createWidgetContextMenu({
 
     // Prevent native OS context menus on touch/pen long press.
     event.preventDefault();
-    if (!recentMouseRightClick) {
+    if (!recentMouseRightClick && hasScreenPoint) {
       return;
     }
 
-    const rect = canvas.getBoundingClientRect();
-    const offsetX = event.clientX - rect.left;
-    const offsetY = event.clientY - rect.top;
-    const widget = runtime.pickWidgetAtScreenPoint(offsetX, offsetY);
+    let widget = null;
+    let openX = event.clientX;
+    let openY = event.clientY;
+
+    if (recentMouseRightClick) {
+      const rect = canvas.getBoundingClientRect();
+      const offsetX = event.clientX - rect.left;
+      const offsetY = event.clientY - rect.top;
+      widget = runtime.pickWidgetAtScreenPoint(offsetX, offsetY);
+    } else {
+      widget = focusedOrSelectedWidget();
+      if (widget) {
+        const bounds =
+          typeof widget.getInteractionBounds === "function"
+            ? widget.getInteractionBounds()
+            : widget.size;
+        const center = runtime.camera.worldToScreen(
+          widget.position.x + Math.max(1, bounds.width) / 2,
+          widget.position.y + Math.max(1, bounds.height) / 2,
+        );
+        openX = center.x;
+        openY = center.y;
+      }
+    }
+
     if (!widget) {
       closeMenu();
       return;
     }
 
-    openMenuAt(event.clientX, event.clientY, widget);
+    openMenuAt(openX, openY, widget);
   };
 
   const handleMenuClick = async (event) => {

@@ -58,3 +58,21 @@ test("sections store can remove notebook section state", () => {
   assert.equal(store.deleteNotebook("nb-a"), true);
   assert.equal(store.listSections("nb-a").length, 1);
 });
+
+test("sections store fails cleanly when persistence is unavailable", () => {
+  const baseStorage = createMemoryStorage();
+  const storage = {
+    ...baseStorage,
+    setItem(key, value) {
+      if (key === "notes-app.notebook.sections.v1") {
+        throw new Error("QuotaExceededError");
+      }
+      baseStorage.setItem(key, value);
+    },
+  };
+  const store = createNotebookSectionsStore({ storage });
+
+  const created = store.createSection("nb-a", "Will Fail");
+  assert.equal(created, null);
+  assert.equal(store.listSections("nb-a").length, 0);
+});

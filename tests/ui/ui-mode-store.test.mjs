@@ -44,3 +44,16 @@ test("ui mode normalizer rejects invalid values", () => {
   assert.deepEqual(normalizeUiModeState({ mode: "unknown" }), { mode: "production" });
 });
 
+test("ui mode save does not throw when persistence fails", () => {
+  const storage = {
+    getItem() {
+      return null;
+    },
+    setItem() {
+      throw new Error("QuotaExceededError");
+    },
+  };
+
+  const saved = saveUiModeState({ mode: "debug" }, { storage });
+  assert.equal(saved.mode, "debug");
+});

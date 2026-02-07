@@ -1063,7 +1063,10 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       workspace = sanitizeWorkspace(canonicalized.workspace, contextId);
       assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
       if (canonicalized.changed || hasUnsupportedWidgetTypes) {
-        this.saveWorkspace(workspace);
+        const saved = this.saveWorkspace(workspace);
+        if (!saved) {
+          console.warn(`[storage] failed to persist canonicalized workspace ${contextId}.`);
+        }
       }
 
       return {

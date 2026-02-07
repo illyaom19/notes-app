@@ -104,7 +104,11 @@ export function loadWorldSizeConfig({ storage = window.localStorage } = {}) {
 
 export function saveWorldSizeConfig(config, { storage = window.localStorage } = {}) {
   const normalized = normalizeWorldSizeConfig(config);
-  storage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+  try {
+    storage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+  } catch (error) {
+    console.warn("[storage] failed to persist world size config.", error);
+  }
   return normalized;
 }
 

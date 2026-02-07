@@ -143,8 +143,14 @@ function loadState(storage) {
 export function createNotebookSectionsStore({ storage = window.localStorage } = {}) {
   let state = loadState(storage);
 
-  function persist() {
-    storage.setItem(STORAGE_KEY, JSON.stringify(state));
+  function persist(nextState) {
+    try {
+      storage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+      return true;
+    } catch (error) {
+      console.warn("[storage] failed to persist notebook sections.", error);
+      return false;
+    }
   }
 
   function ensureNotebook(notebookId) {
@@ -153,14 +159,17 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
     }
 
     if (!state.notebooks[notebookId]) {
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
           [notebookId]: defaultNotebookState(),
         },
       };
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
     }
 
     return state.notebooks[notebookId];
@@ -176,7 +185,7 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
       return false;
     }
 
-    state = {
+    const nextState = {
       ...state,
       notebooks: {
         ...state.notebooks,
@@ -190,7 +199,10 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
       },
     };
 
-    persist();
+    if (!persist(nextState)) {
+      return false;
+    }
+    state = nextState;
     return true;
   }
 
@@ -234,7 +246,7 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
         updatedAt: timestamp,
       };
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -249,7 +261,10 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
         },
       };
 
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
       return cloneSection(section);
     },
 
@@ -278,7 +293,7 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
         return false;
       }
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -289,7 +304,10 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
         },
       };
 
-      persist();
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
       return true;
     },
 
@@ -309,7 +327,7 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
           ? sections[0].id
           : notebook.activeSectionState.activeSectionId;
 
-      state = {
+      const nextState = {
         ...state,
         notebooks: {
           ...state.notebooks,
@@ -324,7 +342,10 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
         },
       };
 
-      persist();
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
       return {
         deletedSectionId: sectionId,
         activeSectionId,
@@ -338,11 +359,14 @@ export function createNotebookSectionsStore({ storage = window.localStorage } = 
 
       const notebooks = { ...state.notebooks };
       delete notebooks[notebookId];
-      state = {
+      const nextState = {
         ...state,
         notebooks,
       };
-      persist();
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
       return true;
     },
   };
