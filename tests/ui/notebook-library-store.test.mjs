@@ -52,3 +52,20 @@ test("library store can delete a notebook library", () => {
   assert.equal(store.deleteNotebook("nb-a"), true);
   assert.equal(store.listReferences("nb-a").length, 0);
 });
+
+test("library store can rename and delete a specific reference entry", () => {
+  const storage = createMemoryStorage();
+  const store = createNotebookLibraryStore({ storage });
+
+  const saved = store.upsertReference("nb-a", { title: "Old Title", sourceLabel: "Source" });
+  assert.ok(saved);
+
+  const renamed = store.renameReference("nb-a", saved.id, "New Title");
+  assert.ok(renamed);
+  assert.equal(renamed.title, "New Title");
+  assert.equal(renamed.popupMetadata.title, "New Title");
+
+  const removed = store.deleteReference("nb-a", saved.id);
+  assert.equal(removed, true);
+  assert.equal(store.listReferences("nb-a").length, 0);
+});

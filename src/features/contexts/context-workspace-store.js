@@ -87,6 +87,134 @@ function normalizeWhitespaceZones(candidate) {
     .filter((entry) => entry && entry.normalizedHeight > 0);
 }
 
+function normalizeSuggestionKind(value) {
+  if (value === "expanded-area" || value === "reference-popup") {
+    return value;
+  }
+  return null;
+}
+
+function normalizeSuggestionState(value) {
+  if (
+    value === "proposed" ||
+    value === "accepted" ||
+    value === "dismissed" ||
+    value === "ghosted" ||
+    value === "restored" ||
+    value === "discarded"
+  ) {
+    return value;
+  }
+  return "proposed";
+}
+
+function normalizeSuggestionAnchor(candidate) {
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+
+  const x = Number(candidate.x);
+  const y = Number(candidate.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  return {
+    x,
+    y,
+  };
+}
+
+function normalizeSuggestions(candidate, contextId) {
+  if (!Array.isArray(candidate)) {
+    return [];
+  }
+
+  const deduped = [];
+  const seenIds = new Set();
+  const seenFingerprints = new Set();
+  const scopeParts = String(contextId ?? "").split("::");
+  const sectionIdFromScope = scopeParts.length > 1 ? scopeParts[1] : null;
+
+  for (const entry of candidate) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const kind = normalizeSuggestionKind(entry.kind);
+    const anchor = normalizeSuggestionAnchor(entry.anchor);
+    if (!kind || !anchor) {
+      continue;
+    }
+
+    const id =
+      typeof entry.id === "string" && entry.id.trim()
+        ? entry.id.trim()
+        : makeId("suggestion");
+    const fingerprint =
+      typeof entry.fingerprint === "string" && entry.fingerprint.trim()
+        ? entry.fingerprint.trim()
+        : `${kind}:${anchor.x.toFixed(2)}:${anchor.y.toFixed(2)}`;
+
+    if (seenIds.has(id) || seenFingerprints.has(fingerprint)) {
+      continue;
+    }
+    seenIds.add(id);
+    seenFingerprints.add(fingerprint);
+
+    deduped.push({
+      id,
+      scopeId:
+        typeof entry.scopeId === "string" && entry.scopeId.trim()
+          ? entry.scopeId.trim()
+          : contextId,
+      sectionId:
+        typeof entry.sectionId === "string" && entry.sectionId.trim()
+          ? entry.sectionId.trim()
+          : sectionIdFromScope,
+      documentId:
+        typeof entry.documentId === "string" && entry.documentId.trim()
+          ? entry.documentId.trim()
+          : null,
+      kind,
+      label:
+        typeof entry.label === "string" && entry.label.trim()
+          ? entry.label.trim()
+          : "Suggestion",
+      fingerprint,
+      anchor,
+      payload: entry.payload && typeof entry.payload === "object" ? { ...entry.payload } : {},
+      state: normalizeSuggestionState(entry.state),
+      createdAt:
+        typeof entry.createdAt === "string" && entry.createdAt.trim()
+          ? entry.createdAt
+          : nowIso(),
+      updatedAt:
+        typeof entry.updatedAt === "string" && entry.updatedAt.trim()
+          ? entry.updatedAt
+          : nowIso(),
+      dismissedAt:
+        typeof entry.dismissedAt === "string" && entry.dismissedAt.trim()
+          ? entry.dismissedAt
+          : null,
+      restoredAt:
+        typeof entry.restoredAt === "string" && entry.restoredAt.trim()
+          ? entry.restoredAt
+          : null,
+      acceptedAt:
+        typeof entry.acceptedAt === "string" && entry.acceptedAt.trim()
+          ? entry.acceptedAt
+          : null,
+      discardedAt:
+        typeof entry.discardedAt === "string" && entry.discardedAt.trim()
+          ? entry.discardedAt
+          : null,
+    });
+  }
+
+  return deduped;
+}
+
 function normalizeIdList(candidate, validIds) {
   if (!Array.isArray(candidate)) {
     return [];
@@ -467,6 +595,7 @@ function defaultWorkspace(contextId) {
     updatedAt: nowIso(),
     widgets: [],
     researchCaptures: [],
+    suggestions: [],
     documents: [],
     documentBindings: [],
     activeWorkspaceState: {
@@ -714,6 +843,7 @@ function sanitizeWorkspace(candidate, contextId) {
 
   const activeWorkspaceState = asPlainObject(candidate.activeWorkspaceState);
   const researchCaptures = normalizeResearchCaptures(candidate.researchCaptures, contextId);
+  const suggestions = normalizeSuggestions(candidate.suggestions, contextId);
 
   return {
     version: 1,
@@ -721,6 +851,7 @@ function sanitizeWorkspace(candidate, contextId) {
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
     widgets: dedupedWidgets,
     researchCaptures,
+    suggestions,
     documents: documents.map((entry) => ({
       id: entry.id,
       contextId: entry.contextId,
@@ -995,6 +1126,11 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         researchCaptures: workspace.researchCaptures
           .map((entry) => copyResearchCapture(entry, contextId))
           .filter((entry) => entry !== null),
+        suggestions: workspace.suggestions.map((entry) => ({
+          ...entry,
+          anchor: { ...entry.anchor },
+          payload: { ...entry.payload },
+        })),
         documents: workspace.documents.map((entry) => copyDocument(entry, contextId)),
         documentBindings: workspace.documentBindings.map((entry) => copyDocumentBinding(entry)),
         activeWorkspaceState: {
@@ -1040,6 +1176,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       contextId,
       runtime,
       researchCaptures = [],
+      suggestions = [],
       documents = [],
       documentBindings = [],
       activeDocumentId = null,
@@ -1055,6 +1192,7 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         contextId,
         widgets: serializedWidgets,
         researchCaptures,
+        suggestions,
         documents,
         documentBindings,
         activeWorkspaceState: {

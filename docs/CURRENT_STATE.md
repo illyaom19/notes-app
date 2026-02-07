@@ -3,7 +3,7 @@
 ## Current Sprint
 - Sprint 18 (`docs/SPRINT_18_Production_UI_Minimalism_and_Onboarding.md`) has now been implemented onto current `main`.
 - Sprint 10 and Sprint 12 remain implemented; Sprint 11 remains skipped per directive.
-- UX flow refactor pass (Notebook + Section composition, radial creation, grouped search, notebook library linking) has been integrated on top of Sprint 18.
+- UX flow refactor pass (Notebook + Section composition, radial creation, grouped search, notebook library linking, suggestions rail, reference manager overlay) has been integrated on top of Sprint 18.
 
 ## What Exists Today
 - Core runtime and modular widget architecture:
@@ -32,6 +32,8 @@
   - Context-scoped workspace persistence: `src/features/contexts/context-workspace-store.js`
   - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
   - Notebook document source library store: `src/features/notebooks/notebook-document-library-store.js`
+  - Suggestions: store + heuristic engine + rail UI (`src/features/suggestions/`)
+  - Reference Manager overlay + draggable preview cards (`src/features/references/reference-manager-ui.js`)
 
 ## In Progress
 - No active blocker.
@@ -113,6 +115,7 @@
 - Notebook library now follows:
   - Shared notebook reference library store at `notes-app.notebook.library.v1`.
   - Shared notebook document source library store at `notes-app.notebook.documents.v1`.
+  - Reference and document library entries now support rename/delete APIs.
   - Reference popup long-press menu supports `Save Ref To Notebook`.
   - Linked instances carry `metadata.librarySourceId` and sync metadata-only from the notebook library.
   - PDF creation flow now offers:
@@ -121,12 +124,27 @@
     - Instantiate frozen section instance from notebook source.
   - Linked section instances reconcile at restore time; missing/deleted sources auto-freeze.
   - Notebook deletion now clears associated reference-library, document-library, and section metadata records.
+- Suggestion system now follows:
+  - Heuristic suggestions are generated from:
+    - PDF whitespace zones (expanded-area suggestions).
+    - PDF text-layer keyword hits (`Example`, `Definition`, `Theorem`, `Lemma`, `Proof`, `Corollary`) without OCR.
+  - Suggestion lifecycle uses states: `proposed`, `ghosted`, `restored`, `accepted`, `discarded`.
+  - Suggestion rail UI renders active + ghost suggestions with `Accept`, `Ghost`, `Restore`, `Discard`, and `Locate` actions.
+  - Suggestions persist in workspace payloads as `workspace.suggestions[]`.
+- Reference manager UI now follows:
+  - Persistent floating `Library` launcher opens notebook library overlay.
+  - Overlay exposes references/documents lists with rename/delete/import actions.
+  - Selecting entries opens draggable UI-layer preview cards; multiple previews are supported simultaneously.
+  - Preview cards support stylus-avoidance nudging and linked/frozen import actions.
+  - Preview cards are ephemeral UI-only and are not persisted to workspace storage.
 - Touch/selection UX hardening now follows:
   - Touch-origin `contextmenu` is globally suppressed for non-editable targets to prevent native long-press action sheets.
   - UI text selection/callout is disabled by default, with explicit allow-list for text entry controls (`input`, `textarea`, `select`, contenteditable).
+  - `selectstart` is prevented globally for non-editable targets to avoid accidental UI text selection while gesturing.
 - Radial creation intent recognition now follows:
   - Touch radial menu opens only from a long stationary single-touch press.
   - Multi-touch immediately cancels hold-to-open, preventing pinch/pan false positives.
+  - Raw touch pointer movement now cancels pending hold-open even when runtime is handling camera pan/pinch, preventing false positives during navigation.
   - Desktop right-click opens radial menu for mouse pointers only; stylus-origin context menus are excluded.
 - Search UX now follows:
   - Search results are grouped by current section and other sections in the active notebook.
@@ -143,8 +161,8 @@
 
 ## Next Actions
 1. Run tablet-first UX QA on radial hold creation (hold threshold, accidental activation, drag-release selection confidence).
-2. Validate section migration behavior from legacy context-only payloads across multi-notebook workspaces.
-3. Add explicit notebook-library editing UI (list/manage entries without requiring widget context menu save path).
+2. Run usability QA on suggestion signal quality (false positives/negatives) and tune thresholds for whitespace + keyword heuristics.
+3. Validate section migration behavior from legacy context-only payloads across multi-notebook workspaces.
 4. Decide whether to fully remove hidden/deferred research panel wiring or retain compatibility mode.
 
 ## Verification Status
@@ -155,6 +173,8 @@
 - `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (including new `tests/ui/notebook-sections-store.test.mjs` and `tests/ui/notebook-library-store.test.mjs`).
 - `for f in src/main.js src/features/notebooks/notebook-document-library-store.js src/features/documents/document-manager.js src/features/contexts/context-workspace-store.js tests/ui/notebook-document-library-store.test.mjs tests/ui/document-manager.test.mjs; do node --check \"$f\"; done` passed.
 - `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (including new `tests/ui/notebook-document-library-store.test.mjs` and `tests/ui/document-manager.test.mjs`).
+- `for f in /home/illya/io_dev/notes-app/src/main.js /home/illya/io_dev/notes-app/src/features/contexts/context-workspace-store.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-creation-controller.js /home/illya/io_dev/notes-app/src/widgets/pdf/pdf-document-widget.js /home/illya/io_dev/notes-app/src/features/suggestions/suggestion-store.js /home/illya/io_dev/notes-app/src/features/suggestions/suggestion-engine.js /home/illya/io_dev/notes-app/src/features/suggestions/suggestion-ui-controller.js /home/illya/io_dev/notes-app/src/features/references/reference-manager-ui.js /home/illya/io_dev/notes-app/src/features/notebooks/notebook-library-store.js /home/illya/io_dev/notes-app/src/features/notebooks/notebook-document-library-store.js /home/illya/io_dev/notes-app/tests/ui/suggestion-store.test.mjs /home/illya/io_dev/notes-app/tests/storage/context-workspace-store-assets.test.mjs /home/illya/io_dev/notes-app/tests/ui/notebook-library-store.test.mjs /home/illya/io_dev/notes-app/tests/ui/notebook-document-library-store.test.mjs; do node --check \"$f\" || exit 1; done` passed.
+- `cd /home/illya/io_dev/notes-app && node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (including new `tests/ui/suggestion-store.test.mjs` and updated `tests/storage/context-workspace-store-assets.test.mjs`).
 
 ## Last Updated
 - 2026-02-07 (local environment time)

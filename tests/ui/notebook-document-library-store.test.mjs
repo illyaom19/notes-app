@@ -83,3 +83,23 @@ test("notebook document library keeps notebooks isolated and removable", () => {
   assert.equal(store.listDocuments("nb-a").length, 0);
   assert.equal(store.listDocuments("nb-b").length, 1);
 });
+
+test("notebook document library can rename and hard-delete source entries", () => {
+  const storage = createMemoryStorage();
+  const store = createNotebookDocumentLibraryStore({ storage });
+
+  const created = store.upsertDocument("nb-a", {
+    title: "Week 1",
+    sourceType: "pdf",
+    fileName: "week-1.pdf",
+    bytesBase64: "YQ==",
+  });
+  assert.ok(created);
+
+  const renamed = store.renameDocument("nb-a", created.id, "Week 1 Notes");
+  assert.ok(renamed);
+  assert.equal(renamed.title, "Week 1 Notes");
+
+  assert.equal(store.deleteDocument("nb-a", created.id), true);
+  assert.equal(store.listDocuments("nb-a", { includeDeleted: true }).length, 0);
+});

@@ -435,6 +435,21 @@ export class PdfDocumentWidget extends WidgetBase {
     };
   }
 
+  getPageWorldRect(pageNumber) {
+    this._computeDisplayLayout();
+    const rect = this._pageLayout.get(pageNumber);
+    if (!rect) {
+      return null;
+    }
+
+    return {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
   render(ctx, camera, renderContext) {
     this._computeDisplayLayout();
     this._whitespaceHitRegions = [];

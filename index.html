@@ -161,9 +161,50 @@
         <div id="search-results" class="search-results" role="listbox" aria-label="Search results"></div>
       </aside>
 
+      <aside id="suggestion-rail" class="suggestion-rail" aria-label="Widget Suggestions">
+        <div class="suggestion-rail-header">
+          <h2>Suggestions</h2>
+          <button id="suggestion-refresh" type="button">Refresh</button>
+        </div>
+        <p id="suggestion-rail-empty" class="suggestion-empty">No suggestions yet.</p>
+        <section class="suggestion-group" aria-label="Active suggestions">
+          <h3>Active (<output id="suggestion-active-count">0</output>)</h3>
+          <div id="suggestion-proposed-list" class="suggestion-list"></div>
+        </section>
+        <section class="suggestion-group" aria-label="Ghost suggestions">
+          <h3>Ghosts (<output id="suggestion-ghost-count">0</output>)</h3>
+          <div id="suggestion-ghost-list" class="suggestion-list"></div>
+        </section>
+      </aside>
+
       <section class="canvas-wrap">
         <canvas id="workspace-canvas" aria-label="Workspace Canvas"></canvas>
       </section>
+
+      <button id="reference-manager-launcher" class="reference-manager-launcher" type="button" aria-label="Open Library">
+        Library
+      </button>
+
+      <section id="reference-manager-overlay" class="reference-manager-overlay" hidden aria-label="Reference manager">
+        <div id="reference-manager-panel" class="reference-manager-panel">
+          <header class="reference-manager-header">
+            <h2>Notebook Library</h2>
+            <button id="reference-manager-close" type="button">Close</button>
+          </header>
+          <div class="reference-manager-tabs">
+            <button id="reference-manager-tab-references" type="button" data-active="true">References</button>
+            <button id="reference-manager-tab-documents" type="button">Documents</button>
+          </div>
+          <p class="reference-manager-counts">
+            <output id="reference-manager-reference-count">0 references</output>
+            <output id="reference-manager-document-count">0 documents</output>
+          </p>
+          <div id="reference-manager-reference-list" class="reference-manager-list" aria-label="Reference entries"></div>
+          <div id="reference-manager-document-list" class="reference-manager-list" aria-label="Document entries" hidden></div>
+        </div>
+      </section>
+
+      <section id="reference-preview-layer" class="reference-preview-layer" aria-label="Reference previews"></section>
 
       <aside id="onboarding-hint" class="onboarding-hint" hidden>
         <p id="onboarding-hint-progress" class="onboarding-hint-progress">Hint 1 of 3</p>

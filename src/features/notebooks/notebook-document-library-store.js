@@ -260,6 +260,74 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
       return cloneSource(updated);
     },
 
+    renameDocument(notebookId, sourceDocumentId, nextTitle) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof sourceDocumentId !== "string" || !sourceDocumentId.trim()) {
+        return null;
+      }
+
+      const normalizedTitle = typeof nextTitle === "string" ? nextTitle.trim() : "";
+      if (!normalizedTitle) {
+        return null;
+      }
+
+      const existingIndex = notebook.documents.findIndex((entry) => entry.id === sourceDocumentId);
+      if (existingIndex < 0) {
+        return null;
+      }
+
+      const nextDocuments = [...notebook.documents];
+      const existing = nextDocuments[existingIndex];
+      const updated = {
+        ...existing,
+        title: normalizedTitle,
+        fileName:
+          typeof existing.fileName === "string" && existing.fileName.trim()
+            ? existing.fileName
+            : `${normalizedTitle}.pdf`,
+        updatedAt: nowIso(),
+      };
+      nextDocuments[existingIndex] = updated;
+
+      state = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            documents: nextDocuments,
+          },
+        },
+      };
+      persist();
+      return cloneSource(updated);
+    },
+
+    deleteDocument(notebookId, sourceDocumentId) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof sourceDocumentId !== "string" || !sourceDocumentId.trim()) {
+        return false;
+      }
+
+      const nextDocuments = notebook.documents.filter((entry) => entry.id !== sourceDocumentId);
+      if (nextDocuments.length === notebook.documents.length) {
+        return false;
+      }
+
+      state = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            documents: nextDocuments,
+          },
+        },
+      };
+      persist();
+      return true;
+    },
+
     deleteNotebook(notebookId) {
       if (typeof notebookId !== "string" || !notebookId.trim() || !state.notebooks[notebookId]) {
         return false;

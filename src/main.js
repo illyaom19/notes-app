@@ -22,6 +22,10 @@ import { createNotebookSectionsStore } from "./features/sections/notebook-sectio
 import { createNotebookLibraryStore } from "./features/notebooks/notebook-library-store.js";
 import { createNotebookDocumentLibraryStore } from "./features/notebooks/notebook-document-library-store.js";
 import { createSectionManagementUi } from "./features/sections/section-management-ui.js";
+import { createSuggestionStore } from "./features/suggestions/suggestion-store.js";
+import { createSuggestionEngine } from "./features/suggestions/suggestion-engine.js";
+import { createSuggestionUiController } from "./features/suggestions/suggestion-ui-controller.js";
+import { createReferenceManagerUi } from "./features/references/reference-manager-ui.js";
 
 const importPdfButton = document.querySelector("#import-pdf");
 const toggleUiModeButton = document.querySelector("#toggle-ui-mode");
@@ -66,6 +70,24 @@ const creationCommandMenu = document.querySelector("#creation-command-menu");
 const pdfFileInput = document.querySelector("#pdf-file-input");
 const researchPanel = document.querySelector("#research-panel");
 const searchPanel = document.querySelector("#search-panel");
+const suggestionRail = document.querySelector("#suggestion-rail");
+const suggestionProposedList = document.querySelector("#suggestion-proposed-list");
+const suggestionGhostList = document.querySelector("#suggestion-ghost-list");
+const suggestionActiveCountOutput = document.querySelector("#suggestion-active-count");
+const suggestionGhostCountOutput = document.querySelector("#suggestion-ghost-count");
+const suggestionEmptyState = document.querySelector("#suggestion-rail-empty");
+const suggestionRefreshButton = document.querySelector("#suggestion-refresh");
+const referenceManagerLauncher = document.querySelector("#reference-manager-launcher");
+const referenceManagerOverlay = document.querySelector("#reference-manager-overlay");
+const referenceManagerPanel = document.querySelector("#reference-manager-panel");
+const referenceManagerCloseButton = document.querySelector("#reference-manager-close");
+const referenceManagerTabReferences = document.querySelector("#reference-manager-tab-references");
+const referenceManagerTabDocuments = document.querySelector("#reference-manager-tab-documents");
+const referenceManagerReferenceList = document.querySelector("#reference-manager-reference-list");
+const referenceManagerDocumentList = document.querySelector("#reference-manager-document-list");
+const referenceManagerReferenceCount = document.querySelector("#reference-manager-reference-count");
+const referenceManagerDocumentCount = document.querySelector("#reference-manager-document-count");
+const referencePreviewLayer = document.querySelector("#reference-preview-layer");
 const documentTabs = document.querySelector("#document-tabs");
 const documentSwitcher = document.querySelector("#document-switcher");
 const sectionTabs = document.querySelector("#section-tabs");
@@ -162,6 +184,13 @@ let sectionUiController = null;
 let sectionsStore = createNotebookSectionsStore();
 const notebookLibraryStore = createNotebookLibraryStore();
 const notebookDocumentLibraryStore = createNotebookDocumentLibraryStore();
+const suggestionStore = createSuggestionStore();
+const suggestionEngine = createSuggestionEngine();
+let suggestionUiController = null;
+let referenceManagerUiController = null;
+let suggestionAnalysisTimer = null;
+let suggestionAnalysisInFlight = false;
+let suggestionAnalysisQueued = false;
 
 let activeContextId = null;
 let activeSectionId = null;
@@ -284,6 +313,24 @@ function parseWorkspaceScopeId(scopeId) {
   return {
     notebookId: notebookId || null,
     sectionId: sectionId || null,
+  };
+}
+
+function currentSuggestionScope() {
+  const scopeId = workspaceScopeId();
+  if (!scopeId) {
+    return null;
+  }
+
+  const parsed = parseWorkspaceScopeId(scopeId);
+  const sectionId = parsed.sectionId ?? activeSectionId ?? null;
+  if (!sectionId) {
+    return null;
+  }
+
+  return {
+    scopeId,
+    sectionId,
   };
 }
 
@@ -1728,6 +1775,126 @@ function applyPopupAutoDocking() {
   }
 }
 
+async function createReferencePopupFromLibraryEntry(referenceEntry, { linkStatus = "linked", intent = null } = {}) {
+  if (!referenceEntry || typeof referenceEntry !== "object") {
+    return null;
+  }
+
+  const linked = linkStatus !== "frozen";
+  return createReferencePopupWidget({
+    intent: normalizeCreationIntent(intent),
+    definition: {
+      metadata: {
+        title: referenceEntry.title,
+        ...(linked ? { librarySourceId: referenceEntry.id } : {}),
+        popupMetadata: {
+          ...referenceEntry.popupMetadata,
+          title: referenceEntry.title,
+          tags: Array.from(
+            new Set([...(referenceEntry.popupMetadata?.tags ?? []), linked ? "linked" : "frozen"]),
+          ),
+        },
+      },
+      dataPayload: {
+        sourceLabel: referenceEntry.sourceLabel,
+      },
+    },
+  });
+}
+
+async function createPdfWidgetFromLibraryEntry(sourceDocument, { linkStatus = "linked", intent = null } = {}) {
+  const normalizedIntent =
+    normalizeCreationIntent(intent) ??
+    createCreationIntent({
+      type: "pdf-document",
+      anchor: viewportCenterAnchor(),
+      sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+      createdFrom: "manual",
+    });
+
+  return createPdfWidgetFromNotebookSource(sourceDocument, normalizedIntent, {
+    linkStatus: linkStatus === "frozen" ? "frozen" : "linked",
+  });
+}
+
+function renameNotebookReferenceFromManager(entry) {
+  if (!activeContextId || !entry) {
+    return false;
+  }
+
+  const nextTitle = window.prompt("Rename notebook reference:", entry.title);
+  if (!nextTitle) {
+    return false;
+  }
+
+  const renamed = notebookLibraryStore.renameReference(activeContextId, entry.id, nextTitle);
+  if (!renamed) {
+    return false;
+  }
+
+  updateWidgetUi();
+  return true;
+}
+
+function deleteNotebookReferenceFromManager(entry) {
+  if (!activeContextId || !entry) {
+    return false;
+  }
+
+  const confirmed = window.confirm(`Delete notebook reference \"${entry.title}\"?`);
+  if (!confirmed) {
+    return false;
+  }
+
+  const deleted = notebookLibraryStore.deleteReference(activeContextId, entry.id);
+  if (!deleted) {
+    return false;
+  }
+
+  updateWidgetUi();
+  return true;
+}
+
+function renameNotebookDocumentFromManager(entry) {
+  if (!activeContextId || !entry) {
+    return false;
+  }
+
+  const nextTitle = window.prompt("Rename notebook document:", entry.title);
+  if (!nextTitle) {
+    return false;
+  }
+
+  const renamed = notebookDocumentLibraryStore.renameDocument(activeContextId, entry.id, nextTitle);
+  if (!renamed) {
+    return false;
+  }
+
+  syncLinkedNotebookDocumentInstances({ sourceDocumentId: entry.id });
+  updateWidgetUi();
+  return true;
+}
+
+function deleteNotebookDocumentFromManager(entry) {
+  if (!activeContextId || !entry) {
+    return false;
+  }
+
+  const confirmed = window.confirm(`Delete notebook document \"${entry.title}\" from library?`);
+  if (!confirmed) {
+    return false;
+  }
+
+  const deleted = notebookDocumentLibraryStore.deleteDocument(activeContextId, entry.id);
+  if (!deleted) {
+    return false;
+  }
+
+  syncLinkedNotebookDocumentInstances({ sourceDocumentId: entry.id });
+  updateWidgetUi();
+  return true;
+}
+
 async function createReferencePopupFromNotebookLibrary(intent) {
   if (!activeContextId) {
     return false;
@@ -1739,6 +1906,11 @@ async function createReferencePopupFromNotebookLibrary(intent) {
     return false;
   }
 
+  if (referenceManagerUiController) {
+    referenceManagerUiController.open({ tab: "references" });
+    return true;
+  }
+
   const options = references.map((entry, index) => `${index + 1}. ${entry.title}`).join("\n");
   const choice = window.prompt(`Choose notebook reference:\n${options}`, "1");
   const index = Number.parseInt(choice ?? "", 10) - 1;
@@ -1747,24 +1919,10 @@ async function createReferencePopupFromNotebookLibrary(intent) {
   }
 
   const source = references[index];
-  await createReferencePopupWidget({
+  await createReferencePopupFromLibraryEntry(source, {
+    linkStatus: "linked",
     intent: normalizeCreationIntent(intent),
-    definition: {
-      metadata: {
-        title: source.title,
-        librarySourceId: source.id,
-        popupMetadata: {
-          ...source.popupMetadata,
-          title: source.title,
-          tags: Array.from(new Set([...(source.popupMetadata.tags ?? []), "linked"])),
-        },
-      },
-      dataPayload: {
-        sourceLabel: source.sourceLabel,
-      },
-    },
   });
-
   return true;
 }
 
@@ -1944,6 +2102,96 @@ function updateContextUi() {
   }
 }
 
+function renderSuggestionRail() {
+  const scope = currentSuggestionScope();
+  if (!scope || !suggestionUiController) {
+    suggestionUiController?.render({ proposed: [], ghosted: [] });
+    return;
+  }
+
+  const proposed = suggestionStore.list({
+    scopeId: scope.scopeId,
+    sectionId: scope.sectionId,
+    states: ["proposed", "restored"],
+  });
+  const ghosted = suggestionStore.list({
+    scopeId: scope.scopeId,
+    sectionId: scope.sectionId,
+    states: ["ghosted"],
+  });
+
+  suggestionUiController.render({ proposed, ghosted });
+}
+
+function updateReferenceManagerUi() {
+  if (!referenceManagerUiController || !activeContextId) {
+    return;
+  }
+
+  referenceManagerUiController.render({
+    references: notebookLibraryStore.listReferences(activeContextId),
+    documents: notebookDocumentLibraryStore.listDocuments(activeContextId),
+  });
+}
+
+async function runSuggestionAnalysis() {
+  const scope = currentSuggestionScope();
+  if (!scope || restoringContext) {
+    return;
+  }
+
+  if (suggestionAnalysisInFlight) {
+    suggestionAnalysisQueued = true;
+    return;
+  }
+
+  suggestionAnalysisInFlight = true;
+  suggestionAnalysisQueued = false;
+
+  try {
+    const generated = await suggestionEngine.collect({ runtime });
+    suggestionStore.upsertMany({
+      scopeId: scope.scopeId,
+      sectionId: scope.sectionId,
+      suggestions: generated,
+    });
+    suggestionStore.pruneInvalidAnchors({
+      scopeId: scope.scopeId,
+      sectionId: scope.sectionId,
+      runtime,
+    });
+    renderSuggestionRail();
+    scheduleWorkspacePersist();
+  } catch (error) {
+    console.error("Suggestion analysis failed:", error);
+  } finally {
+    suggestionAnalysisInFlight = false;
+    if (suggestionAnalysisQueued) {
+      suggestionAnalysisQueued = false;
+      void runSuggestionAnalysis();
+    }
+  }
+}
+
+function scheduleSuggestionAnalysis({ immediate = false } = {}) {
+  if (suggestionAnalysisTimer) {
+    window.clearTimeout(suggestionAnalysisTimer);
+    suggestionAnalysisTimer = null;
+  }
+
+  if (!currentSuggestionScope() || restoringContext) {
+    return;
+  }
+
+  suggestionAnalysisTimer = window.setTimeout(
+    () => {
+      suggestionAnalysisTimer = null;
+      void runSuggestionAnalysis();
+    },
+    immediate ? 0 : 220,
+  );
+}
+
 function persistActiveWorkspace() {
   const scopeId = workspaceScopeId();
   if (!contextWorkspaceStore || !contextStore || !scopeId || restoringContext) {
@@ -1958,6 +2206,10 @@ function persistActiveWorkspace() {
     contextId: scopeId,
     runtime,
     researchCaptures,
+    suggestions: suggestionStore.toPersistencePayload({
+      scopeId,
+      sectionId: activeSectionId,
+    }),
     documents: persisted.documents,
     documentBindings: persisted.documentBindings,
     activeDocumentId: persisted.activeDocumentId,
@@ -2014,6 +2266,8 @@ function updateWidgetUi() {
 
   updateWhitespaceZoneCount();
   updateContextUi();
+  updateReferenceManagerUi();
+  renderSuggestionRail();
   if (searchIndex && workspaceScopeId()) {
     searchIndex.scheduleReindex({
       runtime,
@@ -2024,6 +2278,7 @@ function updateWidgetUi() {
   }
   updateOnboardingControlsUi();
   scheduleOnboardingRefresh(120);
+  scheduleSuggestionAnalysis();
   scheduleWorkspacePersist();
 }
 
@@ -2051,6 +2306,156 @@ function centerCameraOnWidget(widget) {
   runtime.camera.offsetX = canvas.clientWidth / 2 - centerX * runtime.camera.zoom;
   runtime.camera.offsetY = canvas.clientHeight / 2 - centerY * runtime.camera.zoom;
   updateCameraOutputFromState();
+}
+
+function centerCameraOnWorldPoint(point) {
+  if (!point || !isFiniteNumber(point.x) || !isFiniteNumber(point.y)) {
+    return;
+  }
+
+  runtime.camera.offsetX = canvas.clientWidth / 2 - point.x * runtime.camera.zoom;
+  runtime.camera.offsetY = canvas.clientHeight / 2 - point.y * runtime.camera.zoom;
+  updateCameraOutputFromState();
+}
+
+function transitionSuggestionState(suggestion, toState) {
+  const scope = currentSuggestionScope();
+  if (!scope || !suggestion || typeof suggestion.id !== "string") {
+    return null;
+  }
+
+  const updated = suggestionStore.transition({
+    scopeId: scope.scopeId,
+    sectionId: scope.sectionId,
+    suggestionId: suggestion.id,
+    toState,
+  });
+  renderSuggestionRail();
+  scheduleWorkspacePersist();
+  return updated;
+}
+
+function focusSuggestion(suggestion) {
+  if (!suggestion) {
+    return;
+  }
+
+  const sourceWidgetId =
+    typeof suggestion.payload?.sourceWidgetId === "string" && suggestion.payload.sourceWidgetId.trim()
+      ? suggestion.payload.sourceWidgetId
+      : null;
+  if (sourceWidgetId) {
+    const source = runtime.getWidgetById(sourceWidgetId);
+    if (source) {
+      centerCameraOnWidget(source);
+      runtime.bringWidgetToFront(source.id);
+      runtime.setSelectedWidgetId(source.id);
+      runtime.setFocusedWidgetId(source.id);
+      return;
+    }
+  }
+
+  if (suggestion.anchor) {
+    centerCameraOnWorldPoint(suggestion.anchor);
+  }
+}
+
+async function acceptSuggestion(suggestion) {
+  if (!suggestion || typeof suggestion.kind !== "string") {
+    return false;
+  }
+
+  const sourceWidgetId =
+    typeof suggestion.payload?.sourceWidgetId === "string" && suggestion.payload.sourceWidgetId.trim()
+      ? suggestion.payload.sourceWidgetId
+      : null;
+
+  if (suggestion.kind === "expanded-area") {
+    const sourceWidget = sourceWidgetId ? runtime.getWidgetById(sourceWidgetId) : null;
+    const whitespaceZoneId =
+      typeof suggestion.payload?.whitespaceZoneId === "string" && suggestion.payload.whitespaceZoneId.trim()
+        ? suggestion.payload.whitespaceZoneId
+        : null;
+
+    if (sourceWidget?.type === "pdf-document" && whitespaceZoneId) {
+      const zone = sourceWidget
+        .getWhitespaceZones()
+        .find((entry) => entry.id === whitespaceZoneId);
+      if (zone && !zone.linkedWidgetId) {
+        await createExpandedFromWhitespaceZone(sourceWidget, zone);
+      } else {
+        await createExpandedAreaWidget(
+          {},
+          createCreationIntent({
+            type: "expanded-area",
+            anchor: suggestion.anchor ?? viewportCenterAnchor(),
+            sourceWidgetId: sourceWidget.id,
+            createdFrom: "suggestion-accepted",
+          }),
+        );
+      }
+    } else {
+      await createExpandedAreaWidget(
+        {},
+        createCreationIntent({
+          type: "expanded-area",
+          anchor: suggestion.anchor ?? viewportCenterAnchor(),
+          sourceWidgetId,
+          createdFrom: "suggestion-accepted",
+        }),
+      );
+    }
+
+    transitionSuggestionState(suggestion, "accepted");
+    scheduleSuggestionAnalysis({ immediate: true });
+    return true;
+  }
+
+  if (suggestion.kind === "reference-popup") {
+    const keywordTitle =
+      typeof suggestion.payload?.keywordTitle === "string" && suggestion.payload.keywordTitle.trim()
+        ? suggestion.payload.keywordTitle.trim()
+        : "Reference";
+    const sourceTitle =
+      typeof suggestion.payload?.sourceTitle === "string" && suggestion.payload.sourceTitle.trim()
+        ? suggestion.payload.sourceTitle.trim()
+        : "PDF";
+    const snippetText =
+      typeof suggestion.payload?.snippetText === "string" && suggestion.payload.snippetText.trim()
+        ? suggestion.payload.snippetText.trim()
+        : `${keywordTitle} appears in ${sourceTitle}.`;
+
+    await createReferencePopupWidget({
+      intent: createCreationIntent({
+        type: "reference-popup",
+        anchor: suggestion.anchor ?? viewportCenterAnchor(),
+        sourceWidgetId,
+        createdFrom: "suggestion-accepted",
+      }),
+      definition: {
+        metadata: {
+          title: `${keywordTitle} Reference`,
+          popupMetadata: {
+            type: "reference-popup",
+            tags: ["suggested", typeof suggestion.payload?.keywordTag === "string" ? suggestion.payload.keywordTag : "keyword"],
+          },
+        },
+        dataPayload: {
+          sourceLabel: sourceTitle,
+          textContent: snippetText,
+          contentType: "definition",
+          citation: null,
+          researchCaptureId: null,
+        },
+      },
+    });
+
+    transitionSuggestionState(suggestion, "accepted");
+    scheduleSuggestionAnalysis({ immediate: true });
+    return true;
+  }
+
+  return false;
 }
 
 async function jumpToSearchResult(result) {
@@ -3055,6 +3460,11 @@ async function restoreWorkspaceForActiveContext() {
 
   restoringContext = true;
   setContextControlsBusy(true);
+  if (suggestionAnalysisTimer) {
+    window.clearTimeout(suggestionAnalysisTimer);
+    suggestionAnalysisTimer = null;
+  }
+  suggestionAnalysisQueued = false;
 
   try {
     clearRuntimeWidgets();
@@ -3068,6 +3478,15 @@ async function restoreWorkspaceForActiveContext() {
     researchCaptures = [];
     lastPdfWidgetId = null;
     lastReferenceWidgetId = null;
+    const suggestionScope = currentSuggestionScope();
+    if (suggestionScope) {
+      suggestionStore.replaceSectionSuggestions({
+        scopeId: suggestionScope.scopeId,
+        sectionId: suggestionScope.sectionId,
+        suggestions: [],
+      });
+      renderSuggestionRail();
+    }
 
     let workspace = contextWorkspaceStore.loadWorkspace(scopeId);
     if (
@@ -3102,6 +3521,14 @@ async function restoreWorkspaceForActiveContext() {
     researchCaptures = Array.isArray(workspace.researchCaptures)
       ? workspace.researchCaptures.map((entry) => normalizeResearchCapture(entry)).filter((entry) => entry !== null)
       : [];
+    if (suggestionScope) {
+      suggestionStore.replaceSectionSuggestions({
+        scopeId: suggestionScope.scopeId,
+        sectionId: suggestionScope.sectionId,
+        suggestions: Array.isArray(workspace.suggestions) ? workspace.suggestions : [],
+      });
+      renderSuggestionRail();
+    }
     lastPdfWidgetId = workspace.activeWorkspaceState.lastPdfWidgetId;
     lastReferenceWidgetId = workspace.activeWorkspaceState.lastReferenceWidgetId;
 
@@ -3193,6 +3620,7 @@ async function restoreWorkspaceForActiveContext() {
       searchIndex.reindexNow({ runtime, contextId: scopeId });
     }
     updateWidgetUi();
+    scheduleSuggestionAnalysis({ immediate: true });
   } finally {
     setContextControlsBusy(false);
     restoringContext = false;
@@ -3595,6 +4023,17 @@ function wireBaseEventHandlers() {
 
       event.preventDefault();
       event.stopPropagation();
+    },
+    { capture: true },
+  );
+  document.addEventListener(
+    "selectstart",
+    (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (isTypingTarget(target)) {
+        return;
+      }
+      event.preventDefault();
     },
     { capture: true },
   );
@@ -4195,6 +4634,100 @@ function wireContextMenu() {
   });
 }
 
+function wireSuggestionUi() {
+  if (suggestionUiController) {
+    return;
+  }
+
+  suggestionUiController = createSuggestionUiController({
+    rootElement: suggestionRail,
+    proposedListElement: suggestionProposedList,
+    ghostListElement: suggestionGhostList,
+    activeCountElement: suggestionActiveCountOutput,
+    ghostCountElement: suggestionGhostCountOutput,
+    emptyStateElement: suggestionEmptyState,
+    refreshButton: suggestionRefreshButton,
+    onAccept: async (suggestion) => {
+      await acceptSuggestion(suggestion);
+    },
+    onDismiss: (suggestion) => {
+      transitionSuggestionState(suggestion, "ghosted");
+    },
+    onRestore: (suggestion) => {
+      transitionSuggestionState(suggestion, "restored");
+    },
+    onDiscard: (suggestion) => {
+      transitionSuggestionState(suggestion, "discarded");
+    },
+    onFocus: (suggestion) => {
+      focusSuggestion(suggestion);
+    },
+    onRefresh: () => {
+      scheduleSuggestionAnalysis({ immediate: true });
+    },
+  });
+
+  renderSuggestionRail();
+}
+
+function wireReferenceManagerUi() {
+  if (referenceManagerUiController) {
+    return;
+  }
+
+  referenceManagerUiController = createReferenceManagerUi({
+    launcherButton: referenceManagerLauncher,
+    overlayElement: referenceManagerOverlay,
+    panelElement: referenceManagerPanel,
+    closeButton: referenceManagerCloseButton,
+    referencesTabButton: referenceManagerTabReferences,
+    documentsTabButton: referenceManagerTabDocuments,
+    referencesListElement: referenceManagerReferenceList,
+    documentsListElement: referenceManagerDocumentList,
+    referencesCountElement: referenceManagerReferenceCount,
+    documentsCountElement: referenceManagerDocumentCount,
+    previewLayerElement: referencePreviewLayer,
+    onImportReference: async (entry, { linkStatus = "linked" } = {}) => {
+      await createReferencePopupFromLibraryEntry(entry, {
+        linkStatus,
+        intent: createCreationIntent({
+          type: "reference-popup",
+          anchor: viewportCenterAnchor(),
+          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+          createdFrom: "manual",
+        }),
+      });
+      updateWidgetUi();
+    },
+    onImportDocument: async (entry, { linkStatus = "linked" } = {}) => {
+      await createPdfWidgetFromLibraryEntry(entry, {
+        linkStatus,
+        intent: createCreationIntent({
+          type: "pdf-document",
+          anchor: viewportCenterAnchor(),
+          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+          createdFrom: "manual",
+        }),
+      });
+      updateWidgetUi();
+    },
+    onRenameReference: (entry) => {
+      renameNotebookReferenceFromManager(entry);
+    },
+    onDeleteReference: (entry) => {
+      deleteNotebookReferenceFromManager(entry);
+    },
+    onRenameDocument: (entry) => {
+      renameNotebookDocumentFromManager(entry);
+    },
+    onDeleteDocument: (entry) => {
+      deleteNotebookDocumentFromManager(entry);
+    },
+  });
+
+  updateReferenceManagerUi();
+}
+
 function wireWidgetInteractionManager() {
   if (widgetInteractionManager) {
     return;
@@ -4504,6 +5037,8 @@ async function bootstrap() {
   wireWidgetCreationController();
   wireDocumentFocusSync();
   wireContextMenu();
+  wireSuggestionUi();
+  wireReferenceManagerUi();
 
   updateSnipUi({ armed: false, dragging: false });
   setWhitespaceState("idle");

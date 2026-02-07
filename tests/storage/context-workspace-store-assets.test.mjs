@@ -16,6 +16,7 @@ function emptyWorkspace(contextId, widgets) {
     contextId,
     widgets,
     researchCaptures: [],
+    suggestions: [],
     documents: [],
     documentBindings: [],
     activeWorkspaceState: {
@@ -122,6 +123,44 @@ test("workspace load repairs stale widget asset ids using inline fallback payloa
 
     const definition = store.toWidgetDefinition(repairedWidget);
     assert.equal(definition.dataPayload.imageDataUrl, "data:image/png;base64,DDDD");
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("workspace store persists section suggestions", () => {
+  const storage = createMemoryStorage();
+  const restoreEnv = installBrowserEnv(storage);
+
+  try {
+    const store = createContextWorkspaceStore({ storage });
+    const contextId = "ctx-suggestions::section-a";
+
+    store.saveWorkspace({
+      ...emptyWorkspace(contextId, []),
+      suggestions: [
+        {
+          id: "s-1",
+          scopeId: contextId,
+          sectionId: "section-a",
+          kind: "expanded-area",
+          label: "Expand whitespace",
+          fingerprint: "zone:pdf-1:z-1",
+          anchor: { x: 24, y: 48 },
+          payload: {
+            sourceWidgetId: "pdf-1",
+            whitespaceZoneId: "z-1",
+          },
+          state: "proposed",
+        },
+      ],
+    });
+
+    const loaded = store.loadWorkspace(contextId);
+    assert.equal(Array.isArray(loaded.suggestions), true);
+    assert.equal(loaded.suggestions.length, 1);
+    assert.equal(loaded.suggestions[0].id, "s-1");
+    assert.equal(loaded.suggestions[0].kind, "expanded-area");
   } finally {
     restoreEnv();
   }

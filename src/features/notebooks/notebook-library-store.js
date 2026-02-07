@@ -226,6 +226,74 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
       return cloneReference(updated);
     },
 
+    renameReference(notebookId, referenceId, nextTitle) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof referenceId !== "string" || !referenceId.trim()) {
+        return null;
+      }
+
+      const normalizedTitle = typeof nextTitle === "string" ? nextTitle.trim() : "";
+      if (!normalizedTitle) {
+        return null;
+      }
+
+      const existingIndex = notebook.references.findIndex((entry) => entry.id === referenceId);
+      if (existingIndex < 0) {
+        return null;
+      }
+
+      const nextReferences = [...notebook.references];
+      const existing = nextReferences[existingIndex];
+      const updated = {
+        ...existing,
+        title: normalizedTitle,
+        popupMetadata: {
+          ...existing.popupMetadata,
+          title: normalizedTitle,
+        },
+        updatedAt: nowIso(),
+      };
+      nextReferences[existingIndex] = updated;
+
+      state = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            references: nextReferences,
+          },
+        },
+      };
+      persist();
+      return cloneReference(updated);
+    },
+
+    deleteReference(notebookId, referenceId) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof referenceId !== "string" || !referenceId.trim()) {
+        return false;
+      }
+
+      const nextReferences = notebook.references.filter((entry) => entry.id !== referenceId);
+      if (nextReferences.length === notebook.references.length) {
+        return false;
+      }
+
+      state = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            references: nextReferences,
+          },
+        },
+      };
+      persist();
+      return true;
+    },
+
     deleteNotebook(notebookId) {
       if (typeof notebookId !== "string" || !notebookId.trim() || !state.notebooks[notebookId]) {
         return false;

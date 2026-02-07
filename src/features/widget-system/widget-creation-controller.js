@@ -33,6 +33,14 @@ export function createWidgetCreationController({
     }
   }
 
+  function cancelPendingHoldForPointer(pointerId) {
+    if (!pointerState || pointerState.pointerId !== pointerId) {
+      return;
+    }
+    clearHoldTimer();
+    pointerState = null;
+  }
+
   function closeMenu() {
     clearHoldTimer();
     menuPointerId = null;
@@ -200,8 +208,7 @@ export function createWidgetCreationController({
       }
 
       if (moved >= MOVE_THRESHOLD_PX) {
-        clearHoldTimer();
-        pointerState = null;
+        cancelPendingHoldForPointer(event.pointerId);
       }
 
       return false;
@@ -295,6 +302,34 @@ export function createWidgetCreationController({
     closeMenu();
   };
 
+  // Touch pointers used for camera pan/pinch are handled directly by runtime and
+  // do not pass through onPointerMove handlers. Watch raw moves so hold-open only
+  // triggers when the touch point truly stays stationary.
+  const onCanvasPointerMove = (event) => {
+    if (!pointerState || pointerState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (event.pointerType !== "touch") {
+      return;
+    }
+
+    const moved = Math.hypot(
+      event.clientX - pointerState.startClientX,
+      event.clientY - pointerState.startClientY,
+    );
+    if (moved >= MOVE_THRESHOLD_PX) {
+      cancelPendingHoldForPointer(event.pointerId);
+    }
+  };
+
+  const onCanvasPointerEnd = (event) => {
+    if (event.pointerType !== "touch") {
+      return;
+    }
+    cancelPendingHoldForPointer(event.pointerId);
+  };
+
   const onWindowKeyDown = (event) => {
     if (event.key === "Escape") {
       closeMenu();
@@ -321,6 +356,9 @@ export function createWidgetCreationController({
 
   menuElement.addEventListener("click", onMenuClick);
   canvas.addEventListener("contextmenu", onCanvasContextMenu);
+  canvas.addEventListener("pointermove", onCanvasPointerMove, { passive: true });
+  canvas.addEventListener("pointerup", onCanvasPointerEnd, { passive: true });
+  canvas.addEventListener("pointercancel", onCanvasPointerEnd, { passive: true });
   window.addEventListener("pointerdown", onWindowPointerDown);
   window.addEventListener("keydown", onWindowKeyDown);
   window.addEventListener("resize", closeMenu);
@@ -332,6 +370,9 @@ export function createWidgetCreationController({
       detachInput();
       menuElement.removeEventListener("click", onMenuClick);
       canvas.removeEventListener("contextmenu", onCanvasContextMenu);
+      canvas.removeEventListener("pointermove", onCanvasPointerMove);
+      canvas.removeEventListener("pointerup", onCanvasPointerEnd);
+      canvas.removeEventListener("pointercancel", onCanvasPointerEnd);
       window.removeEventListener("pointerdown", onWindowPointerDown);
       window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("resize", closeMenu);
