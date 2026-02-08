@@ -65,6 +65,45 @@ function normalizeReference(candidate) {
         ? candidate.sourceLabel.trim()
         : "Notebook Reference",
     popupMetadata: normalizePopupMetadata(candidate.popupMetadata, title),
+    inkStrokes: normalizeInkSnapshot(candidate.inkStrokes),
+    createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : nowIso(),
+    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
+  };
+}
+
+function normalizeInkSnapshot(candidate) {
+  if (!Array.isArray(candidate)) {
+    return [];
+  }
+  return candidate
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => ({
+      ...entry,
+    }));
+}
+
+function normalizeNote(candidate) {
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+
+  const title =
+    typeof candidate.title === "string" && candidate.title.trim() ? candidate.title.trim() : "Notes";
+  const metadata = asObject(candidate.metadata);
+
+  return {
+    id:
+      typeof candidate.id === "string" && candidate.id.trim() ? candidate.id.trim() : makeId("lib-note"),
+    title,
+    metadata: {
+      title,
+      note: typeof metadata.note === "string" ? metadata.note : "",
+    },
+    size: {
+      width: Math.max(120, Number(candidate.size?.width) || 420),
+      height: Math.max(80, Number(candidate.size?.height) || 260),
+    },
+    inkStrokes: normalizeInkSnapshot(candidate.inkStrokes),
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : nowIso(),
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
   };
@@ -73,7 +112,9 @@ function normalizeReference(candidate) {
 function normalizeNotebook(candidate) {
   const source = asObject(candidate);
   const references = [];
+  const notes = [];
   const seen = new Set();
+  const seenNotes = new Set();
 
   if (Array.isArray(source.references)) {
     for (const entry of source.references) {
@@ -86,8 +127,20 @@ function normalizeNotebook(candidate) {
     }
   }
 
+  if (Array.isArray(source.notes)) {
+    for (const entry of source.notes) {
+      const normalized = normalizeNote(entry);
+      if (!normalized || seenNotes.has(normalized.id)) {
+        continue;
+      }
+      seenNotes.add(normalized.id);
+      notes.push(normalized);
+    }
+  }
+
   return {
     references,
+    notes,
   };
 }
 
@@ -127,6 +180,23 @@ function cloneReference(entry) {
       ...entry.popupMetadata,
       tags: Array.isArray(entry.popupMetadata?.tags) ? [...entry.popupMetadata.tags] : [],
     },
+    inkStrokes: normalizeInkSnapshot(entry.inkStrokes),
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  };
+}
+
+function cloneNote(entry) {
+  return {
+    id: entry.id,
+    title: entry.title,
+    metadata: {
+      ...entry.metadata,
+    },
+    size: {
+      ...entry.size,
+    },
+    inkStrokes: normalizeInkSnapshot(entry.inkStrokes),
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
   };
@@ -169,6 +239,7 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
           ...state.notebooks,
           [notebookId]: {
             references: [],
+            notes: [],
           },
         },
       };
@@ -195,6 +266,21 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
 
       const found = notebook.references.find((entry) => entry.id === referenceId);
       return found ? cloneReference(found) : null;
+    },
+
+    listNotes(notebookId) {
+      const notebook = ensureNotebook(notebookId);
+      return notebook ? notebook.notes.map((entry) => cloneNote(entry)) : [];
+    },
+
+    getNote(notebookId, noteId) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook) {
+        return null;
+      }
+
+      const found = notebook.notes.find((entry) => entry.id === noteId);
+      return found ? cloneNote(found) : null;
     },
 
     upsertReference(notebookId, candidate) {
@@ -302,6 +388,125 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
           [notebookId]: {
             ...notebook,
             references: nextReferences,
+          },
+        },
+      };
+      if (!persist(nextState)) {
+        return false;
+      }
+      state = nextState;
+      return true;
+    },
+
+    upsertNote(notebookId, candidate) {
+      const notebook = ensureNotebook(notebookId);
+      const normalized = normalizeNote(candidate);
+      if (!notebook || !normalized) {
+        return null;
+      }
+
+      const existingIndex = notebook.notes.findIndex((entry) => entry.id === normalized.id);
+      const updated = {
+        ...normalized,
+        metadata: {
+          ...normalized.metadata,
+          title: normalized.title,
+        },
+        updatedAt: nowIso(),
+      };
+
+      let nextNotes = [];
+      if (existingIndex < 0) {
+        nextNotes = [updated, ...notebook.notes];
+      } else {
+        nextNotes = [...notebook.notes];
+        const current = nextNotes[existingIndex];
+        updated.createdAt = current.createdAt;
+        nextNotes[existingIndex] = updated;
+      }
+
+      const nextState = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            notes: nextNotes,
+          },
+        },
+      };
+
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
+      return cloneNote(updated);
+    },
+
+    renameNote(notebookId, noteId, nextTitle) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof noteId !== "string" || !noteId.trim()) {
+        return null;
+      }
+
+      const normalizedTitle = typeof nextTitle === "string" ? nextTitle.trim() : "";
+      if (!normalizedTitle) {
+        return null;
+      }
+
+      const existingIndex = notebook.notes.findIndex((entry) => entry.id === noteId);
+      if (existingIndex < 0) {
+        return null;
+      }
+
+      const nextNotes = [...notebook.notes];
+      const existing = nextNotes[existingIndex];
+      const updated = {
+        ...existing,
+        title: normalizedTitle,
+        metadata: {
+          ...existing.metadata,
+          title: normalizedTitle,
+        },
+        updatedAt: nowIso(),
+      };
+      nextNotes[existingIndex] = updated;
+
+      const nextState = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            notes: nextNotes,
+          },
+        },
+      };
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
+      return cloneNote(updated);
+    },
+
+    deleteNote(notebookId, noteId) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof noteId !== "string" || !noteId.trim()) {
+        return false;
+      }
+
+      const nextNotes = notebook.notes.filter((entry) => entry.id !== noteId);
+      if (nextNotes.length === notebook.notes.length) {
+        return false;
+      }
+
+      const nextState = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            notes: nextNotes,
           },
         },
       };

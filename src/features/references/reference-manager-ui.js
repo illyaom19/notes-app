@@ -35,6 +35,7 @@ function escapeHtml(value) {
 }
 
 function rowTemplate({ kind, id, title, subtitle, linkedDefaultLabel }) {
+  const showFrozen = kind !== "note";
   return `
     <article class="reference-manager-row" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">
       <button type="button" class="reference-manager-row-main" data-action="open-preview" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">
@@ -43,7 +44,11 @@ function rowTemplate({ kind, id, title, subtitle, linkedDefaultLabel }) {
       </button>
       <div class="reference-manager-row-actions">
         <button type="button" data-action="import-linked" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">${escapeHtml(linkedDefaultLabel)}</button>
-        <button type="button" data-action="import-frozen" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">Frozen</button>
+        ${
+          showFrozen
+            ? `<button type="button" data-action="import-frozen" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">Frozen</button>`
+            : ""
+        }
         <button type="button" data-action="rename-entry" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">Rename</button>
         <button type="button" data-action="delete-entry" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">Delete</button>
       </div>
@@ -55,6 +60,9 @@ function previewTitle(entry, kind) {
   if (kind === "document") {
     return text(entry.title, "Notebook Document");
   }
+  if (kind === "note") {
+    return text(entry.title, "Notebook Note");
+  }
   return text(entry.title, "Notebook Reference");
 }
 
@@ -63,6 +71,10 @@ function previewBody(entry, kind) {
     const sourceType = text(entry.sourceType, "pdf");
     const fileName = text(entry.fileName, "document.pdf");
     return `Source type: ${sourceType}\nFile: ${fileName}`;
+  }
+  if (kind === "note") {
+    const noteBody = text(entry.metadata?.note, "");
+    return noteBody || "Notebook note";
   }
 
   const sourceLabel = text(entry.sourceLabel, "Notebook Reference");
@@ -83,16 +95,22 @@ export function createReferenceManagerUi({
   panelElement,
   closeButton,
   referencesTabButton,
+  notesTabButton,
   documentsTabButton,
   referencesListElement,
+  notesListElement,
   documentsListElement,
   referencesCountElement,
+  notesCountElement,
   documentsCountElement,
   previewLayerElement,
   onImportReference,
+  onImportNote,
   onImportDocument,
   onRenameReference,
   onDeleteReference,
+  onRenameNote,
+  onDeleteNote,
   onRenameDocument,
   onDeleteDocument,
 }) {
@@ -110,6 +128,7 @@ export function createReferenceManagerUi({
   let overlayOpen = false;
   let activeTab = "references";
   let references = [];
+  let notes = [];
   let documents = [];
   const previewCards = new Map();
   let dragState = null;
@@ -127,16 +146,22 @@ export function createReferenceManagerUi({
   }
 
   function setTab(nextTab) {
-    activeTab = nextTab === "documents" ? "documents" : "references";
+    activeTab = nextTab === "documents" || nextTab === "notes" ? nextTab : "references";
 
     if (referencesTabButton instanceof HTMLButtonElement) {
       referencesTabButton.dataset.active = activeTab === "references" ? "true" : "false";
+    }
+    if (notesTabButton instanceof HTMLButtonElement) {
+      notesTabButton.dataset.active = activeTab === "notes" ? "true" : "false";
     }
     if (documentsTabButton instanceof HTMLButtonElement) {
       documentsTabButton.dataset.active = activeTab === "documents" ? "true" : "false";
     }
     if (referencesListElement instanceof HTMLElement) {
       referencesListElement.hidden = activeTab !== "references";
+    }
+    if (notesListElement instanceof HTMLElement) {
+      notesListElement.hidden = activeTab !== "notes";
     }
     if (documentsListElement instanceof HTMLElement) {
       documentsListElement.hidden = activeTab !== "documents";
@@ -194,6 +219,9 @@ export function createReferenceManagerUi({
   function findEntry(kind, entryId) {
     if (kind === "document") {
       return documents.find((entry) => entry.id === entryId) ?? null;
+    }
+    if (kind === "note") {
+      return notes.find((entry) => entry.id === entryId) ?? null;
     }
     return references.find((entry) => entry.id === entryId) ?? null;
   }
@@ -310,6 +338,10 @@ export function createReferenceManagerUi({
       await onImportDocument?.(entry, { linkStatus });
       return;
     }
+    if (kind === "note") {
+      await onImportNote?.(entry);
+      return;
+    }
 
     await onImportReference?.(entry, { linkStatus });
   }
@@ -326,7 +358,8 @@ export function createReferenceManagerUi({
     }
 
     const action = button.dataset.action;
-    const kind = button.dataset.kind === "document" ? "document" : "reference";
+    const kind =
+      button.dataset.kind === "document" ? "document" : button.dataset.kind === "note" ? "note" : "reference";
     const entryId = button.dataset.entryId;
     if (!entryId) {
       return;
@@ -348,6 +381,10 @@ export function createReferenceManagerUi({
     }
 
     if (action === "import-frozen") {
+      if (kind === "note") {
+        await importEntry(kind, entry, "linked");
+        return;
+      }
       await importEntry(kind, entry, "frozen");
       return;
     }
@@ -355,6 +392,8 @@ export function createReferenceManagerUi({
     if (action === "rename-entry") {
       if (kind === "document") {
         await onRenameDocument?.(entry);
+      } else if (kind === "note") {
+        await onRenameNote?.(entry);
       } else {
         await onRenameReference?.(entry);
       }
@@ -364,6 +403,8 @@ export function createReferenceManagerUi({
     if (action === "delete-entry") {
       if (kind === "document") {
         await onDeleteDocument?.(entry);
+      } else if (kind === "note") {
+        await onDeleteNote?.(entry);
       } else {
         await onDeleteReference?.(entry);
       }
@@ -395,7 +436,12 @@ export function createReferenceManagerUi({
       return;
     }
 
-    const kind = actionButton.dataset.kind === "document" ? "document" : "reference";
+    const kind =
+      actionButton.dataset.kind === "document"
+        ? "document"
+        : actionButton.dataset.kind === "note"
+          ? "note"
+          : "reference";
     const entryId = actionButton.dataset.entryId;
     if (!entryId) {
       return;
@@ -507,12 +553,18 @@ export function createReferenceManagerUi({
   const onDocumentsTabClick = () => {
     setTab("documents");
   };
+  const onNotesTabClick = () => {
+    setTab("notes");
+  };
 
   const onReferencesListClick = (event) => {
     void handleListAction(event);
   };
 
   const onDocumentsListClick = (event) => {
+    void handleListAction(event);
+  };
+  const onNotesListClick = (event) => {
     void handleListAction(event);
   };
 
@@ -565,8 +617,10 @@ export function createReferenceManagerUi({
     bind(closeButton, "click", onCloseClick);
     bind(overlayElement, "pointerdown", closeOnBackdrop);
     bind(referencesTabButton, "click", onReferencesTabClick);
+    bind(notesTabButton, "click", onNotesTabClick);
     bind(documentsTabButton, "click", onDocumentsTabClick);
     bind(referencesListElement, "click", onReferencesListClick);
+    bind(notesListElement, "click", onNotesListClick);
     bind(documentsListElement, "click", onDocumentsListClick);
     bind(previewLayerElement, "click", onPreviewLayerClick);
     bind(previewLayerElement, "pointerdown", startPreviewDrag);
@@ -582,8 +636,9 @@ export function createReferenceManagerUi({
   setTab("references");
 
   return {
-    render({ references: nextReferences = [], documents: nextDocuments = [] } = {}) {
+    render({ references: nextReferences = [], notes: nextNotes = [], documents: nextDocuments = [] } = {}) {
       references = asArray(nextReferences);
+      notes = asArray(nextNotes);
       documents = asArray(nextDocuments);
 
       if (referencesCountElement instanceof HTMLElement) {
@@ -592,6 +647,9 @@ export function createReferenceManagerUi({
 
       if (documentsCountElement instanceof HTMLElement) {
         documentsCountElement.textContent = safeCountLabel(documents.length, "document", "documents");
+      }
+      if (notesCountElement instanceof HTMLElement) {
+        notesCountElement.textContent = safeCountLabel(notes.length, "note", "notes");
       }
 
       if (referencesListElement instanceof HTMLElement) {
@@ -624,6 +682,24 @@ export function createReferenceManagerUi({
                 title: text(entry.title, "Document"),
                 subtitle: text(entry.fileName, "document.pdf"),
                 linkedDefaultLabel: "Place Linked",
+              }),
+            )
+            .join("");
+        }
+      }
+
+      if (notesListElement instanceof HTMLElement) {
+        if (notes.length < 1) {
+          notesListElement.innerHTML = "<p class='reference-manager-empty'>No notebook notes yet.</p>";
+        } else {
+          notesListElement.innerHTML = notes
+            .map((entry) =>
+              rowTemplate({
+                kind: "note",
+                id: entry.id,
+                title: text(entry.title, "Notes"),
+                subtitle: text(entry.metadata?.note, "Notebook Note"),
+                linkedDefaultLabel: "Place",
               }),
             )
             .join("");

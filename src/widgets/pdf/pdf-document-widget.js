@@ -703,17 +703,21 @@ export class PdfDocumentWidget extends WidgetBase {
     }
   }
 
-  renderSnapshot(ctx, camera, _renderContext) {
+  renderSnapshot(ctx, camera, renderContext) {
     this._computeDisplayLayout();
+    const interaction = interactionStateForWidget(this, renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
-      interaction: { focused: true },
+      interaction,
       borderRadius: 18,
       headerWorldHeight: HEADER_WORLD,
+      collapsedScale: 0.24,
     });
-
-    ctx.fillStyle = WIDGET_THEME.palette.title;
-    ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-    ctx.fillText(`${shortName(this.metadata.title)} • ${this.pageCount} pages`, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
+    drawFloatingWidgetTitle(ctx, camera, {
+      title: shortName(this.metadata.title),
+      frame,
+      focused: interaction.focused,
+      visible: interaction.showTitle,
+    });
 
     const inset = 10;
     const thumbX = frame.screen.x + inset;

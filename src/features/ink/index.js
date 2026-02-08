@@ -12,6 +12,8 @@ export function createInkFeature({ runtime, onStateChange, getActiveContextId })
     toggleTool: () => engine.toggleTool(),
     isEnabled: () => engine.isEnabled(),
     setEnabled: (nextEnabled) => engine.setEnabled(nextEnabled),
+    cloneStrokesForWidget: (options) => engine.cloneStrokesForWidget(options),
+    commitImportedStrokes: (strokes) => engine.commitImportedStrokes(strokes),
     dispose: () => engine.detach(),
   };
 }

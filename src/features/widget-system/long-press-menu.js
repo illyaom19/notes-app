@@ -5,7 +5,7 @@ function isLibraryEligible(widget) {
   if (!widget) {
     return false;
   }
-  return widget.type === "reference-popup" || widget.type === "pdf-document";
+  return widget.type === "reference-popup" || widget.type === "pdf-document" || widget.type === "expanded-area";
 }
 
 function isWidgetInLibrary(widget) {
@@ -19,6 +19,10 @@ function isWidgetInLibrary(widget) {
 
   if (widget.type === "pdf-document") {
     return typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim();
+  }
+
+  if (widget.type === "expanded-area") {
+    return typeof widget.metadata?.libraryNoteId === "string" && widget.metadata.libraryNoteId.trim();
   }
 
   return false;

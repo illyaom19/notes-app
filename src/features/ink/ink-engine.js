@@ -16,6 +16,7 @@ function createStroke(pointerId, { layer, contextId, sourceWidgetId, anchorBound
     contextId: contextId ?? null,
     sourceWidgetId: sourceWidgetId ?? null,
     anchorBounds: anchorBounds ?? null,
+    anchorMode: "relative",
     points: [point],
   };
 }
@@ -151,6 +152,9 @@ export class InkEngine {
     if (!widget) {
       return null;
     }
+    if (widget.collapsed) {
+      return null;
+    }
 
     const interactionBounds =
       typeof widget.getInteractionBounds === "function"
@@ -185,6 +189,16 @@ export class InkEngine {
     };
   }
 
+  _buildAnchoredLocalPoint(event, camera, bounds) {
+    const world = camera.screenToWorld(event.offsetX, event.offsetY);
+    return {
+      lx: world.x - bounds.x,
+      ly: world.y - bounds.y,
+      p: event.pressure || 0.5,
+      t: performance.now(),
+    };
+  }
+
   _buildPointForStroke(event, camera, stroke) {
     if (stroke.layer === "global") {
       return this._buildWorldPoint(event, camera);
@@ -195,6 +209,9 @@ export class InkEngine {
       return null;
     }
     stroke.anchorBounds = bounds;
+    if (stroke.anchorMode === "local") {
+      return this._buildAnchoredLocalPoint(event, camera, bounds);
+    }
     return this._buildAnchoredPoint(event, camera, bounds);
   }
 
@@ -208,15 +225,38 @@ export class InkEngine {
       return null;
     }
 
+    const widget = this.runtime.getWidgetById(stroke.sourceWidgetId);
+    const isExpandedAreaStroke = Boolean(widget && widget.type === "expanded-area");
+    const anchorBounds =
+      stroke.anchorBounds && typeof stroke.anchorBounds === "object" ? stroke.anchorBounds : bounds;
+
     return {
       ...stroke,
       points: stroke.points.map((point) => ({
-        x: bounds.x + bounds.width * clamp(point.u ?? 0, 0, 1),
-        y: bounds.y + bounds.height * clamp(point.v ?? 0, 0, 1),
+        x:
+          stroke.anchorMode === "local"
+            ? bounds.x + (Number(point.lx) || 0)
+            : isExpandedAreaStroke
+              ? bounds.x + Math.max(0, Number(anchorBounds.width) || 0) * clamp(point.u ?? 0, 0, 1)
+            : bounds.x + bounds.width * clamp(point.u ?? 0, 0, 1),
+        y:
+          stroke.anchorMode === "local"
+            ? bounds.y + (Number(point.ly) || 0)
+            : isExpandedAreaStroke
+              ? bounds.y + Math.max(0, Number(anchorBounds.height) || 0) * clamp(point.v ?? 0, 0, 1)
+            : bounds.y + bounds.height * clamp(point.v ?? 0, 0, 1),
         p: point.p,
         t: point.t,
       })),
     };
+  }
+
+  _isCropAnchoredWidgetStroke(stroke) {
+    if (!stroke || stroke.layer !== "widget" || stroke.anchorMode !== "local" || !stroke.sourceWidgetId) {
+      return false;
+    }
+    const widget = this.runtime.getWidgetById(stroke.sourceWidgetId);
+    return Boolean(widget && widget.type === "expanded-area" && !widget.collapsed);
   }
 
   _drawLayer(ctx, camera, layer) {
@@ -229,7 +269,23 @@ export class InkEngine {
       if (!renderable || !Array.isArray(renderable.points) || renderable.points.length < 1) {
         continue;
       }
-      drawStroke(ctx, camera, renderable);
+      if (this._isCropAnchoredWidgetStroke(stroke)) {
+        const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId);
+        if (!bounds) {
+          continue;
+        }
+        const screen = camera.worldToScreen(bounds.x, bounds.y);
+        const width = Math.max(1, bounds.width * camera.zoom);
+        const height = Math.max(1, bounds.height * camera.zoom);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(screen.x, screen.y, width, height);
+        ctx.clip();
+        drawStroke(ctx, camera, renderable);
+        ctx.restore();
+      } else {
+        drawStroke(ctx, camera, renderable);
+      }
     }
 
     for (const stroke of this.activeStrokes.values()) {
@@ -240,7 +296,23 @@ export class InkEngine {
       if (!renderable || !Array.isArray(renderable.points) || renderable.points.length < 1) {
         continue;
       }
-      drawStroke(ctx, camera, renderable);
+      if (this._isCropAnchoredWidgetStroke(stroke)) {
+        const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId);
+        if (!bounds) {
+          continue;
+        }
+        const screen = camera.worldToScreen(bounds.x, bounds.y);
+        const width = Math.max(1, bounds.width * camera.zoom);
+        const height = Math.max(1, bounds.height * camera.zoom);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(screen.x, screen.y, width, height);
+        ctx.clip();
+        drawStroke(ctx, camera, renderable);
+        ctx.restore();
+      } else {
+        drawStroke(ctx, camera, renderable);
+      }
     }
   }
 
@@ -311,6 +383,7 @@ export class InkEngine {
     const layer = requestedLayer !== "global" && !requestedBounds ? "global" : requestedLayer;
     const sourceWidgetId = layer === "global" ? null : requestedWidgetId;
     const anchorBounds = layer === "global" ? null : requestedBounds;
+    const anchorMode = layer === "widget" && targetWidget?.type === "expanded-area" ? "local" : "relative";
     const contextId = this._activeContextId();
 
     const seedStroke = createStroke(
@@ -318,8 +391,11 @@ export class InkEngine {
       { layer, contextId, sourceWidgetId, anchorBounds },
       layer === "global"
         ? this._buildWorldPoint(event, camera)
-        : this._buildAnchoredPoint(event, camera, anchorBounds),
+        : anchorMode === "local"
+          ? this._buildAnchoredLocalPoint(event, camera, anchorBounds)
+          : this._buildAnchoredPoint(event, camera, anchorBounds),
     );
+    seedStroke.anchorMode = anchorMode;
     this.activeStrokes.set(event.pointerId, seedStroke);
     this._emitState();
     return true;
@@ -394,6 +470,54 @@ export class InkEngine {
   _afterStoreMutation() {
     this.persistence.scheduleSave(this.store.serialize());
     this._emitState();
+  }
+
+  cloneStrokesForWidget({ contextId = null, sourceWidgetId, targetWidgetId = null } = {}) {
+    if (typeof sourceWidgetId !== "string" || !sourceWidgetId.trim()) {
+      return [];
+    }
+    const scopedContextId = contextId ?? this._activeContextId();
+    const clones = [];
+    for (const stroke of this.store.getCompletedStrokes()) {
+      if (stroke.sourceWidgetId !== sourceWidgetId) {
+        continue;
+      }
+      if (scopedContextId && stroke.contextId && stroke.contextId !== scopedContextId) {
+        continue;
+      }
+      clones.push({
+        ...stroke,
+        id: globalThis.crypto?.randomUUID?.() ?? `stroke-clone-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        sourceWidgetId: targetWidgetId ?? sourceWidgetId,
+        points: Array.isArray(stroke.points) ? stroke.points.map((point) => ({ ...point })) : [],
+      });
+    }
+    return clones;
+  }
+
+  commitImportedStrokes(strokes = []) {
+    if (!Array.isArray(strokes) || strokes.length < 1) {
+      return 0;
+    }
+
+    let added = 0;
+    for (const stroke of strokes) {
+      if (!stroke || typeof stroke !== "object" || !Array.isArray(stroke.points) || stroke.points.length < 1) {
+        continue;
+      }
+      this.store.commitStroke({
+        ...stroke,
+        id:
+          typeof stroke.id === "string" && stroke.id.trim()
+            ? stroke.id
+            : globalThis.crypto?.randomUUID?.() ?? `stroke-import-${Date.now()}-${added}`,
+      });
+      added += 1;
+    }
+    if (added > 0) {
+      this._afterStoreMutation();
+    }
+    return added;
   }
 
   _emitState() {

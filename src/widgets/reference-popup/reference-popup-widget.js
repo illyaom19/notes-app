@@ -2,7 +2,6 @@ import { fillPill, fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 import { resolveWidgetLod, widgetTypeTitle } from "../../features/widget-system/widget-lod.js";
 import {
-  drawControlGlyph,
   drawFloatingWidgetTitle,
   drawUnifiedWidgetFrame,
   interactionStateForWidget,
@@ -11,9 +10,9 @@ import {
 
 const HEADER_HEIGHT = 34;
 const MIN_SIZE = { width: 180, height: 120 };
+const MAX_SIZE = { width: 800, height: 640 };
 const SOURCE_BUTTON_SIZE = { width: 82, height: 22 };
 const CONTROL_SIZE_WORLD = 22;
-const CONTROL_PAD_WORLD = 8;
 const PANEL_INSET_WORLD = 8;
 const BODY_INSET_WORLD = 10;
 
@@ -231,6 +230,7 @@ export class ReferencePopupWidget extends WidgetBase {
     }
 
     this._revealActions = false;
+    this._aspectRatio = Math.max(0.5, this.size.width / Math.max(1, this.size.height));
   }
 
   get displayHeight() {
@@ -253,17 +253,6 @@ export class ReferencePopupWidget extends WidgetBase {
       y: this.position.y + this.displayHeight - handleSize,
       width: handleSize,
       height: handleSize,
-    };
-  }
-
-  _closeButtonRect(camera) {
-    const controlSize = worldFromPixels(camera, CONTROL_SIZE_WORLD);
-    const controlPad = worldFromPixels(camera, CONTROL_PAD_WORLD);
-    return {
-      x: this.position.x + this.size.width - controlPad - controlSize,
-      y: this.position.y + controlPad,
-      width: controlSize,
-      height: controlSize,
     };
   }
 
@@ -294,24 +283,6 @@ export class ReferencePopupWidget extends WidgetBase {
 
   getControlAt(worldX, worldY, camera) {
     const controlCamera = camera ?? { zoom: 1 };
-    if (this._revealActions) {
-      const controls = [
-        ["close", this._closeButtonRect(controlCamera)],
-        ["resize", this._resizeHandleRect(controlCamera)],
-      ];
-
-      for (const [key, rect] of controls) {
-        if (
-          worldX >= rect.x &&
-          worldX <= rect.x + rect.width &&
-          worldY >= rect.y &&
-          worldY <= rect.y + rect.height
-        ) {
-          return key;
-        }
-      }
-    }
-
     if (this._revealActions && this.hasSourceAction()) {
       const sourceRect = this._sourceButtonRect(controlCamera);
       if (
@@ -346,8 +317,16 @@ export class ReferencePopupWidget extends WidgetBase {
   }
 
   resizeFromCorner(deltaWidth, deltaHeight) {
-    this.size.width = clamp(this.size.width + deltaWidth, MIN_SIZE.width, 800);
-    this.size.height = clamp(this.size.height + deltaHeight, MIN_SIZE.height, 640);
+    const ratio = Math.max(0.5, this._aspectRatio || this.size.width / Math.max(1, this.size.height));
+    const weightedHeightDelta = deltaHeight * ratio;
+    const nextWidth = clamp(
+      this.size.width + (Math.abs(weightedHeightDelta) > Math.abs(deltaWidth) ? weightedHeightDelta : deltaWidth),
+      MIN_SIZE.width,
+      MAX_SIZE.width,
+    );
+    const nextHeight = clamp(nextWidth / ratio, MIN_SIZE.height, MAX_SIZE.height);
+    this.size.width = nextHeight * ratio > MAX_SIZE.width ? MAX_SIZE.width : nextWidth;
+    this.size.height = nextHeight;
   }
 
   render(ctx, camera, renderContext) {
@@ -450,58 +429,21 @@ export class ReferencePopupWidget extends WidgetBase {
     if (!this._revealActions) {
       return;
     }
-
-    const closeRect = this._closeButtonRect(camera);
-    const resizeRect = this._resizeHandleRect(camera);
-    const closeScreen = camera.worldToScreen(closeRect.x, closeRect.y);
-    const resizeScreen = camera.worldToScreen(resizeRect.x, resizeRect.y);
-    const iconSize = Math.max(12, closeRect.width * camera.zoom);
-    const resizeSize = Math.max(12, resizeRect.width * camera.zoom);
-
-    fillPill(ctx, closeScreen.x, closeScreen.y, iconSize, iconSize, WIDGET_THEME.palette.controlBg);
-    drawControlGlyph(ctx, "close", {
-      x: closeScreen.x,
-      y: closeScreen.y,
-      size: iconSize,
-      color: WIDGET_THEME.palette.controlFg,
-    });
-
-    fillPill(ctx, resizeScreen.x, resizeScreen.y, resizeSize, resizeSize, WIDGET_THEME.palette.controlBgSoft);
-    drawControlGlyph(ctx, "resize", {
-      x: resizeScreen.x,
-      y: resizeScreen.y,
-      size: resizeSize,
-      color: WIDGET_THEME.palette.controlFg,
-    });
   }
 
   renderSnapshot(ctx, camera, renderContext) {
-    const screen = camera.worldToScreen(this.position.x, this.position.y);
-    const width = this.size.width * camera.zoom;
-    const height = Math.max(40, this.size.height * camera.zoom * 0.24);
-
-    fillStrokeRoundedRect(
-      ctx,
-      screen.x,
-      screen.y,
-      width,
-      height,
-      16,
-      WIDGET_THEME.palette.frameFill,
-      WIDGET_THEME.palette.frameStroke,
-      1.1,
-    );
-    fillPill(
-      ctx,
-      screen.x + 8,
-      screen.y + 6,
-      Math.max(12, width - 16),
-      Math.max(6, Math.min(14, height * 0.28)),
-      WIDGET_THEME.palette.headerAccentSoft,
-    );
-
-    ctx.fillStyle = WIDGET_THEME.palette.title;
-    ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-    ctx.fillText(`${this.metadata.title || widgetTypeTitle(this.type)}`, screen.x + 12, screen.y + 22);
+    const interaction = interactionStateForWidget(this, renderContext);
+    const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
+      interaction,
+      borderRadius: 16,
+      headerWorldHeight: HEADER_HEIGHT,
+      collapsedScale: 0.24,
+    });
+    drawFloatingWidgetTitle(ctx, camera, {
+      title: this.metadata.title || widgetTypeTitle(this.type),
+      frame,
+      focused: interaction.focused,
+      visible: interaction.showTitle,
+    });
   }
 }
