@@ -5,6 +5,8 @@ function clamp(value, min, max) {
 const RAIL_TOP_MIN = 8;
 const RAIL_BOTTOM_RESERVED = 40;
 const RAIL_STACK_GAP = 42;
+const OFFSCREEN_SOFT_PX = 24;
+const OFFSCREEN_HIDE_PX = 120;
 
 function compactLabel(suggestion) {
   const base = typeof suggestion?.label === "string" ? suggestion.label.trim() : "";
@@ -14,15 +16,30 @@ function compactLabel(suggestion) {
   return base.length > 36 ? `${base.slice(0, 33)}...` : base;
 }
 
-function railLeftForWidget(runtime, widget) {
-  const bounds =
+function canvasBounds(runtime) {
+  const rect = runtime?.canvas?.getBoundingClientRect?.();
+  if (!rect) {
+    return null;
+  }
+  return {
+    left: rect.left,
+    right: rect.right,
+    top: rect.top,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function railLeftForWidget(runtime, widget, canvasRect) {
+  const widgetBounds =
     typeof widget.getInteractionBounds === "function"
       ? widget.getInteractionBounds()
       : widget.size;
 
-  const worldX = widget.position.x + Math.max(1, bounds.width) + 14;
+  const worldX = widget.position.x + Math.max(1, widgetBounds.width) + 14;
   const screen = runtime.camera.worldToScreen(worldX, widget.position.y);
-  return clamp(screen.x, 8, window.innerWidth - 178);
+  return clamp(screen.x, canvasRect.left + 8, canvasRect.right - 178);
 }
 
 function suggestionWorldY(widget, suggestion, fallbackIndex) {
@@ -35,7 +52,7 @@ function suggestionWorldY(widget, suggestion, fallbackIndex) {
 function desiredScreenTop(runtime, widget, suggestion, fallbackIndex) {
   const worldY = suggestionWorldY(widget, suggestion, fallbackIndex);
   const screen = runtime.camera.worldToScreen(widget.position.x, worldY);
-  return clamp(screen.y - 12, 8, window.innerHeight - 40);
+  return screen.y - 12;
 }
 
 function buildActiveChip(suggestion) {
@@ -69,6 +86,16 @@ function buildActiveChip(suggestion) {
   actions.append(acceptButton, ghostButton);
   row.append(focusButton, actions);
   return row;
+}
+
+function buildReferenceDotChip(suggestion) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "suggestion-dot";
+  button.dataset.action = "focus";
+  button.dataset.suggestionId = suggestion.id;
+  button.setAttribute("aria-label", compactLabel(suggestion));
+  return button;
 }
 
 function buildGhostChip(suggestion) {
@@ -107,6 +134,9 @@ export function createSuggestionUiController({
   }
 
   let suggestionsById = new Map();
+  let hoveredSuggestionId = null;
+  let hoverPointerType = null;
+  let suppressClickUntil = 0;
 
   const handleAction = async (event) => {
     const target = event.target;
@@ -150,10 +180,50 @@ export function createSuggestionUiController({
     }
   };
 
-  const onRootClick = (event) => {
+  const onRootPointerDown = (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    if (event.button !== 0) {
+      return;
+    }
+    suppressClickUntil = Date.now() + 420;
+    event.preventDefault();
     void handleAction(event);
   };
+
+  const onRootClick = (event) => {
+    if (Date.now() < suppressClickUntil) {
+      event.preventDefault();
+      return;
+    }
+    void handleAction(event);
+  };
+
+  const onRootPointerMove = (event) => {
+    if (!(event instanceof PointerEvent)) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const suggestionHost = target?.closest?.("[data-suggestion-id]");
+    if (event.pointerType === "mouse" || event.pointerType === "pen") {
+      hoverPointerType = event.pointerType;
+      hoveredSuggestionId = suggestionHost?.dataset?.suggestionId ?? null;
+      return;
+    }
+    hoveredSuggestionId = null;
+    hoverPointerType = null;
+  };
+
+  const onRootPointerLeave = () => {
+    hoveredSuggestionId = null;
+    hoverPointerType = null;
+  };
+
+  rootElement.addEventListener("pointerdown", onRootPointerDown);
   rootElement.addEventListener("click", onRootClick);
+  rootElement.addEventListener("pointermove", onRootPointerMove);
+  rootElement.addEventListener("pointerleave", onRootPointerLeave);
 
   return {
     render({ focusedPdfWidgetId = null, proposed = [], ghosted = [] } = {}) {
@@ -177,16 +247,33 @@ export function createSuggestionUiController({
         return;
       }
 
+      const bounds = canvasBounds(runtime);
+      if (!bounds || bounds.width < 1 || bounds.height < 1) {
+        rootElement.hidden = true;
+        rootElement.dataset.open = "false";
+        rootElement.innerHTML = "";
+        return;
+      }
+
       rootElement.hidden = false;
       rootElement.dataset.open = "true";
       rootElement.innerHTML = "";
+      rootElement.style.clipPath = `inset(${Math.max(0, bounds.top)}px ${Math.max(0, window.innerWidth - bounds.right)}px ${Math.max(0, window.innerHeight - bounds.bottom)}px ${Math.max(0, bounds.left)}px)`;
 
-      const railLeft = railLeftForWidget(runtime, focusedWidget);
-      const maxTop = Math.max(RAIL_TOP_MIN, window.innerHeight - RAIL_BOTTOM_RESERVED);
+      const railLeft = railLeftForWidget(runtime, focusedWidget, bounds);
+      const railTop = Math.max(bounds.top + RAIL_TOP_MIN, 0);
+      const maxTop = Math.max(railTop, bounds.bottom - RAIL_BOTTOM_RESERVED);
       const entries = [
         ...proposed.slice(0, 6).map((suggestion, index) => ({
           suggestion,
-          chip: buildActiveChip(suggestion),
+          chip:
+            suggestion.kind === "reference-popup" &&
+            (hoverPointerType === "mouse" || hoverPointerType === "pen") &&
+            hoveredSuggestionId === suggestion.id
+              ? buildActiveChip(suggestion)
+              : suggestion.kind === "reference-popup"
+                ? buildReferenceDotChip(suggestion)
+                : buildActiveChip(suggestion),
           rank: index,
           desiredTop: desiredScreenTop(runtime, focusedWidget, suggestion, index),
         })),
@@ -198,7 +285,7 @@ export function createSuggestionUiController({
         })),
       ];
 
-      const maxVisible = Math.max(1, Math.floor((maxTop - RAIL_TOP_MIN) / RAIL_STACK_GAP) + 1);
+      const maxVisible = Math.max(1, Math.floor((maxTop - railTop) / RAIL_STACK_GAP) + 1);
       const visibleEntries = entries.slice(0, maxVisible);
 
       visibleEntries.sort((a, b) => {
@@ -224,7 +311,7 @@ export function createSuggestionUiController({
         const overflow = topPositions[lastIndex] - maxTop;
         if (overflow > 0) {
           for (let index = 0; index < topPositions.length; index += 1) {
-            topPositions[index] = Math.max(RAIL_TOP_MIN, topPositions[index] - overflow);
+            topPositions[index] = Math.max(railTop, topPositions[index] - overflow);
           }
         }
       }
@@ -245,13 +332,31 @@ export function createSuggestionUiController({
         const chip = entry.chip;
         chip.classList.add("suggestion-rail-item");
         chip.style.left = `${railLeft}px`;
-        chip.style.top = `${clamp(topPositions[index], RAIL_TOP_MIN, maxTop)}px`;
+        const desiredTop = entry.desiredTop;
+        const clampedTop = clamp(topPositions[index], railTop, maxTop);
+        const offscreenDistance = Math.max(0, railTop - desiredTop, desiredTop - maxTop);
+        const opacity = offscreenDistance <= 0
+          ? 1
+          : Math.max(0.14, 1 - offscreenDistance / OFFSCREEN_HIDE_PX);
+        const blurPx = offscreenDistance <= 0
+          ? 0
+          : Math.min(6, offscreenDistance / 20);
+        const interactable = offscreenDistance <= OFFSCREEN_SOFT_PX;
+
+        chip.style.top = `${clampedTop}px`;
+        chip.style.opacity = `${opacity}`;
+        chip.style.filter = blurPx > 0 ? `blur(${blurPx.toFixed(2)}px)` : "none";
+        chip.style.pointerEvents = interactable ? "auto" : "none";
+        chip.dataset.offscreen = offscreenDistance > 0 ? "true" : "false";
         rootElement.append(chip);
       }
     },
 
     dispose() {
+      rootElement.removeEventListener("pointerdown", onRootPointerDown);
       rootElement.removeEventListener("click", onRootClick);
+      rootElement.removeEventListener("pointermove", onRootPointerMove);
+      rootElement.removeEventListener("pointerleave", onRootPointerLeave);
     },
   };
 }

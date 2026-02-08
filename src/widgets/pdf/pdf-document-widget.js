@@ -52,7 +52,8 @@ export class PdfDocumentWidget extends WidgetBase {
     this.loadError = null;
 
     this.whitespaceZones = [];
-    this._whitespaceHitRegions = [];
+    this._whitespaceControlRegions = [];
+    this._hoveredWhitespaceControl = null;
     this._zoneWorldRects = new Map();
     this._pageLayout = new Map();
     this._pageSegments = new Map();
@@ -374,7 +375,7 @@ export class PdfDocumentWidget extends WidgetBase {
     ctx.textBaseline = "alphabetic";
   }
 
-  _drawWhitespaceZone(ctx, camera, zone, { showGlyph = true } = {}) {
+  _drawWhitespaceZone(ctx, camera, zone, { showGlyph = true, hoveredControl = null } = {}) {
     const rect = this._zoneWorldRects.get(zone.id);
     if (!rect) {
       return;
@@ -389,11 +390,20 @@ export class PdfDocumentWidget extends WidgetBase {
       const dividerY = screen.y;
       const dividerW = Math.max(20, screenW - 12);
       const dividerH = screenH;
-      fillPill(ctx, dividerX, dividerY, dividerW, dividerH, WIDGET_THEME.palette.whitespaceDivider);
+      const dividerHovered = hoveredControl?.zoneId === zone.id && hoveredControl?.kind === "expand";
+      fillPill(
+        ctx,
+        dividerX,
+        dividerY,
+        dividerW,
+        dividerH,
+        dividerHovered ? WIDGET_THEME.palette.headerAccent : WIDGET_THEME.palette.whitespaceDivider,
+      );
 
       const dividerWorld = camera.screenToWorld(dividerX, dividerY);
-      this._whitespaceHitRegions.push({
+      this._whitespaceControlRegions.push({
         zoneId: zone.id,
+        kind: "expand",
         x: dividerWorld.x,
         y: dividerWorld.y,
         width: dividerW / camera.zoom,
@@ -408,20 +418,34 @@ export class PdfDocumentWidget extends WidgetBase {
     const chipH = Math.max(28, 24 * camera.zoom);
     const chipX = Math.max(gutterLeft + 3, screen.x - chipW - 6);
     const chipY = screen.y + Math.max(2, Math.min(screenH - chipH - 2, (screenH - chipH) / 2));
+    const collapseHovered = hoveredControl?.zoneId === zone.id && hoveredControl?.kind === "collapse";
 
-    fillPill(ctx, chipX, chipY, chipW, chipH, WIDGET_THEME.palette.whitespaceChip);
-    if (showGlyph) {
-      drawControlGlyph(ctx, "minus", {
-        x: chipX,
-        y: chipY,
-        size: Math.min(chipW, chipH),
-        color: WIDGET_THEME.palette.controlFg,
-      });
+    if (collapseHovered) {
+      fillPill(ctx, chipX, chipY, chipW, chipH, WIDGET_THEME.palette.whitespaceChip);
+      if (showGlyph) {
+        drawControlGlyph(ctx, "minus", {
+          x: chipX,
+          y: chipY,
+          size: Math.min(chipW, chipH),
+          color: WIDGET_THEME.palette.controlFg,
+        });
+      }
+    } else {
+      const dotSize = Math.max(6, Math.min(10, Math.min(chipW, chipH) * 0.42));
+      fillPill(
+        ctx,
+        chipX + (chipW - dotSize) / 2,
+        chipY + (chipH - dotSize) / 2,
+        dotSize,
+        dotSize,
+        WIDGET_THEME.palette.headerAccentSoft,
+      );
     }
 
     const chipWorld = camera.screenToWorld(chipX, chipY);
-    this._whitespaceHitRegions.push({
+    this._whitespaceControlRegions.push({
       zoneId: zone.id,
+      kind: "collapse",
       x: chipWorld.x,
       y: chipWorld.y,
       width: chipW / camera.zoom,
@@ -467,18 +491,43 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   getWhitespaceZoneAt(worldX, worldY) {
-    for (let index = this._whitespaceHitRegions.length - 1; index >= 0; index -= 1) {
-      const region = this._whitespaceHitRegions[index];
+    const control = this.getWhitespaceControlAt(worldX, worldY);
+    return control?.zoneId ?? null;
+  }
+
+  getWhitespaceControlAt(worldX, worldY) {
+    for (let index = this._whitespaceControlRegions.length - 1; index >= 0; index -= 1) {
+      const region = this._whitespaceControlRegions[index];
       if (
         worldX >= region.x &&
         worldX <= region.x + region.width &&
         worldY >= region.y &&
         worldY <= region.y + region.height
       ) {
-        return region.zoneId;
+        return {
+          zoneId: region.zoneId,
+          kind: region.kind,
+        };
       }
     }
     return null;
+  }
+
+  setHoveredWhitespaceControl(control) {
+    if (
+      !control ||
+      typeof control.zoneId !== "string" ||
+      !control.zoneId.trim() ||
+      (control.kind !== "collapse" && control.kind !== "expand")
+    ) {
+      this._hoveredWhitespaceControl = null;
+      return;
+    }
+
+    this._hoveredWhitespaceControl = {
+      zoneId: control.zoneId,
+      kind: control.kind,
+    };
   }
 
   getWhitespaceZoneWorldRect(zoneId) {
@@ -513,7 +562,7 @@ export class PdfDocumentWidget extends WidgetBase {
 
   render(ctx, camera, renderContext) {
     this._computeDisplayLayout();
-    this._whitespaceHitRegions = [];
+    this._whitespaceControlRegions = [];
     const interaction = interactionStateForWidget(this, renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
       interaction,
@@ -621,7 +670,10 @@ export class PdfDocumentWidget extends WidgetBase {
       if (showPageChrome) {
         const zones = this.whitespaceZones.filter((zone) => zone.pageNumber === pageEntry.pageNumber);
         for (const zone of zones) {
-          this._drawWhitespaceZone(ctx, camera, zone, { showGlyph: true });
+          this._drawWhitespaceZone(ctx, camera, zone, {
+            showGlyph: true,
+            hoveredControl: this._hoveredWhitespaceControl,
+          });
         }
       }
 

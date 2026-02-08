@@ -84,11 +84,25 @@ export function createSectionMinimapController({
     rootElement.setAttribute("aria-hidden", "false");
   }
 
-  function syncCanvasSize() {
-    const size = minimapSizePx();
+  function syncPlacementAndCanvasSize() {
+    const runtimeCanvasRect = runtime.canvas?.getBoundingClientRect?.();
+    if (!runtimeCanvasRect || runtimeCanvasRect.width < 1 || runtimeCanvasRect.height < 1) {
+      return null;
+    }
+
+    const desired = minimapSizePx();
+    const maxByCanvas = Math.max(72, Math.floor(Math.min(runtimeCanvasRect.width, runtimeCanvasRect.height) * 0.36));
+    const size = Math.max(72, Math.min(desired, maxByCanvas));
     rootElement.style.setProperty("--minimap-size", `${size}px`);
-    const width = Math.max(1, Math.floor(rootElement.clientWidth || size));
-    const height = Math.max(1, Math.floor(rootElement.clientHeight || size));
+    rootElement.style.right = "auto";
+    const leftMin = runtimeCanvasRect.left + 8;
+    const leftMax = runtimeCanvasRect.right - size - 8;
+    const left = leftMax >= leftMin ? leftMax : leftMin;
+    rootElement.style.left = `${Math.max(0, left)}px`;
+    rootElement.style.top = `${Math.max(0, runtimeCanvasRect.top + 10)}px`;
+
+    const width = Math.max(1, Math.floor(size));
+    const height = Math.max(1, Math.floor(size));
     const dpr = window.devicePixelRatio || 1;
     const targetWidth = Math.max(1, Math.floor(width * dpr));
     const targetHeight = Math.max(1, Math.floor(height * dpr));
@@ -97,7 +111,7 @@ export function createSectionMinimapController({
       canvasElement.height = targetHeight;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { width, height };
+    return { width, height, canvasRect: runtimeCanvasRect };
   }
 
   function render() {
@@ -125,7 +139,11 @@ export function createSectionMinimapController({
     }
 
     show();
-    const { width, height } = syncCanvasSize();
+    const sizing = syncPlacementAndCanvasSize();
+    if (!sizing) {
+      return hide();
+    }
+    const { width, height } = sizing;
     const layout = sectionLayout({ sectionBounds, width, height });
     lastLayout = layout;
 

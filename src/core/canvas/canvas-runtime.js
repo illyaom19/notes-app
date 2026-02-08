@@ -20,8 +20,11 @@ export class CanvasRuntime {
     this._touchIgnoredPointers = new Set();
     this._touchControllerOwner = null;
     this._inputHandlers = [];
-    this._renderLayers = [];
+    this._inputHandlerSeq = 0;
+    this._renderLayersBeforeWidgets = [];
+    this._renderLayersAfterWidgets = [];
     this._overlayLayers = [];
+    this._widgetRemovedListeners = new Set();
     this._selectedWidgetId = null;
     this._focusedWidgetId = null;
     this._hoverWidgetId = null;
@@ -46,7 +49,7 @@ export class CanvasRuntime {
     this.widgets.push(widget);
   }
 
-  removeWidgetById(widgetId) {
+  removeWidgetById(widgetId, { reason = null } = {}) {
     const targetIndex = this.widgets.findIndex((widget) => widget.id === widgetId);
     if (targetIndex < 0) {
       return false;
@@ -65,6 +68,17 @@ export class CanvasRuntime {
     }
     if (previousSelectedId !== this._selectedWidgetId || previousFocusedId !== this._focusedWidgetId) {
       this._emitSelectionChange();
+    }
+
+    for (const listener of this._widgetRemovedListeners) {
+      try {
+        listener({
+          widget: removed,
+          reason,
+        });
+      } catch (error) {
+        console.error("Widget removal listener failed.", error);
+      }
     }
     return true;
   }
@@ -151,17 +165,24 @@ export class CanvasRuntime {
     });
   }
 
-  registerInputHandler(handler) {
-    this._inputHandlers.push(handler);
+  registerInputHandler(handler, { priority = 0 } = {}) {
+    const entry = {
+      handler,
+      priority: Number.isFinite(priority) ? priority : 0,
+      sequence: this._inputHandlerSeq += 1,
+    };
+    this._inputHandlers.push(entry);
     return () => {
-      this._inputHandlers = this._inputHandlers.filter((entry) => entry !== handler);
+      this._inputHandlers = this._inputHandlers.filter((candidate) => candidate !== entry);
     };
   }
 
-  registerRenderLayer(layer) {
-    this._renderLayers.push(layer);
+  registerRenderLayer(layer, { phase = "after-widgets" } = {}) {
+    const target = phase === "before-widgets" ? this._renderLayersBeforeWidgets : this._renderLayersAfterWidgets;
+    target.push(layer);
     return () => {
-      this._renderLayers = this._renderLayers.filter((entry) => entry !== layer);
+      this._renderLayersBeforeWidgets = this._renderLayersBeforeWidgets.filter((entry) => entry !== layer);
+      this._renderLayersAfterWidgets = this._renderLayersAfterWidgets.filter((entry) => entry !== layer);
     };
   }
 
@@ -169,6 +190,17 @@ export class CanvasRuntime {
     this._overlayLayers.push(layer);
     return () => {
       this._overlayLayers = this._overlayLayers.filter((entry) => entry !== layer);
+    };
+  }
+
+  registerWidgetRemovedListener(listener) {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+
+    this._widgetRemovedListeners.add(listener);
+    return () => {
+      this._widgetRemovedListeners.delete(listener);
     };
   }
 
@@ -644,8 +676,15 @@ export class CanvasRuntime {
   }
 
   _dispatchPointer(handlerName, event) {
-    for (let index = this._inputHandlers.length - 1; index >= 0; index -= 1) {
-      const handler = this._inputHandlers[index];
+    const orderedHandlers = [...this._inputHandlers].sort((left, right) => {
+      if (left.priority !== right.priority) {
+        return right.priority - left.priority;
+      }
+      return right.sequence - left.sequence;
+    });
+
+    for (const entry of orderedHandlers) {
+      const handler = entry.handler;
       if (typeof handler[handlerName] !== "function") {
         continue;
       }
@@ -702,6 +741,15 @@ export class CanvasRuntime {
     this.ctx.clearRect(0, 0, width, height);
     this._drawGrid(width, height);
 
+    for (const layer of this._renderLayersBeforeWidgets) {
+      if (typeof layer.update === "function") {
+        layer.update(dt);
+      }
+      if (typeof layer.render === "function") {
+        layer.render(this.ctx, this.camera, renderContext);
+      }
+    }
+
     for (const widget of this.widgets) {
       if (!this._isWidgetVisible(widget, visibleWorld)) {
         continue;
@@ -715,8 +763,7 @@ export class CanvasRuntime {
       }
     }
 
-    // Render layers (for example ink) are painted after widgets so strokes remain visible on top.
-    for (const layer of this._renderLayers) {
+    for (const layer of this._renderLayersAfterWidgets) {
       if (typeof layer.update === "function") {
         layer.update(dt);
       }

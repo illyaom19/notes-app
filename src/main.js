@@ -130,6 +130,7 @@ let penGestureController = null;
 let widgetInteractionManager = null;
 let widgetCreationController = null;
 let detachDocumentFocusSync = null;
+let detachWidgetRemovalSuggestionSync = null;
 let toolsPanelOpen = false;
 let pendingPdfImportIntent = null;
 let uiModeState = { mode: "production" };
@@ -2898,6 +2899,47 @@ function transitionSuggestionState(suggestion, toState) {
   return updated;
 }
 
+function restoreSuggestionForRemovedWidget({ widget, reason } = {}) {
+  if (reason !== "user-delete") {
+    return;
+  }
+  if (!widget || widget.type !== "reference-popup") {
+    return;
+  }
+
+  const suggestionId =
+    typeof widget.metadata?.suggestionId === "string" && widget.metadata.suggestionId.trim()
+      ? widget.metadata.suggestionId.trim()
+      : null;
+  if (!suggestionId) {
+    return;
+  }
+
+  const scope = currentSuggestionScope();
+  if (!scope) {
+    return;
+  }
+
+  const existing = suggestionStore
+    .list({
+      scopeId: scope.scopeId,
+      sectionId: scope.sectionId,
+    })
+    .find((entry) => entry.id === suggestionId);
+  if (!existing || existing.state !== "accepted") {
+    return;
+  }
+
+  suggestionStore.transition({
+    scopeId: scope.scopeId,
+    sectionId: scope.sectionId,
+    suggestionId,
+    toState: "ghosted",
+  });
+  renderSuggestionRail();
+  scheduleWorkspacePersist();
+}
+
 function focusSuggestion(suggestion) {
   if (!suggestion) {
     return;
@@ -2998,6 +3040,7 @@ async function acceptSuggestion(suggestion) {
       definition: {
         metadata: {
           title: `${keywordTitle} Reference`,
+          suggestionId: suggestion.id,
           popupMetadata: {
             type: "reference-popup",
             tags: ["suggested", typeof suggestion.payload?.keywordTag === "string" ? suggestion.payload.keywordTag : "keyword"],
@@ -5178,6 +5221,16 @@ function wireDocumentFocusSync() {
   });
 }
 
+function wireWidgetRemovalSuggestionSync() {
+  if (detachWidgetRemovalSuggestionSync) {
+    return;
+  }
+
+  detachWidgetRemovalSuggestionSync = runtime.registerWidgetRemovedListener((payload) => {
+    restoreSuggestionForRemovedWidget(payload);
+  });
+}
+
 async function setupContextFeatures() {
   const [
     contextStoreModule,
@@ -5539,6 +5592,7 @@ async function bootstrap() {
   wireDocumentFocusSync();
   wireContextMenu();
   wireSuggestionUi();
+  wireWidgetRemovalSuggestionSync();
   wireSectionMinimap();
   wireReferenceManagerUi();
 

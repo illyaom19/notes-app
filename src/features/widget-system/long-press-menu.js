@@ -279,7 +279,7 @@ export function createWidgetContextMenu({
     }
 
     if (action === "remove-widget" && activeWidget) {
-      runtime.removeWidgetById(activeWidget.id);
+      runtime.removeWidgetById(activeWidget.id, { reason: "user-delete" });
       onWidgetMutated?.();
       closeMenu();
     }

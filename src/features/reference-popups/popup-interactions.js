@@ -15,7 +15,7 @@ export function createReferencePopupInteractions({ runtime, onPopupMutated }) {
       const control = widget.getControlAt(world.x, world.y, camera);
 
       if (control === "close") {
-        runtime.removeWidgetById(widget.id);
+        runtime.removeWidgetById(widget.id, { reason: "user-delete" });
         onPopupMutated();
         return true;
       }
@@ -32,7 +32,7 @@ export function createReferencePopupInteractions({ runtime, onPopupMutated }) {
     },
   };
 
-  const detach = runtime.registerInputHandler(manager);
+  const detach = runtime.registerInputHandler(manager, { priority: 92 });
   return {
     dispose() {
       detach();

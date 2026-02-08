@@ -810,6 +810,18 @@ body[data-ui-mode="production"] .topbar h1 {
   position: absolute;
   width: min(196px, 48vw);
   pointer-events: auto;
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+
+.suggestion-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--theme-action) 42%, transparent);
+  background: color-mix(in srgb, var(--theme-action-soft) 78%, white);
+  box-shadow: var(--theme-shadow-soft);
+  cursor: pointer;
+  padding: 0;
 }
 
 .suggestion-card {

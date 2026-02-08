@@ -6,6 +6,8 @@ const CONTROL_SIZE_PX = 24;
 const RESIZE_HANDLE_PX = 24;
 const CONTROL_PADDING_PX = 6;
 const TAP_MOVE_THRESHOLD_PX = 8;
+const UNAVAILABLE_DOT_PX = 8;
+const MIN_CONTROL_ACTION_PX = 16;
 
 function worldPoint(event, camera) {
   return camera.screenToWorld(event.offsetX, event.offsetY);
@@ -17,6 +19,25 @@ function worldSizeForPixels(camera, pixels) {
 
 function rectContains(rect, x, y) {
   return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+}
+
+function toScreenRect(rect, camera) {
+  const screen = camera.worldToScreen(rect.x, rect.y);
+  return {
+    x: screen.x,
+    y: screen.y,
+    width: rect.width * camera.zoom,
+    height: rect.height * camera.zoom,
+  };
+}
+
+function rectsOverlap(a, b, inset = 0) {
+  return !(
+    a.x + a.width - inset < b.x + inset ||
+    a.x + inset > b.x + b.width - inset ||
+    a.y + a.height - inset < b.y + inset ||
+    a.y + inset > b.y + b.height - inset
+  );
 }
 
 function interactionFlags(widget) {
@@ -82,6 +103,24 @@ function controlRects(widget, camera) {
       height: handleSize,
     },
   };
+}
+
+function controlsUnavailable({ flags, rects, camera }) {
+  if (!flags.collapsible || !flags.resizable) {
+    return false;
+  }
+
+  const collapseScreen = toScreenRect(rects.collapse, camera);
+  const resizeScreen = toScreenRect(rects.resize, camera);
+  const collapseTooSmall =
+    collapseScreen.width < MIN_CONTROL_ACTION_PX || collapseScreen.height < MIN_CONTROL_ACTION_PX;
+  const resizeTooSmall =
+    resizeScreen.width < MIN_CONTROL_ACTION_PX || resizeScreen.height < MIN_CONTROL_ACTION_PX;
+  if (collapseTooSmall || resizeTooSmall) {
+    return true;
+  }
+
+  return rectsOverlap(collapseScreen, resizeScreen, 2);
 }
 
 function mutateWidgetPosition(widget, dx, dy) {
@@ -173,10 +212,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
 
   const manager = {
     onPointerDown(event, context) {
-      if (event.pointerType === "pen") {
-        return false;
-      }
-
+      const isPen = event.pointerType === "pen";
       const isTouch = event.pointerType === "touch";
       if (event.pointerType === "touch") {
         activeTouchPointerIds.add(event.pointerId);
@@ -185,7 +221,11 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         }
       }
 
-      if (!isTouch && event.button !== 0) {
+      if (!isTouch && !isPen && event.button !== 0) {
+        return false;
+      }
+
+      if (isPen && event.button !== 0) {
         return false;
       }
 
@@ -201,9 +241,10 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       const flags = interactionFlags(widget);
       const point = worldPoint(event, camera);
       const rects = controlRects(widget, camera);
+      const disableActionControls = controlsUnavailable({ flags, rects, camera });
       const touchCanCaptureInteraction = !isTouch || activeTouchPointerIds.size === 1;
 
-      if (flags.collapsible && rectContains(rects.collapse, point.x, point.y)) {
+      if (!disableActionControls && flags.collapsible && rectContains(rects.collapse, point.x, point.y)) {
         if (!touchCanCaptureInteraction) {
           return false;
         }
@@ -216,7 +257,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         return true;
       }
 
-      if (flags.resizable && rectContains(rects.resize, point.x, point.y)) {
+      if (!disableActionControls && flags.resizable && rectContains(rects.resize, point.x, point.y)) {
         if (!touchCanCaptureInteraction) {
           return false;
         }
@@ -249,6 +290,11 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       // Keep canvas pan/pinch available for body touches while still allowing tap-to-select.
       if (isTouch) {
         beginTapCandidate(event, widget);
+        return false;
+      }
+
+      // Stylus body contact should not select widgets; only header/control starts widget interaction.
+      if (isPen) {
         return false;
       }
 
@@ -323,7 +369,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
     },
   };
 
-  const detachInput = runtime.registerInputHandler(manager);
+  const detachInput = runtime.registerInputHandler(manager, { priority: 90 });
   const handleRawPointerMove = (event) => {
     maybeInvalidateTapCandidate(event);
   };
@@ -368,6 +414,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       const selected = selectedId === widget.id || focusedId === widget.id;
       const hovered = hoveredId === widget.id;
       const revealActions = selected || (!touchPrimary && hovered);
+      const disableActionControls = controlsUnavailable({ flags, rects, camera });
 
       if (!revealActions) {
         return;
@@ -378,17 +425,29 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         const collapseW = rects.collapse.width * camera.zoom;
         const collapseH = rects.collapse.height * camera.zoom;
 
-        fillPill(ctx, collapseScreen.x, collapseScreen.y, collapseW, collapseH, WIDGET_THEME.palette.controlBg);
-        drawControlGlyph(
-          ctx,
-          widget.collapsed ? "plus" : "minus",
-          {
-            x: collapseScreen.x,
-            y: collapseScreen.y,
-            size: Math.min(collapseW, collapseH),
-            color: WIDGET_THEME.palette.controlFg,
-          },
-        );
+        if (disableActionControls) {
+          const dotSize = Math.max(4, Math.min(UNAVAILABLE_DOT_PX, Math.min(collapseW, collapseH) * 0.4));
+          fillPill(
+            ctx,
+            collapseScreen.x + (collapseW - dotSize) / 2,
+            collapseScreen.y + (collapseH - dotSize) / 2,
+            dotSize,
+            dotSize,
+            WIDGET_THEME.palette.headerAccentSoft,
+          );
+        } else {
+          fillPill(ctx, collapseScreen.x, collapseScreen.y, collapseW, collapseH, WIDGET_THEME.palette.controlBg);
+          drawControlGlyph(
+            ctx,
+            widget.collapsed ? "plus" : "minus",
+            {
+              x: collapseScreen.x,
+              y: collapseScreen.y,
+              size: Math.min(collapseW, collapseH),
+              color: WIDGET_THEME.palette.controlFg,
+            },
+          );
+        }
       }
 
       if (flags.resizable) {
@@ -396,17 +455,29 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         const resizeW = rects.resize.width * camera.zoom;
         const resizeH = rects.resize.height * camera.zoom;
 
-        fillPill(ctx, resizeScreen.x, resizeScreen.y, resizeW, resizeH, WIDGET_THEME.palette.controlBgSoft);
-        drawControlGlyph(
-          ctx,
-          "resize",
-          {
-            x: resizeScreen.x,
-            y: resizeScreen.y,
-            size: Math.min(resizeW, resizeH),
-            color: WIDGET_THEME.palette.controlFg,
-          },
-        );
+        if (disableActionControls) {
+          const dotSize = Math.max(4, Math.min(UNAVAILABLE_DOT_PX, Math.min(resizeW, resizeH) * 0.4));
+          fillPill(
+            ctx,
+            resizeScreen.x + (resizeW - dotSize) / 2,
+            resizeScreen.y + (resizeH - dotSize) / 2,
+            dotSize,
+            dotSize,
+            WIDGET_THEME.palette.headerAccentSoft,
+          );
+        } else {
+          fillPill(ctx, resizeScreen.x, resizeScreen.y, resizeW, resizeH, WIDGET_THEME.palette.controlBgSoft);
+          drawControlGlyph(
+            ctx,
+            "resize",
+            {
+              x: resizeScreen.x,
+              y: resizeScreen.y,
+              size: Math.min(resizeW, resizeH),
+              color: WIDGET_THEME.palette.controlFg,
+            },
+          );
+        }
       }
     },
   };
@@ -440,7 +511,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
 
     if (key === "delete" || key === "backspace") {
       event.preventDefault();
-      runtime.removeWidgetById(selected.id);
+      runtime.removeWidgetById(selected.id, { reason: "user-delete" });
       runtime.setSelectedWidgetId(null);
       runtime.setFocusedWidgetId(null);
       onWidgetMutated();

@@ -126,14 +126,15 @@ export function drawFloatingWidgetTitle(
     return;
   }
 
+  const effectiveZoom = Math.max(1, camera.zoom);
   ctx.save();
-  ctx.font = `${Math.max(1, 10 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
+  ctx.font = `${Math.max(1, 10 * effectiveZoom)}px ${WIDGET_THEME.typography.uiFamily}`;
   const textWidth = ctx.measureText(title).width;
-  const padX = 7 * camera.zoom;
-  const pillH = Math.max(14, 18 * camera.zoom);
-  const pillW = Math.min(Math.max(44 * camera.zoom, textWidth + padX * 2), Math.max(64, frame.width - 18));
+  const padX = 7 * effectiveZoom;
+  const pillH = Math.max(14, 18 * effectiveZoom);
+  const pillW = Math.min(Math.max(44 * effectiveZoom, textWidth + padX * 2), Math.max(64, frame.width - 18));
   const pillX = frame.screen.x + 10;
-  const pillY = frame.screen.y - pillH - Math.max(4, 6 * camera.zoom);
+  const pillY = frame.screen.y - pillH - Math.max(4, 6 * effectiveZoom);
 
   fillPill(
     ctx,

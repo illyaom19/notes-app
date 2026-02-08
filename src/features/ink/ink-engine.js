@@ -49,7 +49,14 @@ export class InkEngine {
     this.enabled = true;
     this.activeTool = "pen";
     this._detachInput = null;
-    this._detachLayer = null;
+    this._detachGlobalLayer = null;
+    this._detachAttachedLayer = null;
+    this._globalRenderLayer = {
+      render: (ctx, camera) => this.renderGlobal(ctx, camera),
+    };
+    this._attachedRenderLayer = {
+      render: (ctx, camera) => this.renderAttached(ctx, camera),
+    };
 
     this._emitState();
   }
@@ -59,8 +66,15 @@ export class InkEngine {
       this._detachInput = this.runtime.registerInputHandler(this);
     }
 
-    if (!this._detachLayer) {
-      this._detachLayer = this.runtime.registerRenderLayer(this);
+    if (!this._detachGlobalLayer) {
+      this._detachGlobalLayer = this.runtime.registerRenderLayer(this._globalRenderLayer, {
+        phase: "before-widgets",
+      });
+    }
+    if (!this._detachAttachedLayer) {
+      this._detachAttachedLayer = this.runtime.registerRenderLayer(this._attachedRenderLayer, {
+        phase: "after-widgets",
+      });
     }
   }
 
@@ -70,9 +84,13 @@ export class InkEngine {
       this._detachInput = null;
     }
 
-    if (this._detachLayer) {
-      this._detachLayer();
-      this._detachLayer = null;
+    if (this._detachGlobalLayer) {
+      this._detachGlobalLayer();
+      this._detachGlobalLayer = null;
+    }
+    if (this._detachAttachedLayer) {
+      this._detachAttachedLayer();
+      this._detachAttachedLayer = null;
     }
   }
 
@@ -335,9 +353,11 @@ export class InkEngine {
     return this._finishStroke(event, camera);
   }
 
-  render(ctx, camera, viewport) {
-    // Layer order: global (bottom), pdf-attached (middle), widget-attached (top).
+  renderGlobal(ctx, camera) {
     this._drawLayer(ctx, camera, "global");
+  }
+
+  renderAttached(ctx, camera) {
     this._drawLayer(ctx, camera, "pdf");
     this._drawLayer(ctx, camera, "widget");
   }
