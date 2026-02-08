@@ -78,6 +78,14 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   async initialize() {
+    this.loading = true;
+    this.loadError = null;
+    this.pdfDocument = null;
+    this.pageCount = 0;
+    this.pages = [];
+    this.documentWorldHeight = 0;
+    this.thumbnailCanvas = null;
+
     if (!(this.pdfBytes instanceof Uint8Array) || this.pdfBytes.length === 0) {
       this.loading = false;
       this.loadError = `PDF data missing. Reimport "${preferredPdfLabel(this)}".`;

@@ -226,7 +226,7 @@ export class InkEngine {
     if (sourceWidget && sourceWidget.collapsed) {
       return null;
     }
-    const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId) ?? (sourceWidget ? null : stroke.anchorBounds);
+    const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId);
     if (!bounds) {
       return null;
     }
@@ -246,7 +246,7 @@ export class InkEngine {
     if (sourceWidget && sourceWidget.collapsed) {
       return null;
     }
-    const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId) ?? (sourceWidget ? null : stroke.anchorBounds);
+    const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId);
     if (!bounds) {
       return null;
     }
@@ -544,6 +544,26 @@ export class InkEngine {
       this._afterStoreMutation();
     }
     return added;
+  }
+
+  removeStrokesForWidget(widgetId, { contextId = null } = {}) {
+    if (typeof widgetId !== "string" || !widgetId.trim()) {
+      return 0;
+    }
+    const scopedContextId = contextId ?? null;
+    const removed = this.store.removeStrokes((stroke) => {
+      if (!stroke || stroke.sourceWidgetId !== widgetId) {
+        return false;
+      }
+      if (!scopedContextId) {
+        return true;
+      }
+      return stroke.contextId === scopedContextId;
+    });
+    if (removed > 0) {
+      this._afterStoreMutation();
+    }
+    return removed;
   }
 
   _emitState() {

@@ -1188,16 +1188,21 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
             ? assetManager.loadPdfBytes(normalized.dataPayload.pdfAssetId)
             : null;
         const bytes = bytesFromAsset ?? decodeBytes(normalized.dataPayload.bytesBase64);
-        if (!(bytes instanceof Uint8Array)) {
-          return null;
-        }
+        const hasBytes = bytes instanceof Uint8Array && bytes.length > 0;
 
         definition.dataPayload = {
-          bytes,
+          bytes: hasBytes ? bytes : null,
           fileName: normalized.dataPayload.fileName,
           pdfAssetId: normalized.dataPayload.pdfAssetId,
         };
+        definition.metadata = {
+          ...definition.metadata,
+          missingPdfBytes: !hasBytes,
+        };
         definition.runtimeState = {
+          ...(normalized.runtimeState && typeof normalized.runtimeState === "object"
+            ? normalized.runtimeState
+            : {}),
           whitespaceZones: normalizeWhitespaceZones(normalized.runtimeState.whitespaceZones),
         };
       }

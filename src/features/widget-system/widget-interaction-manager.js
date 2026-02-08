@@ -181,7 +181,7 @@ function isTypingTarget(target) {
   );
 }
 
-export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutated }) {
+export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutated, onWidgetTap }) {
   const dragState = {
     pointerId: null,
     widgetId: null,
@@ -329,6 +329,9 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
 
       // Stylus body contact should not select widgets; only header/control starts widget interaction.
       if (isPen) {
+        if (widget.type === "pdf-document" && widget.loadError) {
+          beginTapCandidate(event, widget);
+        }
         return false;
       }
 
@@ -364,7 +367,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       return true;
     },
 
-    onPointerUp(event) {
+    onPointerUp(event, context) {
       if (event.pointerType === "touch") {
         activeTouchPointerIds.delete(event.pointerId);
       }
@@ -383,6 +386,16 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
           runtime.bringWidgetToFront(selected.id);
           runtime.setFocusedWidgetId(selected.id);
           runtime.setSelectedWidgetId(selected.id);
+          if (typeof onWidgetTap === "function") {
+            const point = worldPoint(event, context.camera);
+            onWidgetTap({
+              widget: selected,
+              event,
+              worldX: point.x,
+              worldY: point.y,
+              camera: context.camera,
+            });
+          }
         }
       }
 
