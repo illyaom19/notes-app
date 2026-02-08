@@ -781,6 +781,7 @@ body[data-ui-mode="production"] .topbar h1 {
   position: relative;
   min-height: 0;
   padding: 0;
+  overflow: hidden;
 }
 
 #workspace-canvas {
@@ -1142,17 +1143,19 @@ body[data-ui-mode="production"] .topbar h1 {
 }
 
 .reference-preview-layer {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 55;
   pointer-events: none;
+  touch-action: none;
+  overscroll-behavior: none;
 }
 
 .reference-preview-card {
   position: absolute;
-  width: min(420px, calc(100vw - 2rem), calc(100vh - 6rem));
-  max-width: calc(100vw - 2rem);
-  max-height: min(72vh, 560px);
+  width: min(420px, calc(100% - 1rem), calc(100% - 1rem));
+  max-width: calc(100% - 1rem);
+  max-height: min(calc(100% - 1rem), 560px);
   min-height: 152px;
   border: 1px solid var(--theme-line);
   border-radius: var(--theme-radius-card-lg);

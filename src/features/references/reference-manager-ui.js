@@ -218,19 +218,35 @@ export function createReferenceManagerUi({
 
   function canvasViewportBounds() {
     const rect =
-      canvasElement instanceof HTMLElement
-        ? canvasElement.getBoundingClientRect()
+      previewLayerElement instanceof HTMLElement
+        ? previewLayerElement.getBoundingClientRect()
+        : canvasElement instanceof HTMLElement
+          ? canvasElement.getBoundingClientRect()
+          : {
+              left: 0,
+              top: 0,
+              right: window.innerWidth,
+              bottom: window.innerHeight,
+            };
+    return {
+      minX: PREVIEW_EDGE_PADDING,
+      maxX: Math.max(PREVIEW_EDGE_PADDING, rect.width - PREVIEW_EDGE_PADDING),
+      minY: PREVIEW_EDGE_PADDING,
+      maxY: Math.max(PREVIEW_EDGE_PADDING, rect.height - PREVIEW_EDGE_PADDING),
+    };
+  }
+
+  function pointerToLayerPoint(event) {
+    const rect =
+      previewLayerElement instanceof HTMLElement
+        ? previewLayerElement.getBoundingClientRect()
         : {
             left: 0,
             top: 0,
-            right: window.innerWidth,
-            bottom: window.innerHeight,
           };
     return {
-      minX: rect.left + PREVIEW_EDGE_PADDING,
-      maxX: rect.right - PREVIEW_EDGE_PADDING,
-      minY: rect.top + PREVIEW_EDGE_PADDING,
-      maxY: rect.bottom - PREVIEW_EDGE_PADDING,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
     };
   }
 
@@ -595,11 +611,12 @@ export function createReferenceManagerUi({
       return;
     }
 
+    const point = pointerToLayerPoint(event);
     dragState = {
       card,
       pointerId: event.pointerId,
-      offsetX: event.clientX - card.offsetLeft,
-      offsetY: event.clientY - card.offsetTop,
+      offsetX: point.x - card.offsetLeft,
+      offsetY: point.y - card.offsetTop,
     };
 
     // Ensure preview dragging wins over any global pointer handlers.
@@ -617,7 +634,8 @@ export function createReferenceManagerUi({
     }
 
     const card = dragState.card;
-    const nextPosition = clampCardPosition(card, event.clientX - dragState.offsetX, event.clientY - dragState.offsetY);
+    const point = pointerToLayerPoint(event);
+    const nextPosition = clampCardPosition(card, point.x - dragState.offsetX, point.y - dragState.offsetY);
 
     card.style.left = `${nextPosition.left}px`;
     card.style.top = `${nextPosition.top}px`;
