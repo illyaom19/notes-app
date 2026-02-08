@@ -1,30 +1,28 @@
 import { fillPill, fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 import { resolveWidgetLod, widgetTypeTitle } from "../../features/widget-system/widget-lod.js";
-import { drawControlGlyph, interactionStateForWidget, WIDGET_THEME } from "../../features/widget-system/widget-theme.js";
+import {
+  drawControlGlyph,
+  drawFloatingWidgetTitle,
+  drawUnifiedWidgetFrame,
+  interactionStateForWidget,
+  WIDGET_THEME,
+} from "../../features/widget-system/widget-theme.js";
 
 const HEADER_HEIGHT = 34;
 const MIN_SIZE = { width: 180, height: 120 };
 const SOURCE_BUTTON_SIZE = { width: 82, height: 22 };
 const CONTROL_SIZE_WORLD = 22;
 const CONTROL_PAD_WORLD = 8;
-const CONTROL_GAP_WORLD = 6;
 const PANEL_INSET_WORLD = 8;
 const BODY_INSET_WORLD = 10;
 
-function normalizeTagLabel(tag) {
-  if (typeof tag !== "string") {
-    return "";
-  }
-  const trimmed = tag.trim();
-  if (!trimmed) {
-    return "";
-  }
-  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
-}
-
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function worldFromPixels(camera, px) {
+  return px / Math.max(0.25, camera?.zoom ?? 1);
 }
 
 function normalizeTags(values) {
@@ -180,54 +178,21 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
   return rendered;
 }
 
-function buildInfoRows({ popupMetadata, citation }) {
-  const rows = [];
-  if (citation?.sourceTitle) {
-    rows.push(`Source: ${citation.sourceTitle}`);
-  }
-
-  const details = [];
-  if (citation?.author) {
-    details.push(citation.author);
-  }
-  if (citation?.publisher) {
-    details.push(citation.publisher);
-  }
-  if (citation?.attributionText) {
-    details.push(citation.attributionText);
-  }
-  if (details.length > 0) {
-    rows.push(details.join(" • "));
-  }
-
-  const tags = Array.isArray(popupMetadata?.tags)
-    ? popupMetadata.tags.map((entry) => normalizeTagLabel(entry)).filter(Boolean)
-    : [];
-  if (tags.length > 0) {
-    rows.push(`Tags: ${tags.join(" ")}`);
-  }
-
-  if (citation?.url) {
-    rows.push(ellipsis(citation.url, 90));
-  }
-
-  return rows;
-}
-
 export class ReferencePopupWidget extends WidgetBase {
   constructor(definition) {
     const title = definition.metadata?.title ?? "Reference";
     const popupMetadata = normalizePopupMetadata(definition.metadata?.popupMetadata, title);
+    const legacyMinimized = Boolean(definition.metadata?.minimized);
 
     super({
       ...definition,
+      collapsed: typeof definition.collapsed === "boolean" ? definition.collapsed : legacyMinimized,
       size: {
         width: Math.max(MIN_SIZE.width, definition.size?.width ?? 280),
         height: Math.max(MIN_SIZE.height, definition.size?.height ?? 210),
       },
       metadata: {
         title,
-        minimized: Boolean(definition.metadata?.minimized),
         popupMetadata,
       },
     });
@@ -269,9 +234,6 @@ export class ReferencePopupWidget extends WidgetBase {
   }
 
   get displayHeight() {
-    if (this.metadata.minimized) {
-      return HEADER_HEIGHT;
-    }
     return this.size.height;
   }
 
@@ -284,8 +246,8 @@ export class ReferencePopupWidget extends WidgetBase {
     };
   }
 
-  _resizeHandleRect() {
-    const handleSize = CONTROL_SIZE_WORLD;
+  _resizeHandleRect(camera) {
+    const handleSize = worldFromPixels(camera, CONTROL_SIZE_WORLD);
     return {
       x: this.position.x + this.size.width - handleSize,
       y: this.position.y + this.displayHeight - handleSize,
@@ -294,31 +256,27 @@ export class ReferencePopupWidget extends WidgetBase {
     };
   }
 
-  _minimizeButtonRect() {
-    const closeX = this.position.x + this.size.width - CONTROL_PAD_WORLD - CONTROL_SIZE_WORLD;
+  _closeButtonRect(camera) {
+    const controlSize = worldFromPixels(camera, CONTROL_SIZE_WORLD);
+    const controlPad = worldFromPixels(camera, CONTROL_PAD_WORLD);
     return {
-      x: closeX - CONTROL_GAP_WORLD - CONTROL_SIZE_WORLD,
-      y: this.position.y + CONTROL_PAD_WORLD,
-      width: CONTROL_SIZE_WORLD,
-      height: CONTROL_SIZE_WORLD,
+      x: this.position.x + this.size.width - controlPad - controlSize,
+      y: this.position.y + controlPad,
+      width: controlSize,
+      height: controlSize,
     };
   }
 
-  _closeButtonRect() {
+  _sourceButtonRect(camera) {
+    const sourceWidth = worldFromPixels(camera, SOURCE_BUTTON_SIZE.width);
+    const sourceHeight = worldFromPixels(camera, SOURCE_BUTTON_SIZE.height);
+    const panelInset = worldFromPixels(camera, PANEL_INSET_WORLD);
+    const bodyInset = worldFromPixels(camera, BODY_INSET_WORLD);
     return {
-      x: this.position.x + this.size.width - CONTROL_PAD_WORLD - CONTROL_SIZE_WORLD,
-      y: this.position.y + CONTROL_PAD_WORLD,
-      width: CONTROL_SIZE_WORLD,
-      height: CONTROL_SIZE_WORLD,
-    };
-  }
-
-  _sourceButtonRect() {
-    return {
-      x: this.position.x + this.size.width - SOURCE_BUTTON_SIZE.width - (PANEL_INSET_WORLD + BODY_INSET_WORLD),
-      y: this.position.y + HEADER_HEIGHT + PANEL_INSET_WORLD + BODY_INSET_WORLD,
-      width: SOURCE_BUTTON_SIZE.width,
-      height: SOURCE_BUTTON_SIZE.height,
+      x: this.position.x + this.size.width - sourceWidth - (panelInset + bodyInset),
+      y: this.position.y + HEADER_HEIGHT + panelInset + bodyInset,
+      width: sourceWidth,
+      height: sourceHeight,
     };
   }
 
@@ -334,12 +292,12 @@ export class ReferencePopupWidget extends WidgetBase {
     return worldX >= minX && worldX <= maxX && worldY >= minY && worldY <= maxY;
   }
 
-  getControlAt(worldX, worldY) {
+  getControlAt(worldX, worldY, camera) {
+    const controlCamera = camera ?? { zoom: 1 };
     if (this._revealActions) {
       const controls = [
-        ["minimize", this._minimizeButtonRect()],
-        ["close", this._closeButtonRect()],
-        ["resize", this._resizeHandleRect()],
+        ["close", this._closeButtonRect(controlCamera)],
+        ["resize", this._resizeHandleRect(controlCamera)],
       ];
 
       for (const [key, rect] of controls) {
@@ -354,8 +312,8 @@ export class ReferencePopupWidget extends WidgetBase {
       }
     }
 
-    if (!this.metadata.minimized && this._revealActions && this.hasSourceAction()) {
-      const sourceRect = this._sourceButtonRect();
+    if (this._revealActions && this.hasSourceAction()) {
+      const sourceRect = this._sourceButtonRect(controlCamera);
       if (
         worldX >= sourceRect.x &&
         worldX <= sourceRect.x + sourceRect.width &&
@@ -379,14 +337,6 @@ export class ReferencePopupWidget extends WidgetBase {
     return null;
   }
 
-  setMinimized(nextMinimized) {
-    this.metadata.minimized = Boolean(nextMinimized);
-  }
-
-  toggleMinimized() {
-    this.metadata.minimized = !this.metadata.minimized;
-  }
-
   setImageData(dataUrl) {
     this.imageDataUrl = dataUrl;
     this.contentType = "image";
@@ -402,52 +352,32 @@ export class ReferencePopupWidget extends WidgetBase {
 
   render(ctx, camera, renderContext) {
     const screen = camera.worldToScreen(this.position.x, this.position.y);
-    const width = this.size.width * camera.zoom;
-    const height = this.displayHeight * camera.zoom;
-    const headerHeight = HEADER_HEIGHT * camera.zoom;
     const lod = resolveWidgetLod({
       cameraZoom: camera.zoom,
       viewMode: renderContext?.viewMode,
     });
     const interaction = interactionStateForWidget(this, renderContext);
-    this._revealActions = interaction.revealActions && lod === "detail";
+    this._revealActions = interaction.revealActions;
 
     const popupMetadata = normalizePopupMetadata(this.metadata.popupMetadata, this.metadata.title);
     this.metadata.popupMetadata = popupMetadata;
     this.metadata.title = popupMetadata.title;
 
-    fillStrokeRoundedRect(
-      ctx,
-      screen.x,
-      screen.y,
-      width,
-      height,
-      16,
-      WIDGET_THEME.palette.frameFill,
-      interaction.focused ? WIDGET_THEME.palette.frameStroke : WIDGET_THEME.palette.frameStrokeSoft,
-      interaction.focused ? 1.35 : 1.05,
-    );
+    const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
+      interaction,
+      borderRadius: 16,
+      headerWorldHeight: HEADER_HEIGHT,
+    });
+    drawFloatingWidgetTitle(ctx, camera, {
+      title: this.metadata.title || widgetTypeTitle(this.type),
+      frame,
+      focused: interaction.focused,
+      visible: interaction.showTitle,
+    });
 
-    fillPill(
-      ctx,
-      screen.x + 8,
-      screen.y + 6,
-      Math.max(12, width - 16),
-      Math.max(6, Math.min(14, headerHeight * 0.28)),
-      interaction.focused ? WIDGET_THEME.palette.headerAccent : WIDGET_THEME.palette.headerAccentSoft,
-    );
-
-    if (interaction.focused) {
-      ctx.fillStyle = WIDGET_THEME.palette.title;
-      ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      ctx.fillText(this.metadata.title, screen.x + 14, screen.y + 26);
-    }
-
-    if (this.metadata.minimized) {
-      return;
-    }
-
-    const bodyTop = interaction.focused ? screen.y + headerHeight : screen.y + 12;
+    const width = frame.width;
+    const height = frame.height;
+    const bodyTop = screen.y + frame.headerHeight;
     const panelX = screen.x + PANEL_INSET_WORLD;
     const panelY = bodyTop + PANEL_INSET_WORLD;
     const panelW = width - PANEL_INSET_WORLD * 2;
@@ -464,7 +394,7 @@ export class ReferencePopupWidget extends WidgetBase {
       1,
     );
 
-    const sourceRect = this._sourceButtonRect();
+    const sourceRect = this._sourceButtonRect(camera);
     const sourceScreen = camera.worldToScreen(sourceRect.x, sourceRect.y);
     const sourceButtonVisible = this._revealActions && this.hasSourceAction();
     if (sourceButtonVisible) {
@@ -481,16 +411,11 @@ export class ReferencePopupWidget extends WidgetBase {
       ctx.fillText("Source", sourceScreen.x + 8 * camera.zoom, sourceScreen.y + 13 * camera.zoom);
     }
 
-    const topInset = BODY_INSET_WORLD + (sourceButtonVisible ? SOURCE_BUTTON_SIZE.height * camera.zoom + 7 : 0);
-    const showInfoSection = lod === "detail" && panelH >= 112 * camera.zoom;
+    const topInset = BODY_INSET_WORLD + (sourceButtonVisible ? sourceRect.height * camera.zoom + 7 : 0);
     const contentX = panelX + BODY_INSET_WORLD;
     const contentY = panelY + topInset;
     const contentW = panelW - BODY_INSET_WORLD * 2;
-    const infoHeight = showInfoSection ? Math.max(54 * camera.zoom, Math.min(96 * camera.zoom, panelH * 0.36)) : 0;
-    const contentH = Math.max(
-      30 * camera.zoom,
-      panelH - topInset - BODY_INSET_WORLD - (showInfoSection ? infoHeight + 8 : 0),
-    );
+    const contentH = Math.max(30 * camera.zoom, panelH - topInset - BODY_INSET_WORLD);
 
     fillStrokeRoundedRect(
       ctx,
@@ -522,61 +447,16 @@ export class ReferencePopupWidget extends WidgetBase {
       );
     }
 
-    if (showInfoSection) {
-      const infoX = panelX + BODY_INSET_WORLD;
-      const infoY = panelY + panelH - infoHeight - BODY_INSET_WORLD;
-      const infoW = panelW - BODY_INSET_WORLD * 2;
-      const infoRows = buildInfoRows({ popupMetadata, citation: this.citation });
-      fillStrokeRoundedRect(
-        ctx,
-        infoX,
-        infoY,
-        infoW,
-        infoHeight,
-        10,
-        WIDGET_THEME.palette.infoFill,
-        WIDGET_THEME.palette.infoStroke,
-        1,
-      );
-
-      ctx.fillStyle = WIDGET_THEME.palette.headerAccent;
-      ctx.font = `${Math.max(1, 9 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      ctx.fillText("Info", infoX + 8 * camera.zoom, infoY + 14 * camera.zoom);
-
-      ctx.fillStyle = WIDGET_THEME.palette.mutedText;
-      ctx.font = `${Math.max(1, 8.5 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      const detailsLabel = infoRows.length > 0 ? infoRows.join(" · ") : "No source metadata yet.";
-      drawWrappedText(
-        ctx,
-        detailsLabel,
-        infoX + 8 * camera.zoom,
-        infoY + 28 * camera.zoom,
-        Math.max(12, infoW - 16 * camera.zoom),
-        11.5 * camera.zoom,
-        3,
-      );
-    }
-
     if (!this._revealActions) {
       return;
     }
 
-    const minimizeRect = this._minimizeButtonRect();
-    const closeRect = this._closeButtonRect();
-    const resizeRect = this._resizeHandleRect();
-    const minimizeScreen = camera.worldToScreen(minimizeRect.x, minimizeRect.y);
+    const closeRect = this._closeButtonRect(camera);
+    const resizeRect = this._resizeHandleRect(camera);
     const closeScreen = camera.worldToScreen(closeRect.x, closeRect.y);
     const resizeScreen = camera.worldToScreen(resizeRect.x, resizeRect.y);
-    const iconSize = CONTROL_SIZE_WORLD * camera.zoom;
-    const handleSize = 18 * camera.zoom;
-
-    fillPill(ctx, minimizeScreen.x, minimizeScreen.y, iconSize, iconSize, WIDGET_THEME.palette.controlBg);
-    drawControlGlyph(ctx, "minus", {
-      x: minimizeScreen.x,
-      y: minimizeScreen.y,
-      size: iconSize,
-      color: WIDGET_THEME.palette.controlFg,
-    });
+    const iconSize = Math.max(12, closeRect.width * camera.zoom);
+    const resizeSize = Math.max(12, resizeRect.width * camera.zoom);
 
     fillPill(ctx, closeScreen.x, closeScreen.y, iconSize, iconSize, WIDGET_THEME.palette.controlBg);
     drawControlGlyph(ctx, "close", {
@@ -586,27 +466,42 @@ export class ReferencePopupWidget extends WidgetBase {
       color: WIDGET_THEME.palette.controlFg,
     });
 
-    fillPill(ctx, resizeScreen.x, resizeScreen.y, handleSize, handleSize, WIDGET_THEME.palette.controlBgSoft);
+    fillPill(ctx, resizeScreen.x, resizeScreen.y, resizeSize, resizeSize, WIDGET_THEME.palette.controlBgSoft);
     drawControlGlyph(ctx, "resize", {
       x: resizeScreen.x,
       y: resizeScreen.y,
-      size: handleSize,
+      size: resizeSize,
       color: WIDGET_THEME.palette.controlFg,
     });
   }
 
   renderSnapshot(ctx, camera, renderContext) {
-    const wasMinimized = this.metadata.minimized;
-    this.metadata.minimized = true;
-    this.render(ctx, camera, {
-      ...renderContext,
-      interaction: {
-        selectedWidgetId: this.id,
-        focusedWidgetId: this.id,
-        hoverWidgetId: this.id,
-        isTouchPrimary: false,
-      },
-    });
-    this.metadata.minimized = wasMinimized;
+    const screen = camera.worldToScreen(this.position.x, this.position.y);
+    const width = this.size.width * camera.zoom;
+    const height = Math.max(40, this.size.height * camera.zoom * 0.24);
+
+    fillStrokeRoundedRect(
+      ctx,
+      screen.x,
+      screen.y,
+      width,
+      height,
+      16,
+      WIDGET_THEME.palette.frameFill,
+      WIDGET_THEME.palette.frameStroke,
+      1.1,
+    );
+    fillPill(
+      ctx,
+      screen.x + 8,
+      screen.y + 6,
+      Math.max(12, width - 16),
+      Math.max(6, Math.min(14, height * 0.28)),
+      WIDGET_THEME.palette.headerAccentSoft,
+    );
+
+    ctx.fillStyle = WIDGET_THEME.palette.title;
+    ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
+    ctx.fillText(`${this.metadata.title || widgetTypeTitle(this.type)}`, screen.x + 12, screen.y + 22);
   }
 }

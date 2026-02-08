@@ -1,6 +1,5 @@
-import { fillPill, strokeRoundedRect } from "../../core/canvas/rounded.js";
+import { fillPill } from "../../core/canvas/rounded.js";
 import { drawControlGlyph, WIDGET_THEME } from "./widget-theme.js";
-import { resolveWidgetLod } from "./widget-lod.js";
 
 const HEADER_HEIGHT_PX = 34;
 const CONTROL_SIZE_PX = 24;
@@ -347,10 +346,6 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       const selectedId = runtime.getSelectedWidgetId();
       const focusedId = runtime.getFocusedWidgetId();
       const hoveredId = runtime.getHoveredWidgetId?.() ?? null;
-      const lod = renderContext?.lod ?? resolveWidgetLod({
-        cameraZoom: camera.zoom,
-        viewMode: renderContext?.viewMode,
-      });
       const touchPrimary = renderContext?.interaction?.isTouchPrimary === true;
       const targetId = selectedId ?? focusedId ?? (!touchPrimary ? hoveredId : null);
       if (!targetId) {
@@ -370,40 +365,11 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
 
       const flags = interactionFlags(widget);
       const rects = controlRects(widget, camera);
-      const screen = camera.worldToScreen(rects.bounds.x, rects.bounds.y);
-      const screenW = rects.bounds.width * camera.zoom;
-      const screenH = rects.bounds.height * camera.zoom;
-      const headerH = Math.max(6, rects.header.height * camera.zoom);
       const selected = selectedId === widget.id || focusedId === widget.id;
       const hovered = hoveredId === widget.id;
       const revealActions = selected || (!touchPrimary && hovered);
 
-      if (selected) {
-        strokeRoundedRect(
-          ctx,
-          screen.x - 1.5,
-          screen.y - 1.5,
-          screenW + 3,
-          screenH + 3,
-          14,
-          WIDGET_THEME.palette.selectionAccent,
-          1.2,
-        );
-      }
-
-      ctx.save();
-      ctx.globalAlpha = selected ? 0.95 : 0.72;
-      fillPill(
-        ctx,
-        screen.x + 6,
-        screen.y + 4,
-        Math.max(12, screenW - 12),
-        Math.max(5, Math.min(13, headerH * 0.28)),
-        selected ? WIDGET_THEME.palette.headerAccent : WIDGET_THEME.palette.headerAccentSoft,
-      );
-      ctx.restore();
-
-      if (lod !== "detail" || !revealActions) {
+      if (!revealActions) {
         return;
       }
 

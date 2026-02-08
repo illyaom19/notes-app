@@ -43,7 +43,6 @@ const startWorkerButton = document.querySelector("#start-worker");
 const loadedModulesOutput = document.querySelector("#loaded-modules");
 const widgetCountOutput = document.querySelector("#widget-count");
 const referenceCountOutput = document.querySelector("#reference-count");
-const popupBehaviorOutput = document.querySelector("#popup-behavior-state");
 const snipStateOutput = document.querySelector("#snip-state");
 const snipModeNotifier = document.querySelector("#snip-mode-notifier");
 const snipModeLabel = document.querySelector("#snip-mode-label");
@@ -91,8 +90,6 @@ const formulaBindingSelect = document.querySelector("#document-formula-bindings"
 const applyBindingsButton = document.querySelector("#apply-document-bindings");
 const focusBindingsButton = document.querySelector("#focus-document-bindings");
 const togglePinDocumentButton = document.querySelector("#toggle-pin-document");
-const popupAvoidStylusToggle = document.querySelector("#popup-avoid-stylus");
-const popupReducedMotionToggle = document.querySelector("#popup-reduced-motion");
 const gestureEnabledToggle = document.querySelector("#gesture-enabled");
 const gestureDoubleTapToggle = document.querySelector("#gesture-doubletap-enabled");
 const gestureBarrelTapToggle = document.querySelector("#gesture-barreltap-enabled");
@@ -137,10 +134,7 @@ let toolsPanelOpen = false;
 let pendingPdfImportIntent = null;
 let uiModeState = { mode: "production" };
 let debugModeEnabled = false;
-const POPUP_BEHAVIOR_PREFS_KEY = "notes-app.popup.behavior.v1";
 const GESTURE_PREFS_KEY = "notes-app.gesture-prefs.v1";
-const REDUCED_MOTION_MEDIA = "(prefers-reduced-motion: reduce)";
-let popupBehaviorPrefs = null;
 let gesturePrefs = null;
 let lastGestureStatus = {
   supported: false,
@@ -712,75 +706,6 @@ function setUiMode(nextMode, { persist = true } = {}) {
   syncUiModeControls();
   syncDocumentSettingsUi();
   updateOnboardingControlsUi();
-}
-
-function systemPrefersReducedMotion() {
-  return window.matchMedia(REDUCED_MOTION_MEDIA).matches;
-}
-
-function normalizePopupBehaviorPrefs(candidate) {
-  const source = candidate && typeof candidate === "object" ? candidate : {};
-  return {
-    avoidStylus: source.avoidStylus !== false,
-    motionReduced: source.motionReduced === true,
-  };
-}
-
-function defaultPopupBehaviorPrefs() {
-  return {
-    avoidStylus: true,
-    motionReduced: systemPrefersReducedMotion(),
-  };
-}
-
-function loadPopupBehaviorPrefs() {
-  const fallback = defaultPopupBehaviorPrefs();
-
-  try {
-    const raw = window.localStorage.getItem(POPUP_BEHAVIOR_PREFS_KEY);
-    if (!raw) {
-      return fallback;
-    }
-    const parsed = JSON.parse(raw);
-    return normalizePopupBehaviorPrefs({ ...fallback, ...(parsed ?? {}) });
-  } catch (_error) {
-    return fallback;
-  }
-}
-
-function savePopupBehaviorPrefs(prefs) {
-  safeLocalStorageSetItem(
-    POPUP_BEHAVIOR_PREFS_KEY,
-    JSON.stringify(normalizePopupBehaviorPrefs(prefs)),
-  );
-}
-
-function updatePopupBehaviorUi() {
-  const prefs = normalizePopupBehaviorPrefs(popupBehaviorPrefs);
-  const systemReduced = systemPrefersReducedMotion();
-  const effectiveMotionReduced = prefs.motionReduced || systemReduced;
-
-  if (popupAvoidStylusToggle instanceof HTMLInputElement) {
-    popupAvoidStylusToggle.checked = prefs.avoidStylus;
-  }
-
-  if (popupReducedMotionToggle instanceof HTMLInputElement) {
-    popupReducedMotionToggle.checked = effectiveMotionReduced;
-    popupReducedMotionToggle.disabled = systemReduced;
-    popupReducedMotionToggle.title = systemReduced
-      ? "System reduced-motion preference is active."
-      : "";
-  }
-
-  if (popupBehaviorOutput) {
-    popupBehaviorOutput.textContent = `avoid:${prefs.avoidStylus ? "on" : "off"} motion:${effectiveMotionReduced ? "reduced" : "normal"}`;
-  }
-}
-
-function setPopupBehaviorPrefs(nextPrefs) {
-  popupBehaviorPrefs = normalizePopupBehaviorPrefs(nextPrefs);
-  savePopupBehaviorPrefs(popupBehaviorPrefs);
-  updatePopupBehaviorUi();
 }
 
 function updateCameraOutputFromState() {
@@ -3372,11 +3297,6 @@ async function ensureReferencePopupInteractions() {
   popupInteractions = popupModule.createReferencePopupInteractions({
     runtime,
     onPopupMutated: () => updateWidgetUi(),
-    getBehaviorPrefs: () => ({
-      ...popupBehaviorPrefs,
-      motionReduced:
-        normalizePopupBehaviorPrefs(popupBehaviorPrefs).motionReduced || systemPrefersReducedMotion(),
-    }),
   });
 
   return popupInteractions;
@@ -4602,11 +4522,6 @@ async function importWidgetsFromAnotherContext() {
 }
 
 function wireBaseEventHandlers() {
-  const reducedMotionQuery = window.matchMedia(REDUCED_MOTION_MEDIA);
-  if (typeof reducedMotionQuery.addEventListener === "function") {
-    reducedMotionQuery.addEventListener("change", () => updatePopupBehaviorUi());
-  }
-
   let lastTouchLikeInteractionAt = 0;
   const markTouchLikeInteraction = () => {
     lastTouchLikeInteractionAt = Date.now();
@@ -4756,30 +4671,6 @@ function wireBaseEventHandlers() {
     } finally {
       toggleSearchPanelButton.disabled = false;
     }
-  });
-
-  popupAvoidStylusToggle?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement)) {
-      return;
-    }
-
-    setPopupBehaviorPrefs({
-      ...popupBehaviorPrefs,
-      avoidStylus: target.checked,
-    });
-  });
-
-  popupReducedMotionToggle?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement)) {
-      return;
-    }
-
-    setPopupBehaviorPrefs({
-      ...popupBehaviorPrefs,
-      motionReduced: target.checked,
-    });
   });
 
   gestureEnabledToggle?.addEventListener("change", (event) => {
@@ -5639,8 +5530,6 @@ async function bootstrap() {
   uiModeState = loadUiModeState();
   setUiMode(uiModeState.mode, { persist: false });
 
-  popupBehaviorPrefs = loadPopupBehaviorPrefs();
-  updatePopupBehaviorUi();
   gesturePrefs = loadGesturePrefs();
   updateGestureUi();
 

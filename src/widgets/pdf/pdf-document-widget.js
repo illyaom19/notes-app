@@ -1,7 +1,13 @@
 import { fillPill, fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
-import { resolveWidgetLod, widgetTypeTitle } from "../../features/widget-system/widget-lod.js";
-import { drawControlGlyph, interactionStateForWidget, WIDGET_THEME } from "../../features/widget-system/widget-theme.js";
+import { resolveWidgetLod } from "../../features/widget-system/widget-lod.js";
+import {
+  drawControlGlyph,
+  drawFloatingWidgetTitle,
+  drawUnifiedWidgetFrame,
+  interactionStateForWidget,
+  WIDGET_THEME,
+} from "../../features/widget-system/widget-theme.js";
 import { loadPdfJs } from "./pdfjs-loader.js";
 import { PdfTileCache } from "./pdf-tile-cache.js";
 
@@ -22,40 +28,6 @@ function shortName(name) {
     return "Document";
   }
   return name.length > 20 ? `${name.slice(0, 17)}...` : name;
-}
-
-function drawFrame(ctx, camera, widget, { focused = false } = {}) {
-  const screen = camera.worldToScreen(widget.position.x, widget.position.y);
-  const width = widget.size.width * camera.zoom;
-  const height = widget.size.height * camera.zoom;
-  const headerHeight = HEADER_WORLD * camera.zoom;
-
-  fillStrokeRoundedRect(
-    ctx,
-    screen.x,
-    screen.y,
-    width,
-    height,
-    18,
-    WIDGET_THEME.palette.frameFill,
-    focused ? WIDGET_THEME.palette.frameStroke : WIDGET_THEME.palette.frameStrokeSoft,
-    focused ? 1.35 : 1.05,
-  );
-  fillPill(
-    ctx,
-    screen.x + 10,
-    screen.y + 8,
-    Math.max(100, width - 20),
-    Math.max(18, headerHeight - 16),
-    focused ? WIDGET_THEME.palette.headerAccentSoft : "#ecf1f4",
-  );
-
-  return {
-    screen,
-    width,
-    height,
-    headerHeight,
-  };
 }
 
 export class PdfDocumentWidget extends WidgetBase {
@@ -143,9 +115,7 @@ export class PdfDocumentWidget extends WidgetBase {
     const metrics = this._resolveLayoutMetrics();
     this._refreshPageBaseLayoutForWidth(metrics.pageWidth);
     const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + this.documentWorldHeight);
-    if (!Number.isFinite(this.size.height) || this.size.height < requiredHeight) {
-      this.size.height = requiredHeight;
-    }
+    this.size.height = requiredHeight;
     this._computeDisplayLayout();
   }
 
@@ -319,9 +289,7 @@ export class PdfDocumentWidget extends WidgetBase {
 
     const documentDisplayHeight = Math.max(60, this.documentWorldHeight - cumulativeReduction);
     const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + documentDisplayHeight);
-    if (!Number.isFinite(this.size.height) || this.size.height < requiredHeight) {
-      this.size.height = requiredHeight;
-    }
+    this.size.height = requiredHeight;
   }
 
   _getVisibleWorldBounds(camera, renderContext) {
@@ -547,48 +515,44 @@ export class PdfDocumentWidget extends WidgetBase {
     this._computeDisplayLayout();
     this._whitespaceHitRegions = [];
     const interaction = interactionStateForWidget(this, renderContext);
-    const frame = drawFrame(ctx, camera, this, { focused: interaction.focused });
+    const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
+      interaction,
+      borderRadius: 18,
+      headerWorldHeight: HEADER_WORLD,
+    });
     const lod = resolveWidgetLod({
       cameraZoom: camera.zoom,
       viewMode: renderContext?.viewMode,
     });
-    const showTitle = interaction.focused;
-    const showPageChrome = lod === "detail" && interaction.revealActions;
+    const showPageChrome = interaction.revealActions;
+    const titleLabel =
+      lod === "compact"
+        ? shortName(this.metadata.title)
+        : `${shortName(this.metadata.title)} • ${this.pageCount} pages`;
+    drawFloatingWidgetTitle(ctx, camera, {
+      title: titleLabel,
+      frame,
+      focused: interaction.focused,
+      visible: interaction.showTitle,
+    });
 
     if (this.loading) {
       ctx.fillStyle = WIDGET_THEME.palette.title;
       ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      ctx.fillText(
-        showTitle ? "Loading document..." : widgetTypeTitle(this.type),
-        frame.screen.x + 18,
-        frame.screen.y + 20 * camera.zoom,
-      );
+      ctx.fillText("Loading document...", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
       return;
     }
 
     if (this.loadError) {
       ctx.fillStyle = "#9b2b2b";
       ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      ctx.fillText(
-        showTitle ? "Document unavailable" : widgetTypeTitle(this.type),
-        frame.screen.x + 18,
-        frame.screen.y + 20 * camera.zoom,
-      );
+      ctx.fillText("Document unavailable", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
       return;
     }
 
     const visibleWorld = this._getVisibleWorldBounds(camera, renderContext);
     if (!visibleWorld || this.pages.length === 0) {
       return;
-    }
-
-    if (showTitle) {
-      const docLabel = lod === "compact"
-        ? shortName(this.metadata.title)
-        : `${shortName(this.metadata.title)} • ${this.pageCount} pages`;
-      ctx.fillStyle = WIDGET_THEME.palette.title;
-      ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      ctx.fillText(docLabel, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
     }
 
     let firstVisiblePage = null;
@@ -646,7 +610,7 @@ export class PdfDocumentWidget extends WidgetBase {
       });
 
       if (drawnTiles === 0) {
-        if (showTitle) {
+        if (interaction.showTitle) {
           const screen = camera.worldToScreen(pageBounds.x, pageBounds.y);
           ctx.fillStyle = WIDGET_THEME.palette.mutedText;
           ctx.font = `${Math.max(1, 11 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
@@ -689,7 +653,11 @@ export class PdfDocumentWidget extends WidgetBase {
 
   renderSnapshot(ctx, camera, _renderContext) {
     this._computeDisplayLayout();
-    const frame = drawFrame(ctx, camera, this, { focused: true });
+    const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
+      interaction: { focused: true },
+      borderRadius: 18,
+      headerWorldHeight: HEADER_WORLD,
+    });
 
     ctx.fillStyle = WIDGET_THEME.palette.title;
     ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
