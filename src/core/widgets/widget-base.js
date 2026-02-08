@@ -3,8 +3,8 @@ export const RENDER_MODE = Object.freeze({
   SNAPSHOT: "snapshot",
 });
 
-const COLLAPSED_WIDTH_PX = 20;
-const COLLAPSED_MIN_HEIGHT_PX = 22;
+const COLLAPSED_WIDTH_PX = 40;
+const COLLAPSED_MIN_HEIGHT_PX = 40;
 
 function worldFromPixels(camera, px) {
   return px / Math.max(0.25, camera?.zoom ?? 1);

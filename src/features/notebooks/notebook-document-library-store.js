@@ -39,6 +39,17 @@ function normalizeTags(candidate) {
   return tags;
 }
 
+function normalizeInkSnapshot(candidate) {
+  if (!Array.isArray(candidate)) {
+    return [];
+  }
+  return candidate
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => ({
+      ...entry,
+    }));
+}
+
 function normalizeSource(candidate) {
   if (!candidate || typeof candidate !== "object") {
     return null;
@@ -65,6 +76,7 @@ function normalizeSource(candidate) {
     bytesBase64,
     status: source.status === "deleted" ? "deleted" : "active",
     tags: normalizeTags(source.tags),
+    inkStrokes: normalizeInkSnapshot(source.inkStrokes),
     createdAt: typeof source.createdAt === "string" ? source.createdAt : nowIso(),
     updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : nowIso(),
   };
@@ -128,6 +140,7 @@ function cloneSource(entry) {
     bytesBase64: entry.bytesBase64,
     status: entry.status,
     tags: [...entry.tags],
+    inkStrokes: normalizeInkSnapshot(entry.inkStrokes),
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
   };

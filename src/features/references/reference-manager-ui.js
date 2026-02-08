@@ -1,3 +1,9 @@
+import {
+  renderNotePreview,
+  renderPdfPreview,
+  renderReferencePreview,
+} from "./reference-preview-renderer.js";
+
 const PREVIEW_BASE_X = 28;
 const PREVIEW_BASE_Y = 84;
 const PREVIEW_STACK_OFFSET = 28;
@@ -30,7 +36,7 @@ function escapeHtml(value) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll("\"", "&quot;")
+    .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
 
@@ -66,25 +72,6 @@ function previewTitle(entry, kind) {
   return text(entry.title, "Notebook Reference");
 }
 
-function previewBody(entry, kind) {
-  if (kind === "document") {
-    const sourceType = text(entry.sourceType, "pdf");
-    const fileName = text(entry.fileName, "document.pdf");
-    return `Source type: ${sourceType}\nFile: ${fileName}`;
-  }
-  if (kind === "note") {
-    const noteBody = text(entry.metadata?.note, "");
-    return noteBody || "Notebook note";
-  }
-
-  const sourceLabel = text(entry.sourceLabel, "Notebook Reference");
-  const tags = asArray(entry.popupMetadata?.tags);
-  if (tags.length > 0) {
-    return `${sourceLabel}\nTags: ${tags.join(", ")}`;
-  }
-  return sourceLabel;
-}
-
 function makePreviewId(prefix) {
   return globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 }
@@ -113,6 +100,7 @@ export function createReferenceManagerUi({
   onDeleteNote,
   onRenameDocument,
   onDeleteDocument,
+  onLoadDocumentBytes,
 }) {
   if (!(launcherButton instanceof HTMLButtonElement)) {
     return {
@@ -131,6 +119,7 @@ export function createReferenceManagerUi({
   let notes = [];
   let documents = [];
   const previewCards = new Map();
+  const previewState = new Map();
   let dragState = null;
   let lastFocusedBeforeOverlay = null;
   const eventDisposers = [];
@@ -279,6 +268,12 @@ export function createReferenceManagerUi({
   }
 
   function closePreview(previewId) {
+    const state = previewState.get(previewId);
+    if (state?.abortController) {
+      state.abortController.abort();
+    }
+    previewState.delete(previewId);
+
     const card = previewCards.get(previewId);
     if (!card) {
       return;
@@ -286,6 +281,50 @@ export function createReferenceManagerUi({
 
     previewCards.delete(previewId);
     card.remove();
+  }
+
+  async function renderPreviewContent(previewId, kind, entry) {
+    const card = previewCards.get(previewId);
+    if (!(card instanceof HTMLElement)) {
+      return;
+    }
+
+    const content = card.querySelector(".reference-preview-content");
+    if (!(content instanceof HTMLElement)) {
+      return;
+    }
+
+    const current = previewState.get(previewId) ?? {
+      collapsed: false,
+      abortController: null,
+    };
+    if (current.collapsed) {
+      return;
+    }
+    if (current.abortController) {
+      current.abortController.abort();
+    }
+
+    const abortController = new AbortController();
+    previewState.set(previewId, {
+      collapsed: false,
+      abortController,
+    });
+
+    if (kind === "note") {
+      renderNotePreview(content, entry);
+      return;
+    }
+
+    if (kind === "document") {
+      await renderPdfPreview(content, entry, {
+        loadDocumentBytes: onLoadDocumentBytes,
+        signal: abortController.signal,
+      });
+      return;
+    }
+
+    renderReferencePreview(content, entry);
   }
 
   function renderPreviewCard(kind, entry) {
@@ -299,6 +338,7 @@ export function createReferenceManagerUi({
     card.dataset.previewId = previewId;
     card.dataset.kind = kind;
     card.dataset.entryId = entry.id;
+
     const stackDepth = previewCards.size;
     const initialLeft = clamp(
       PREVIEW_BASE_X + stackDepth * PREVIEW_STACK_OFFSET,
@@ -316,26 +356,33 @@ export function createReferenceManagerUi({
     card.innerHTML = `
       <header class="reference-preview-card-header" data-drag-handle="true">
         <strong>${escapeHtml(previewTitle(entry, kind))}</strong>
-        <button type="button" data-action="close-preview" data-preview-id="${previewId}">Close</button>
+        <div class="reference-preview-card-header-actions">
+          <button type="button" data-action="preview-add" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(entry.id)}">Add</button>
+          <button type="button" data-action="toggle-preview-collapse" data-preview-id="${previewId}" aria-label="Collapse preview">-</button>
+          <button type="button" data-action="close-preview" data-preview-id="${previewId}" aria-label="Close preview">X</button>
+        </div>
       </header>
-      <p class="reference-preview-card-body">${escapeHtml(previewBody(entry, kind))}</p>
-      <div class="reference-preview-card-actions">
-        <button type="button" data-action="preview-import-linked" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(entry.id)}">Import Linked</button>
-        <button type="button" data-action="preview-import-frozen" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(entry.id)}">Import Frozen</button>
+      <div class="reference-preview-card-body" data-preview-body="true">
+        <div class="reference-preview-content"></div>
       </div>
     `;
 
     previewLayerElement.append(card);
     previewCards.set(previewId, card);
+    previewState.set(previewId, {
+      collapsed: false,
+      abortController: null,
+    });
+    void renderPreviewContent(previewId, kind, entry);
   }
 
-  async function importEntry(kind, entry, linkStatus) {
+  async function importEntry(kind, entry) {
     if (!entry) {
       return;
     }
 
     if (kind === "document") {
-      await onImportDocument?.(entry, { linkStatus });
+      await onImportDocument?.(entry);
       return;
     }
     if (kind === "note") {
@@ -343,7 +390,52 @@ export function createReferenceManagerUi({
       return;
     }
 
-    await onImportReference?.(entry, { linkStatus });
+    await onImportReference?.(entry);
+  }
+
+  function togglePreviewCollapsed(previewId) {
+    const card = previewCards.get(previewId);
+    if (!(card instanceof HTMLElement)) {
+      return;
+    }
+
+    const body = card.querySelector('[data-preview-body="true"]');
+    if (!(body instanceof HTMLElement)) {
+      return;
+    }
+
+    const state = previewState.get(previewId) ?? {
+      collapsed: false,
+      abortController: null,
+    };
+    const nextCollapsed = !state.collapsed;
+
+    if (nextCollapsed && state.abortController) {
+      state.abortController.abort();
+    }
+
+    previewState.set(previewId, {
+      collapsed: nextCollapsed,
+      abortController: nextCollapsed ? null : state.abortController,
+    });
+
+    body.hidden = nextCollapsed;
+    card.dataset.collapsed = nextCollapsed ? "true" : "false";
+
+    const button = card.querySelector(`button[data-action="toggle-preview-collapse"][data-preview-id="${previewId}"]`);
+    if (button instanceof HTMLButtonElement) {
+      button.textContent = nextCollapsed ? "+" : "-";
+      button.setAttribute("aria-label", nextCollapsed ? "Expand preview" : "Collapse preview");
+    }
+
+    if (!nextCollapsed) {
+      const kind = card.dataset.kind === "document" ? "document" : card.dataset.kind === "note" ? "note" : "reference";
+      const entryId = card.dataset.entryId;
+      const entry = entryId ? findEntry(kind, entryId) : null;
+      if (entry) {
+        void renderPreviewContent(previewId, kind, entry);
+      }
+    }
   }
 
   async function handleListAction(event) {
@@ -376,16 +468,12 @@ export function createReferenceManagerUi({
     }
 
     if (action === "import-linked") {
-      await importEntry(kind, entry, "linked");
+      await importEntry(kind, entry);
       return;
     }
 
     if (action === "import-frozen") {
-      if (kind === "note") {
-        await importEntry(kind, entry, "linked");
-        return;
-      }
-      await importEntry(kind, entry, "frozen");
+      await importEntry(kind, entry);
       return;
     }
 
@@ -426,13 +514,22 @@ export function createReferenceManagerUi({
       return;
     }
 
+    const collapseButtonCandidate = target.closest("button[data-action='toggle-preview-collapse'][data-preview-id]");
+    if (collapseButtonCandidate instanceof HTMLButtonElement) {
+      const previewId = collapseButtonCandidate.dataset.previewId;
+      if (previewId) {
+        togglePreviewCollapsed(previewId);
+      }
+      return;
+    }
+
     const actionButton = target.closest("button[data-action][data-kind][data-entry-id]");
     if (!(actionButton instanceof HTMLButtonElement)) {
       return;
     }
 
     const action = actionButton.dataset.action;
-    if (action !== "preview-import-linked" && action !== "preview-import-frozen") {
+    if (action !== "preview-add") {
       return;
     }
 
@@ -452,7 +549,7 @@ export function createReferenceManagerUi({
       return;
     }
 
-    await importEntry(kind, entry, action === "preview-import-linked" ? "linked" : "frozen");
+    await importEntry(kind, entry);
   }
 
   function startPreviewDrag(event) {
@@ -462,6 +559,9 @@ export function createReferenceManagerUi({
 
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.closest("button")) {
       return;
     }
 
@@ -553,6 +653,7 @@ export function createReferenceManagerUi({
   const onDocumentsTabClick = () => {
     setTab("documents");
   };
+
   const onNotesTabClick = () => {
     setTab("notes");
   };
@@ -564,6 +665,7 @@ export function createReferenceManagerUi({
   const onDocumentsListClick = (event) => {
     void handleListAction(event);
   };
+
   const onNotesListClick = (event) => {
     void handleListAction(event);
   };

@@ -2291,6 +2291,7 @@ async function toggleWidgetLibraryFromContextMenu(widget) {
       sourceType: "pdf",
       fileName: widget.fileName ?? "document.pdf",
       pdfBytes: widget.pdfBytes,
+      inkStrokes: captureWidgetInkSnapshot(widget.id),
       status: "active",
       tags: ["pdf"],
     });
@@ -2453,6 +2454,26 @@ function syncWidgetsToLibrarySnapshots() {
           id: sourceId,
         });
       }
+    }
+
+    if (widget.type === "pdf-document") {
+      const sourceId =
+        typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim()
+          ? widget.metadata.sourceDocumentId
+          : null;
+      if (!sourceId || !(widget.pdfBytes instanceof Uint8Array) || widget.pdfBytes.length < 1) {
+        continue;
+      }
+      notebookDocumentLibraryStore.upsertDocument(activeContextId, {
+        id: sourceId,
+        title: widget.metadata?.title ?? widget.fileName ?? "Document",
+        sourceType: "pdf",
+        fileName: widget.fileName ?? "document.pdf",
+        pdfBytes: widget.pdfBytes,
+        inkStrokes: captureWidgetInkSnapshot(widget.id),
+        status: "active",
+        tags: ["pdf"],
+      });
     }
   }
 }
@@ -4206,6 +4227,11 @@ async function createPdfWidgetFromNotebookSource(sourceDocument, intent = null, 
     syncLinkedNotebookDocumentInstances({ sourceDocumentId: sourceDocument.id });
   }
 
+  if (widget && Array.isArray(sourceDocument.inkStrokes) && sourceDocument.inkStrokes.length > 0) {
+    restoreWidgetInkSnapshot(sourceDocument.inkStrokes, widget.id);
+    flushWorkspacePersist();
+  }
+
   return widget;
 }
 
@@ -5434,9 +5460,9 @@ function wireReferenceManagerUi() {
     notesCountElement: referenceManagerNoteCount,
     documentsCountElement: referenceManagerDocumentCount,
     previewLayerElement: referencePreviewLayer,
-    onImportReference: async (entry, { linkStatus = "linked" } = {}) => {
+    onImportReference: async (entry) => {
       await createReferencePopupFromLibraryEntry(entry, {
-        linkStatus,
+        linkStatus: "linked",
         intent: createCreationIntent({
           type: "reference-popup",
           anchor: viewportCenterAnchor(),
@@ -5446,9 +5472,9 @@ function wireReferenceManagerUi() {
       });
       updateWidgetUi();
     },
-    onImportDocument: async (entry, { linkStatus = "linked" } = {}) => {
+    onImportDocument: async (entry) => {
       await createPdfWidgetFromLibraryEntry(entry, {
-        linkStatus,
+        linkStatus: "linked",
         intent: createCreationIntent({
           type: "pdf-document",
           anchor: viewportCenterAnchor(),
@@ -5484,6 +5510,12 @@ function wireReferenceManagerUi() {
     },
     onDeleteDocument: async (entry) => {
       await deleteNotebookDocumentFromManager(entry);
+    },
+    onLoadDocumentBytes: (entry) => {
+      if (!activeContextId || !entry || typeof entry.id !== "string") {
+        return null;
+      }
+      return notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, entry.id);
     },
   });
 
