@@ -7,6 +7,7 @@ const RAIL_BOTTOM_RESERVED = 40;
 const RAIL_STACK_GAP = 42;
 const OFFSCREEN_SOFT_PX = 24;
 const OFFSCREEN_HIDE_PX = 120;
+const TOUCH_EXPAND_MS = 2400;
 
 function compactLabel(suggestion) {
   const base = typeof suggestion?.label === "string" ? suggestion.label.trim() : "";
@@ -137,19 +138,53 @@ export function createSuggestionUiController({
   let hoveredSuggestionId = null;
   let hoverPointerType = null;
   let suppressClickUntil = 0;
+  let expandedTouchSuggestionId = null;
+  let expandedTouchTimer = null;
+  let lastRenderPayload = {
+    focusedPdfWidgetId: null,
+    proposed: [],
+    ghosted: [],
+  };
 
-  const handleAction = async (event) => {
+  function clearTouchExpandedSuggestion() {
+    if (expandedTouchTimer) {
+      window.clearTimeout(expandedTouchTimer);
+      expandedTouchTimer = null;
+    }
+    expandedTouchSuggestionId = null;
+  }
+
+  function scheduleTouchExpandedReset() {
+    if (expandedTouchTimer) {
+      window.clearTimeout(expandedTouchTimer);
+    }
+    expandedTouchTimer = window.setTimeout(() => {
+      expandedTouchTimer = null;
+      expandedTouchSuggestionId = null;
+      rerender();
+    }, TOUCH_EXPAND_MS);
+  }
+
+  function actionHostFromEvent(event) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
+      return null;
+    }
+    const host = target.closest("[data-action][data-suggestion-id]");
+    return host instanceof HTMLElement ? host : null;
+  }
+
+  function rerender() {
+    render(lastRenderPayload);
+  }
+
+  const handleAction = async (event) => {
+    const host = actionHostFromEvent(event);
+    if (!host) {
       return;
     }
 
-    const button = target.closest("[data-action][data-suggestion-id]");
-    if (!(button instanceof HTMLElement)) {
-      return;
-    }
-
-    const suggestionId = button.dataset.suggestionId;
+    const suggestionId = host.dataset.suggestionId;
     if (!suggestionId) {
       return;
     }
@@ -159,24 +194,30 @@ export function createSuggestionUiController({
       return;
     }
 
-    const action = button.dataset.action;
+    const action = host.dataset.action;
     if (action === "accept") {
+      clearTouchExpandedSuggestion();
       await onAccept?.(suggestion);
       return;
     }
 
     if (action === "ghost") {
+      clearTouchExpandedSuggestion();
       await onGhost?.(suggestion);
       return;
     }
 
     if (action === "restore") {
+      clearTouchExpandedSuggestion();
       await onRestore?.(suggestion);
       return;
     }
 
     if (action === "focus") {
       onFocus?.(suggestion);
+      if (event instanceof PointerEvent && event.pointerType === "touch") {
+        scheduleTouchExpandedReset();
+      }
     }
   };
 
@@ -187,6 +228,29 @@ export function createSuggestionUiController({
     if (event.button !== 0) {
       return;
     }
+    const host = actionHostFromEvent(event);
+    if (!host) {
+      return;
+    }
+    const suggestionId = host.dataset.suggestionId ?? null;
+    const action = host.dataset.action ?? null;
+    const suggestion = suggestionId ? suggestionsById.get(suggestionId) ?? null : null;
+    if (
+      event.pointerType === "touch" &&
+      action === "focus" &&
+      suggestion &&
+      suggestion.kind === "reference-popup"
+    ) {
+      expandedTouchSuggestionId = suggestion.id;
+      hoveredSuggestionId = null;
+      hoverPointerType = null;
+      scheduleTouchExpandedReset();
+      suppressClickUntil = Date.now() + 420;
+      event.preventDefault();
+      rerender();
+      return;
+    }
+
     suppressClickUntil = Date.now() + 420;
     event.preventDefault();
     void handleAction(event);
@@ -207,17 +271,28 @@ export function createSuggestionUiController({
     const target = event.target instanceof HTMLElement ? event.target : null;
     const suggestionHost = target?.closest?.("[data-suggestion-id]");
     if (event.pointerType === "mouse" || event.pointerType === "pen") {
-      hoverPointerType = event.pointerType;
-      hoveredSuggestionId = suggestionHost?.dataset?.suggestionId ?? null;
+      const nextPointerType = event.pointerType;
+      const nextHovered = suggestionHost?.dataset?.suggestionId ?? null;
+      if (hoverPointerType !== nextPointerType || hoveredSuggestionId !== nextHovered) {
+        hoverPointerType = nextPointerType;
+        hoveredSuggestionId = nextHovered;
+        rerender();
+      }
       return;
     }
-    hoveredSuggestionId = null;
-    hoverPointerType = null;
+    if (hoveredSuggestionId !== null || hoverPointerType !== null) {
+      hoveredSuggestionId = null;
+      hoverPointerType = null;
+      rerender();
+    }
   };
 
   const onRootPointerLeave = () => {
-    hoveredSuggestionId = null;
-    hoverPointerType = null;
+    if (hoveredSuggestionId !== null || hoverPointerType !== null) {
+      hoveredSuggestionId = null;
+      hoverPointerType = null;
+      rerender();
+    }
   };
 
   rootElement.addEventListener("pointerdown", onRootPointerDown);
@@ -225,13 +300,16 @@ export function createSuggestionUiController({
   rootElement.addEventListener("pointermove", onRootPointerMove);
   rootElement.addEventListener("pointerleave", onRootPointerLeave);
 
-  return {
-    render({ focusedPdfWidgetId = null, proposed = [], ghosted = [] } = {}) {
+  function render({ focusedPdfWidgetId = null, proposed = [], ghosted = [] } = {}) {
+    lastRenderPayload = { focusedPdfWidgetId, proposed, ghosted };
       suggestionsById = new Map();
       for (const entry of [...proposed, ...ghosted]) {
         if (entry && typeof entry.id === "string") {
           suggestionsById.set(entry.id, entry);
         }
+      }
+      if (expandedTouchSuggestionId && !suggestionsById.has(expandedTouchSuggestionId)) {
+        clearTouchExpandedSuggestion();
       }
 
       const hasAny = proposed.length > 0 || ghosted.length > 0;
@@ -244,6 +322,7 @@ export function createSuggestionUiController({
         rootElement.hidden = true;
         rootElement.dataset.open = "false";
         rootElement.innerHTML = "";
+        clearTouchExpandedSuggestion();
         return;
       }
 
@@ -252,6 +331,7 @@ export function createSuggestionUiController({
         rootElement.hidden = true;
         rootElement.dataset.open = "false";
         rootElement.innerHTML = "";
+        clearTouchExpandedSuggestion();
         return;
       }
 
@@ -268,8 +348,9 @@ export function createSuggestionUiController({
           suggestion,
           chip:
             suggestion.kind === "reference-popup" &&
-            (hoverPointerType === "mouse" || hoverPointerType === "pen") &&
-            hoveredSuggestionId === suggestion.id
+            ((hoverPointerType === "mouse" || hoverPointerType === "pen") &&
+              hoveredSuggestionId === suggestion.id ||
+              expandedTouchSuggestionId === suggestion.id)
               ? buildActiveChip(suggestion)
               : suggestion.kind === "reference-popup"
                 ? buildReferenceDotChip(suggestion)
@@ -350,9 +431,13 @@ export function createSuggestionUiController({
         chip.dataset.offscreen = offscreenDistance > 0 ? "true" : "false";
         rootElement.append(chip);
       }
-    },
+    }
+
+  return {
+    render,
 
     dispose() {
+      clearTouchExpandedSuggestion();
       rootElement.removeEventListener("pointerdown", onRootPointerDown);
       rootElement.removeEventListener("click", onRootClick);
       rootElement.removeEventListener("pointermove", onRootPointerMove);
