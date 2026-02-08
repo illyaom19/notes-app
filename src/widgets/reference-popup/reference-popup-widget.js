@@ -237,11 +237,12 @@ export class ReferencePopupWidget extends WidgetBase {
     return this.size.height;
   }
 
-  _headerRect() {
+  _headerRect(camera) {
+    const bounds = this.getInteractionBounds(camera);
     return {
       x: this.position.x,
       y: this.position.y,
-      width: this.size.width,
+      width: bounds.width,
       height: HEADER_HEIGHT,
     };
   }
@@ -273,11 +274,12 @@ export class ReferencePopupWidget extends WidgetBase {
     return isLikelyHttpUrl(this.citation?.url);
   }
 
-  containsWorldPoint(worldX, worldY) {
+  containsWorldPoint(worldX, worldY, camera) {
+    const bounds = this.getInteractionBounds(camera);
     const minX = this.position.x;
     const minY = this.position.y;
-    const maxX = minX + this.size.width;
-    const maxY = minY + this.displayHeight;
+    const maxX = minX + bounds.width;
+    const maxY = minY + bounds.height;
     return worldX >= minX && worldX <= maxX && worldY >= minY && worldY <= maxY;
   }
 
@@ -295,7 +297,7 @@ export class ReferencePopupWidget extends WidgetBase {
       }
     }
 
-    const header = this._headerRect();
+    const header = this._headerRect(controlCamera);
     if (
       worldX >= header.x &&
       worldX <= header.x + header.width &&

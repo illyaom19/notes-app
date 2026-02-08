@@ -225,7 +225,7 @@ export function createWidgetContextMenu({
       if (widget) {
         const bounds =
           typeof widget.getInteractionBounds === "function"
-            ? widget.getInteractionBounds()
+            ? widget.getInteractionBounds(runtime.camera)
             : widget.size;
         const center = runtime.camera.worldToScreen(
           widget.position.x + Math.max(1, bounds.width) / 2,

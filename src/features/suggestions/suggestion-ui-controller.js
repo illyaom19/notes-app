@@ -35,7 +35,7 @@ function canvasBounds(runtime) {
 function railLeftForWidget(runtime, widget, canvasRect) {
   const widgetBounds =
     typeof widget.getInteractionBounds === "function"
-      ? widget.getInteractionBounds()
+      ? widget.getInteractionBounds(runtime.camera)
       : widget.size;
 
   const worldX = widget.position.x + Math.max(1, widgetBounds.width) + 14;

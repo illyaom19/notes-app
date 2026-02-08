@@ -110,7 +110,7 @@ export class CanvasRuntime {
   pickWidgetAtWorldPoint(worldX, worldY) {
     for (let index = this.widgets.length - 1; index >= 0; index -= 1) {
       const widget = this.widgets[index];
-      if (widget.containsWorldPoint(worldX, worldY)) {
+      if (widget.containsWorldPoint(worldX, worldY, this.camera)) {
         return widget;
       }
     }
@@ -294,7 +294,7 @@ export class CanvasRuntime {
       return null;
     }
     const bounds = typeof widget.getInteractionBounds === "function"
-      ? widget.getInteractionBounds()
+      ? widget.getInteractionBounds(this.camera)
       : widget.size;
     const width = Math.max(1, bounds?.width ?? 1);
     const height = Math.max(1, bounds?.height ?? 1);
@@ -840,7 +840,7 @@ export class CanvasRuntime {
 
     const bounds =
       typeof widget.getInteractionBounds === "function"
-        ? widget.getInteractionBounds()
+        ? widget.getInteractionBounds(this.camera)
         : { width: widget.size?.width ?? 0, height: widget.size?.height ?? 0 };
 
     const margin = 140 / Math.max(0.25, this.camera.zoom);

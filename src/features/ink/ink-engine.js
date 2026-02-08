@@ -158,7 +158,7 @@ export class InkEngine {
 
     const interactionBounds =
       typeof widget.getInteractionBounds === "function"
-        ? widget.getInteractionBounds()
+        ? widget.getInteractionBounds(this.runtime.camera)
         : { width: widget.size.width, height: widget.size.height };
 
     return {

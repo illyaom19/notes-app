@@ -7,7 +7,8 @@ const RESIZE_HANDLE_PX = 24;
 const CONTROL_PADDING_PX = 6;
 const TAP_MOVE_THRESHOLD_PX = 8;
 const UNAVAILABLE_DOT_PX = 8;
-const MIN_CONTROL_ACTION_PX = 16;
+const MIN_COLLAPSE_ACTION_PX = 10;
+const MIN_RESIZE_ACTION_PX = 16;
 
 function worldPoint(event, camera) {
   return camera.screenToWorld(event.offsetX, event.offsetY);
@@ -56,9 +57,9 @@ function interactionFlags(widget) {
   };
 }
 
-function widgetBounds(widget) {
+function widgetBounds(widget, camera) {
   if (typeof widget.getInteractionBounds === "function") {
-    const bounds = widget.getInteractionBounds();
+    const bounds = widget.getInteractionBounds(camera);
     return {
       x: widget.position.x,
       y: widget.position.y,
@@ -76,11 +77,22 @@ function widgetBounds(widget) {
 }
 
 function controlRects(widget, camera) {
-  const bounds = widgetBounds(widget);
+  const bounds = widgetBounds(widget, camera);
   const headerHeight = Math.min(bounds.height, worldSizeForPixels(camera, HEADER_HEIGHT_PX));
-  const controlSize = Math.min(headerHeight, worldSizeForPixels(camera, CONTROL_SIZE_PX));
+  const pad = Math.min(
+    worldSizeForPixels(camera, CONTROL_PADDING_PX),
+    Math.max(0, (bounds.width - worldSizeForPixels(camera, 10)) * 0.5),
+    Math.max(0, (headerHeight - worldSizeForPixels(camera, 10)) * 0.5),
+  );
+  const controlSize = Math.max(
+    worldSizeForPixels(camera, 10),
+    Math.min(
+      headerHeight - pad * 2,
+      bounds.width - pad * 2,
+      worldSizeForPixels(camera, CONTROL_SIZE_PX),
+    ),
+  );
   const handleSize = worldSizeForPixels(camera, RESIZE_HANDLE_PX);
-  const pad = worldSizeForPixels(camera, CONTROL_PADDING_PX);
 
   return {
     bounds,
@@ -105,22 +117,34 @@ function controlRects(widget, camera) {
   };
 }
 
-function controlsUnavailable({ flags, rects, camera }) {
-  if (!flags.collapsible || !flags.resizable) {
-    return false;
+function controlsUnavailable({ flags, rects, camera, collapsed }) {
+  const unavailable = {
+    collapse: false,
+    resize: collapsed,
+  };
+
+  if (flags.collapsible) {
+    const collapseScreen = toScreenRect(rects.collapse, camera);
+    unavailable.collapse =
+      collapseScreen.width < MIN_COLLAPSE_ACTION_PX || collapseScreen.height < MIN_COLLAPSE_ACTION_PX;
   }
 
-  const collapseScreen = toScreenRect(rects.collapse, camera);
-  const resizeScreen = toScreenRect(rects.resize, camera);
-  const collapseTooSmall =
-    collapseScreen.width < MIN_CONTROL_ACTION_PX || collapseScreen.height < MIN_CONTROL_ACTION_PX;
-  const resizeTooSmall =
-    resizeScreen.width < MIN_CONTROL_ACTION_PX || resizeScreen.height < MIN_CONTROL_ACTION_PX;
-  if (collapseTooSmall || resizeTooSmall) {
-    return true;
+  if (flags.resizable && !collapsed) {
+    const resizeScreen = toScreenRect(rects.resize, camera);
+    unavailable.resize =
+      resizeScreen.width < MIN_RESIZE_ACTION_PX || resizeScreen.height < MIN_RESIZE_ACTION_PX;
   }
 
-  return rectsOverlap(collapseScreen, resizeScreen, 2);
+  if (flags.collapsible && flags.resizable && !collapsed && !unavailable.collapse && !unavailable.resize) {
+    const collapseScreen = toScreenRect(rects.collapse, camera);
+    const resizeScreen = toScreenRect(rects.resize, camera);
+    if (rectsOverlap(collapseScreen, resizeScreen, 2)) {
+      unavailable.collapse = true;
+      unavailable.resize = true;
+    }
+  }
+
+  return unavailable;
 }
 
 function mutateWidgetPosition(widget, dx, dy) {
@@ -241,10 +265,15 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       const flags = interactionFlags(widget);
       const point = worldPoint(event, camera);
       const rects = controlRects(widget, camera);
-      const disableActionControls = controlsUnavailable({ flags, rects, camera });
+      const unavailableControls = controlsUnavailable({
+        flags,
+        rects,
+        camera,
+        collapsed: widget.collapsed,
+      });
       const touchCanCaptureInteraction = !isTouch || activeTouchPointerIds.size === 1;
 
-      if (!disableActionControls && flags.collapsible && rectContains(rects.collapse, point.x, point.y)) {
+      if (!unavailableControls.collapse && flags.collapsible && rectContains(rects.collapse, point.x, point.y)) {
         if (!touchCanCaptureInteraction) {
           return false;
         }
@@ -257,7 +286,12 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         return true;
       }
 
-      if (!disableActionControls && flags.resizable && rectContains(rects.resize, point.x, point.y)) {
+      if (
+        !widget.collapsed &&
+        !unavailableControls.resize &&
+        flags.resizable &&
+        rectContains(rects.resize, point.x, point.y)
+      ) {
         if (!touchCanCaptureInteraction) {
           return false;
         }
@@ -414,7 +448,12 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       const selected = selectedId === widget.id || focusedId === widget.id;
       const hovered = hoveredId === widget.id;
       const revealActions = selected || (!touchPrimary && hovered);
-      const disableActionControls = controlsUnavailable({ flags, rects, camera });
+      const unavailableControls = controlsUnavailable({
+        flags,
+        rects,
+        camera,
+        collapsed: widget.collapsed,
+      });
 
       if (!revealActions) {
         return;
@@ -425,7 +464,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         const collapseW = rects.collapse.width * camera.zoom;
         const collapseH = rects.collapse.height * camera.zoom;
 
-        if (disableActionControls) {
+        if (unavailableControls.collapse) {
           const dotSize = Math.max(4, Math.min(UNAVAILABLE_DOT_PX, Math.min(collapseW, collapseH) * 0.4));
           fillPill(
             ctx,
@@ -450,12 +489,12 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         }
       }
 
-      if (flags.resizable) {
+      if (flags.resizable && !widget.collapsed) {
         const resizeScreen = camera.worldToScreen(rects.resize.x, rects.resize.y);
         const resizeW = rects.resize.width * camera.zoom;
         const resizeH = rects.resize.height * camera.zoom;
 
-        if (disableActionControls) {
+        if (unavailableControls.resize) {
           const dotSize = Math.max(4, Math.min(UNAVAILABLE_DOT_PX, Math.min(resizeW, resizeH) * 0.4));
           fillPill(
             ctx,

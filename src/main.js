@@ -941,7 +941,7 @@ function anchorFromSourceWidget(sourceWidgetId) {
 
   const bounds =
     typeof sourceWidget.getInteractionBounds === "function"
-      ? sourceWidget.getInteractionBounds()
+      ? sourceWidget.getInteractionBounds(runtime.camera)
       : sourceWidget.size;
 
   return {
@@ -957,7 +957,7 @@ function anchorBesideWidget(sourceWidget) {
 
   const bounds =
     typeof sourceWidget.getInteractionBounds === "function"
-      ? sourceWidget.getInteractionBounds()
+      ? sourceWidget.getInteractionBounds(runtime.camera)
       : sourceWidget.size;
 
   return {
@@ -3173,7 +3173,7 @@ function centerCameraOnWidget(widget) {
 
   const bounds =
     typeof widget.getInteractionBounds === "function"
-      ? widget.getInteractionBounds()
+      ? widget.getInteractionBounds(runtime.camera)
       : { width: widget.size.width, height: widget.size.height };
   const centerX = widget.position.x + Math.max(1, bounds.width) / 2;
   const centerY = widget.position.y + Math.max(1, bounds.height) / 2;

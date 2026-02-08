@@ -3,6 +3,13 @@ export const RENDER_MODE = Object.freeze({
   SNAPSHOT: "snapshot",
 });
 
+const COLLAPSED_WIDTH_PX = 20;
+const COLLAPSED_MIN_HEIGHT_PX = 22;
+
+function worldFromPixels(camera, px) {
+  return px / Math.max(0.25, camera?.zoom ?? 1);
+}
+
 function normalizeInteractionFlags(candidate) {
   const source = candidate && typeof candidate === "object" ? candidate : {};
   return {
@@ -48,8 +55,8 @@ export class WidgetBase {
     this.renderMode = this.collapsed ? RENDER_MODE.SNAPSHOT : RENDER_MODE.INTERACTIVE;
   }
 
-  containsWorldPoint(worldX, worldY) {
-    const bounds = this.getInteractionBounds();
+  containsWorldPoint(worldX, worldY, camera) {
+    const bounds = this.getInteractionBounds(camera);
     const minX = this.position.x;
     const minY = this.position.y;
     const maxX = minX + bounds.width;
@@ -61,7 +68,17 @@ export class WidgetBase {
     return { ...this.interactionFlags };
   }
 
-  getInteractionBounds() {
+  getCollapsedInteractionBounds(camera) {
+    return {
+      width: worldFromPixels(camera, COLLAPSED_WIDTH_PX),
+      height: worldFromPixels(camera, COLLAPSED_MIN_HEIGHT_PX),
+    };
+  }
+
+  getInteractionBounds(camera) {
+    if (this.collapsed) {
+      return this.getCollapsedInteractionBounds(camera);
+    }
     return {
       width: this.size.width,
       height:
