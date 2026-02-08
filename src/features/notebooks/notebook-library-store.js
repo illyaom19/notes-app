@@ -56,6 +56,9 @@ function normalizeReference(candidate) {
   const title =
     typeof candidate.title === "string" && candidate.title.trim() ? candidate.title.trim() : "Reference";
 
+  const contentType =
+    candidate.contentType === "image" || candidate.contentType === "definition" ? candidate.contentType : "text";
+
   return {
     id:
       typeof candidate.id === "string" && candidate.id.trim() ? candidate.id.trim() : makeId("lib-ref"),
@@ -65,6 +68,22 @@ function normalizeReference(candidate) {
         ? candidate.sourceLabel.trim()
         : "Notebook Reference",
     popupMetadata: normalizePopupMetadata(candidate.popupMetadata, title),
+    contentType,
+    imageDataUrl:
+      typeof candidate.imageDataUrl === "string" && candidate.imageDataUrl.trim()
+        ? candidate.imageDataUrl
+        : null,
+    textContent: typeof candidate.textContent === "string" ? candidate.textContent : "",
+    citation:
+      candidate.citation && typeof candidate.citation === "object"
+        ? {
+            ...candidate.citation,
+          }
+        : null,
+    researchCaptureId:
+      typeof candidate.researchCaptureId === "string" && candidate.researchCaptureId.trim()
+        ? candidate.researchCaptureId
+        : null,
     inkStrokes: normalizeInkSnapshot(candidate.inkStrokes),
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : nowIso(),
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
@@ -180,6 +199,15 @@ function cloneReference(entry) {
       ...entry.popupMetadata,
       tags: Array.isArray(entry.popupMetadata?.tags) ? [...entry.popupMetadata.tags] : [],
     },
+    contentType: entry.contentType,
+    imageDataUrl: entry.imageDataUrl,
+    textContent: entry.textContent,
+    citation: entry.citation
+      ? {
+          ...entry.citation,
+        }
+      : null,
+    researchCaptureId: entry.researchCaptureId,
     inkStrokes: normalizeInkSnapshot(entry.inkStrokes),
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,

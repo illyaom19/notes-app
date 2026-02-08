@@ -87,3 +87,31 @@ test("library store returns null/false when persistence fails", () => {
   assert.equal(saved, null);
   assert.equal(store.listReferences("nb-a").length, 0);
 });
+
+test("library store persists reference content payload for snips", () => {
+  const storage = createMemoryStorage();
+  const store = createNotebookLibraryStore({ storage });
+
+  const saved = store.upsertReference("nb-a", {
+    title: "Snip Ref",
+    sourceLabel: "Quick Snip",
+    contentType: "image",
+    imageDataUrl: "data:image/png;base64,abc123",
+    textContent: "",
+    citation: {
+      sourceTitle: "Doc",
+      url: "",
+    },
+    researchCaptureId: "capture-1",
+  });
+
+  assert.ok(saved);
+  assert.equal(saved.contentType, "image");
+  assert.equal(saved.imageDataUrl, "data:image/png;base64,abc123");
+  assert.equal(saved.researchCaptureId, "capture-1");
+
+  const fetched = store.getReference("nb-a", saved.id);
+  assert.ok(fetched);
+  assert.equal(fetched.imageDataUrl, "data:image/png;base64,abc123");
+  assert.equal(fetched.contentType, "image");
+});

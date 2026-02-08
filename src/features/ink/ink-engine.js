@@ -204,7 +204,11 @@ export class InkEngine {
       return this._buildWorldPoint(event, camera);
     }
 
-    const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId) ?? stroke.anchorBounds;
+    const sourceWidget = stroke.sourceWidgetId ? this.runtime.getWidgetById(stroke.sourceWidgetId) : null;
+    if (sourceWidget && sourceWidget.collapsed) {
+      return null;
+    }
+    const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId) ?? (sourceWidget ? null : stroke.anchorBounds);
     if (!bounds) {
       return null;
     }
@@ -220,13 +224,17 @@ export class InkEngine {
       return stroke;
     }
 
-    const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId) ?? stroke.anchorBounds;
+    const sourceWidget = stroke.sourceWidgetId ? this.runtime.getWidgetById(stroke.sourceWidgetId) : null;
+    if (sourceWidget && sourceWidget.collapsed) {
+      return null;
+    }
+    const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId) ?? (sourceWidget ? null : stroke.anchorBounds);
     if (!bounds) {
       return null;
     }
 
-    const widget = this.runtime.getWidgetById(stroke.sourceWidgetId);
-    const isExpandedAreaStroke = Boolean(widget && widget.type === "expanded-area");
+    const widget = sourceWidget;
+    const isExpandedAreaStroke = Boolean(sourceWidget && sourceWidget.type === "expanded-area");
     const anchorBounds =
       stroke.anchorBounds && typeof stroke.anchorBounds === "object" ? stroke.anchorBounds : bounds;
 

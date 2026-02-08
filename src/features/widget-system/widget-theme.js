@@ -63,11 +63,15 @@ export function drawUnifiedWidgetFrame(
     borderRadius = 16,
     headerWorldHeight = 34,
     frameStrokeWidth = 1.05,
+    collapsedScale = 0.24,
+    collapsedMinWorldHeight = 44,
   } = {},
 ) {
   const screen = camera.worldToScreen(widget.position.x, widget.position.y);
   const width = widget.size.width * camera.zoom;
-  const height = widget.size.height * camera.zoom;
+  const collapsedHeightWorld = Math.max(collapsedMinWorldHeight, widget.size.height * collapsedScale);
+  const worldHeight = widget.collapsed ? collapsedHeightWorld : widget.size.height;
+  const height = worldHeight * camera.zoom;
   const headerHeight = Math.max(8, Math.min(height, headerWorldHeight * camera.zoom));
   const focused = interaction?.focused === true;
 

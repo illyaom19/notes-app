@@ -1889,6 +1889,21 @@ function referenceLibraryEntryFromWidget(widget) {
         ? popupMetadata.tags.filter((entry) => typeof entry === "string" && entry.trim())
         : [],
     },
+    contentType:
+      widget.contentType === "image" || widget.contentType === "definition" ? widget.contentType : "text",
+    imageDataUrl:
+      typeof widget.imageDataUrl === "string" && widget.imageDataUrl.trim() ? widget.imageDataUrl : null,
+    textContent: typeof widget.textContent === "string" ? widget.textContent : "",
+    citation:
+      widget.citation && typeof widget.citation === "object"
+        ? {
+            ...widget.citation,
+          }
+        : null,
+    researchCaptureId:
+      typeof widget.researchCaptureId === "string" && widget.researchCaptureId.trim()
+        ? widget.researchCaptureId
+        : null,
     inkStrokes: captureWidgetInkSnapshot(widget.id),
   };
 }
@@ -2500,6 +2515,25 @@ async function createReferencePopupFromLibraryEntry(referenceEntry, { linkStatus
       },
       dataPayload: {
         sourceLabel: referenceEntry.sourceLabel,
+        contentType:
+          referenceEntry.contentType === "image" || referenceEntry.contentType === "definition"
+            ? referenceEntry.contentType
+            : "text",
+        imageDataUrl:
+          typeof referenceEntry.imageDataUrl === "string" && referenceEntry.imageDataUrl.trim()
+            ? referenceEntry.imageDataUrl
+            : null,
+        textContent: typeof referenceEntry.textContent === "string" ? referenceEntry.textContent : "",
+        citation:
+          referenceEntry.citation && typeof referenceEntry.citation === "object"
+            ? {
+                ...referenceEntry.citation,
+              }
+            : null,
+        researchCaptureId:
+          typeof referenceEntry.researchCaptureId === "string" && referenceEntry.researchCaptureId.trim()
+            ? referenceEntry.researchCaptureId
+            : null,
       },
     },
   });
