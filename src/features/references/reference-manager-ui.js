@@ -10,7 +10,7 @@ const PREVIEW_STACK_OFFSET = 28;
 const PREVIEW_MIN_WIDTH = 240;
 const PREVIEW_MIN_HEIGHT = 152;
 const PREVIEW_EDGE_PADDING = 8;
-const PREVIEW_SNAP_THRESHOLD = 14;
+const PREVIEW_SNAP_THRESHOLD = 22;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -251,17 +251,24 @@ export function createReferenceManagerUi({
 
     let left = card.offsetLeft;
     let top = card.offsetTop;
-
-    if (Math.abs(left - minLeft) <= PREVIEW_SNAP_THRESHOLD) {
-      left = minLeft;
-    } else if (Math.abs(left - maxLeft) <= PREVIEW_SNAP_THRESHOLD) {
-      left = maxLeft;
-    }
-
-    if (Math.abs(top - minTop) <= PREVIEW_SNAP_THRESHOLD) {
-      top = minTop;
-    } else if (Math.abs(top - maxTop) <= PREVIEW_SNAP_THRESHOLD) {
-      top = maxTop;
+    const edgeDistances = [
+      { edge: "left", distance: Math.abs(left - minLeft) },
+      { edge: "right", distance: Math.abs(left - maxLeft) },
+      { edge: "top", distance: Math.abs(top - minTop) },
+      { edge: "bottom", distance: Math.abs(top - maxTop) },
+    ];
+    edgeDistances.sort((a, b) => a.distance - b.distance);
+    const nearest = edgeDistances[0] ?? null;
+    if (nearest && nearest.distance <= PREVIEW_SNAP_THRESHOLD) {
+      if (nearest.edge === "left") {
+        left = minLeft;
+      } else if (nearest.edge === "right") {
+        left = maxLeft;
+      } else if (nearest.edge === "top") {
+        top = minTop;
+      } else if (nearest.edge === "bottom") {
+        top = maxTop;
+      }
     }
 
     card.style.left = `${left}px`;
@@ -566,7 +573,7 @@ export function createReferenceManagerUi({
   }
 
   function startPreviewDrag(event) {
-    if (event.button !== 0) {
+    if (event.pointerType === "mouse" && event.button !== 0) {
       return;
     }
 
@@ -595,6 +602,10 @@ export function createReferenceManagerUi({
       offsetY: event.clientY - card.offsetTop,
     };
 
+    // Ensure preview dragging wins over any global pointer handlers.
+    event.preventDefault();
+    event.stopPropagation();
+
     if (card.setPointerCapture) {
       card.setPointerCapture(event.pointerId);
     }
@@ -610,6 +621,8 @@ export function createReferenceManagerUi({
 
     card.style.left = `${nextPosition.left}px`;
     card.style.top = `${nextPosition.top}px`;
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   function endPreviewDrag(event) {
@@ -621,6 +634,8 @@ export function createReferenceManagerUi({
       dragState.card.releasePointerCapture(event.pointerId);
     }
     snapCardToCanvasEdges(dragState.card);
+    event.preventDefault();
+    event.stopPropagation();
     dragState = null;
   }
 

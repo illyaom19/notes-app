@@ -1174,6 +1174,7 @@ body[data-ui-mode="production"] .topbar h1 {
   justify-content: space-between;
   gap: 0.45rem;
   cursor: move;
+  touch-action: none;
 }
 
 .reference-preview-card-header strong {
