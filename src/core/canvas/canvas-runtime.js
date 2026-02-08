@@ -1,4 +1,6 @@
 import { Camera2D } from "./camera.js";
+import { resolveWidgetLod } from "../../features/widget-system/widget-lod.js";
+import { WIDGET_THEME } from "../../features/widget-system/widget-theme.js";
 
 export class CanvasRuntime {
   constructor({ canvas, onCameraChange, onViewModeChange, onSelectionChange }) {
@@ -22,6 +24,8 @@ export class CanvasRuntime {
     this._overlayLayers = [];
     this._selectedWidgetId = null;
     this._focusedWidgetId = null;
+    this._hoverWidgetId = null;
+    this._lastPointerType = "mouse";
     this._viewMode = "interactive";
 
     if (!this.ctx) {
@@ -164,6 +168,14 @@ export class CanvasRuntime {
     return this._focusedWidgetId;
   }
 
+  getHoveredWidgetId() {
+    return this._hoverWidgetId;
+  }
+
+  getLastPointerType() {
+    return this._lastPointerType;
+  }
+
   getViewMode() {
     return this._viewMode;
   }
@@ -179,18 +191,152 @@ export class CanvasRuntime {
     }
 
     this._viewMode = mode;
+    if (mode === "peek") {
+      this._fitUsedWorldToViewport(0.92);
+      this._dragging = false;
+      this._touchPointers.clear();
+      this._touchGesture = null;
+      this._touchInteractionPointers.clear();
+      this._touchIgnoredPointers.clear();
+      this._touchControllerOwner = null;
+    }
     if (typeof this.onViewModeChange === "function") {
       this.onViewModeChange({
         mode: this._viewMode,
       });
     }
+    this._emitCamera();
     return this._viewMode;
+  }
+
+  _widgetWorldRect(widget) {
+    if (!widget) {
+      return null;
+    }
+    const bounds = typeof widget.getInteractionBounds === "function"
+      ? widget.getInteractionBounds()
+      : widget.size;
+    const width = Math.max(1, bounds?.width ?? 1);
+    const height = Math.max(1, bounds?.height ?? 1);
+    return {
+      x: widget.position.x,
+      y: widget.position.y,
+      width,
+      height,
+    };
+  }
+
+  _contentWorldRectForWidgetAtPoint(widget, offsetX, offsetY) {
+    if (!widget) {
+      return null;
+    }
+
+    if (widget.type === "pdf-document" && typeof widget.getPageWorldRect === "function") {
+      const point = this.camera.screenToWorld(offsetX, offsetY);
+      const pageCount = Number.isFinite(widget.pageCount) ? widget.pageCount : 0;
+      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+        const pageRect = widget.getPageWorldRect(pageNumber);
+        if (!pageRect) {
+          continue;
+        }
+        if (
+          point.x >= pageRect.x &&
+          point.x <= pageRect.x + pageRect.width &&
+          point.y >= pageRect.y &&
+          point.y <= pageRect.y + pageRect.height
+        ) {
+          return pageRect;
+        }
+      }
+    }
+
+    return this._widgetWorldRect(widget);
+  }
+
+  _fitWorldRectToViewport(rect, fillRatio = 0.75) {
+    if (!rect) {
+      return;
+    }
+    const width = Math.max(1, rect.width);
+    const height = Math.max(1, rect.height);
+    const viewportWidth = Math.max(1, this.canvas.clientWidth);
+    const viewportHeight = Math.max(1, this.canvas.clientHeight);
+    const fit = Math.min((viewportWidth * fillRatio) / width, (viewportHeight * fillRatio) / height);
+    const zoom = Math.max(0.25, Math.min(4, fit));
+
+    this.camera.zoom = zoom;
+    const centerX = rect.x + width / 2;
+    const centerY = rect.y + height / 2;
+    this.camera.offsetX = viewportWidth / 2 - centerX * zoom;
+    this.camera.offsetY = viewportHeight / 2 - centerY * zoom;
+  }
+
+  _fitUsedWorldToViewport(fillRatio = 0.92) {
+    if (!Array.isArray(this.widgets) || this.widgets.length < 1) {
+      return;
+    }
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+
+    for (const widget of this.widgets) {
+      const rect = this._widgetWorldRect(widget);
+      if (!rect) {
+        continue;
+      }
+      minX = Math.min(minX, rect.x);
+      minY = Math.min(minY, rect.y);
+      maxX = Math.max(maxX, rect.x + rect.width);
+      maxY = Math.max(maxY, rect.y + rect.height);
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return;
+    }
+
+    this._fitWorldRectToViewport(
+      {
+        x: minX,
+        y: minY,
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+      },
+      fillRatio,
+    );
+  }
+
+  _handlePeekPointerDown(event) {
+    if (event.button !== 0 && event.pointerType !== "touch") {
+      return false;
+    }
+
+    const widget = this.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
+    if (!widget) {
+      return false;
+    }
+
+    const focusRect = this._contentWorldRectForWidgetAtPoint(widget, event.offsetX, event.offsetY);
+    this.setViewMode("interactive");
+    this._fitWorldRectToViewport(focusRect, 0.75);
+    this.bringWidgetToFront(widget.id);
+    this.setFocusedWidgetId(widget.id);
+    this.setSelectedWidgetId(widget.id);
+    this._emitCamera();
+    return true;
   }
 
   _bindEvents() {
     window.addEventListener("resize", () => this._resizeToViewport());
 
     this.canvas.addEventListener("pointerdown", (event) => {
+      this._lastPointerType = event.pointerType || this._lastPointerType;
+      if (this._viewMode === "peek" && this._handlePeekPointerDown(event)) {
+        event.preventDefault();
+        return;
+      }
+
       if (event.pointerType === "touch") {
         const canDispatchToInteraction = this._touchControllerOwner !== "camera";
 
@@ -225,6 +371,10 @@ export class CanvasRuntime {
         return;
       }
 
+      if (this._viewMode === "peek") {
+        return;
+      }
+
       if (event.pointerType === "pen") {
         return;
       }
@@ -238,6 +388,8 @@ export class CanvasRuntime {
     });
 
     this.canvas.addEventListener("pointermove", (event) => {
+      this._lastPointerType = event.pointerType || this._lastPointerType;
+
       if (event.pointerType === "touch" && this._touchInteractionPointers.has(event.pointerId)) {
         event.preventDefault();
         this._dispatchPointer("onPointerMove", event);
@@ -259,28 +411,54 @@ export class CanvasRuntime {
           if (this._touchGesture) {
             if (this._touchGesture.distance > 0 && metrics.distance > 0) {
               const zoomFactor = metrics.distance / this._touchGesture.distance;
-              this.camera.zoomAt(metrics.center.x, metrics.center.y, zoomFactor);
+              if (this._viewMode === "peek") {
+                if (zoomFactor > 1.02) {
+                  this.setViewMode("interactive");
+                  this.camera.zoomAt(metrics.center.x, metrics.center.y, zoomFactor);
+                  if (this.camera.zoom <= WIDGET_THEME.lod.peekMaxZoom) {
+                    this.setViewMode("peek");
+                  } else {
+                    this._emitCamera();
+                  }
+                }
+              } else {
+                this.camera.zoomAt(metrics.center.x, metrics.center.y, zoomFactor);
+                if (this.camera.zoom <= WIDGET_THEME.lod.peekMaxZoom) {
+                  this.setViewMode("peek");
+                } else {
+                  this._emitCamera();
+                }
+              }
             }
 
-            this.camera.panBy(
-              metrics.center.x - this._touchGesture.center.x,
-              metrics.center.y - this._touchGesture.center.y,
-            );
-            this._emitCamera();
+            if (this._viewMode !== "peek") {
+              this.camera.panBy(
+                metrics.center.x - this._touchGesture.center.x,
+                metrics.center.y - this._touchGesture.center.y,
+              );
+              this._emitCamera();
+            }
           }
           this._touchGesture = metrics;
           return;
         }
 
         this._touchGesture = null;
-        if (previous) {
+        if (previous && this._viewMode !== "peek") {
           this.camera.panBy(event.clientX - previous.x, event.clientY - previous.y);
           this._emitCamera();
         }
         return;
       }
 
+      const hoveredWidget = this.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
+      this._hoverWidgetId = hoveredWidget?.id ?? null;
+
       if (this._dispatchPointer("onPointerMove", event)) {
+        return;
+      }
+
+      if (this._viewMode === "peek") {
         return;
       }
 
@@ -295,7 +473,12 @@ export class CanvasRuntime {
       this._emitCamera();
     });
 
+    this.canvas.addEventListener("pointerleave", () => {
+      this._hoverWidgetId = null;
+    });
+
     const stopDragging = (event) => {
+      this._lastPointerType = event.pointerType || this._lastPointerType;
       if (event.pointerType === "touch" && this._touchInteractionPointers.has(event.pointerId)) {
         event.preventDefault();
         this._dispatchPointer("onPointerUp", event);
@@ -336,6 +519,10 @@ export class CanvasRuntime {
         return;
       }
 
+      if (this._viewMode === "peek") {
+        return;
+      }
+
       if (!this._dragging) {
         return;
       }
@@ -347,6 +534,7 @@ export class CanvasRuntime {
 
     this.canvas.addEventListener("pointerup", stopDragging);
     this.canvas.addEventListener("pointercancel", (event) => {
+      this._lastPointerType = event.pointerType || this._lastPointerType;
       if (event.pointerType === "touch" && this._touchInteractionPointers.has(event.pointerId)) {
         event.preventDefault();
         this._dispatchPointer("onPointerCancel", event);
@@ -393,9 +581,22 @@ export class CanvasRuntime {
       "wheel",
       (event) => {
         event.preventDefault();
+        this._lastPointerType = "mouse";
+        if (this._viewMode === "peek") {
+          if (event.deltaY < 0) {
+            this.setViewMode("interactive");
+            this.camera.zoomAt(event.offsetX, event.offsetY, 1.08);
+            this._emitCamera();
+          }
+          return;
+        }
         const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08;
         this.camera.zoomAt(event.offsetX, event.offsetY, zoomFactor);
-        this._emitCamera();
+        if (this.camera.zoom <= WIDGET_THEME.lod.peekMaxZoom) {
+          this.setViewMode("peek");
+        } else {
+          this._emitCamera();
+        }
       },
       { passive: false },
     );
@@ -476,13 +677,25 @@ export class CanvasRuntime {
   _render(dt) {
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
+    const lod = resolveWidgetLod({
+      cameraZoom: this.camera.zoom,
+      viewMode: this._viewMode,
+    });
     const renderContext = {
       width,
       height,
       canvas: this.canvas,
       dpr: window.devicePixelRatio || 1,
       viewMode: this._viewMode,
-      lod: this._viewMode === "peek" ? "low" : "full",
+      lod,
+      zoom: this.camera.zoom,
+      interaction: {
+        selectedWidgetId: this._selectedWidgetId,
+        focusedWidgetId: this._focusedWidgetId,
+        hoverWidgetId: this._hoverWidgetId,
+        isTouchPrimary: this._lastPointerType === "touch",
+      },
+      theme: WIDGET_THEME,
     };
     const visibleWorld = this._visibleWorldBounds(width, height);
     const peekMode = this._viewMode === "peek";
@@ -542,7 +755,7 @@ export class CanvasRuntime {
     const startY = Math.floor(minWorld.y / spacing) * spacing;
     const endY = Math.ceil(maxWorld.y / spacing) * spacing;
 
-    ctx.strokeStyle = viewMode === "peek" ? "#dbe3ea" : "#d6dde5";
+    ctx.strokeStyle = viewMode === "peek" ? "#d0d8df" : "#d6dde5";
     ctx.lineWidth = 1;
 
     for (let x = startX; x <= endX; x += spacing) {
@@ -562,7 +775,7 @@ export class CanvasRuntime {
     }
 
     const origin = camera.worldToScreen(0, 0);
-    ctx.strokeStyle = viewMode === "peek" ? "#a2b4c4" : "#8ba0b2";
+    ctx.strokeStyle = viewMode === "peek" ? "#8ea0ad" : "#8ba0b2";
     ctx.beginPath();
     ctx.moveTo(origin.x - 12, origin.y);
     ctx.lineTo(origin.x + 12, origin.y);

@@ -1,5 +1,4 @@
 const DEFAULT_WORLD_SIZE_CONFIG = Object.freeze({
-  dummy: { width: 300, height: 180, minWidth: 160, minHeight: 100, maxWidth: 900, maxHeight: 720 },
   "expanded-area": {
     width: 420,
     height: 260,
@@ -23,14 +22,6 @@ const DEFAULT_WORLD_SIZE_CONFIG = Object.freeze({
     minHeight: 120,
     maxWidth: 980,
     maxHeight: 780,
-  },
-  "graph-widget": {
-    width: 420,
-    height: 280,
-    minWidth: 260,
-    minHeight: 180,
-    maxWidth: 1200,
-    maxHeight: 900,
   },
 });
 
@@ -67,11 +58,9 @@ function normalizeWorldSizeEntry(candidate, fallback) {
 
 export function defaultWorldSizeConfig() {
   return {
-    dummy: { ...DEFAULT_WORLD_SIZE_CONFIG.dummy },
     "expanded-area": { ...DEFAULT_WORLD_SIZE_CONFIG["expanded-area"] },
     "pdf-document": { ...DEFAULT_WORLD_SIZE_CONFIG["pdf-document"] },
     "reference-popup": { ...DEFAULT_WORLD_SIZE_CONFIG["reference-popup"] },
-    "graph-widget": { ...DEFAULT_WORLD_SIZE_CONFIG["graph-widget"] },
   };
 }
 

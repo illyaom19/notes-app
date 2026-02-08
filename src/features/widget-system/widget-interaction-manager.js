@@ -1,4 +1,6 @@
 import { fillPill, strokeRoundedRect } from "../../core/canvas/rounded.js";
+import { drawControlGlyph, WIDGET_THEME } from "./widget-theme.js";
+import { resolveWidgetLod } from "./widget-lod.js";
 
 const HEADER_HEIGHT_PX = 34;
 const CONTROL_SIZE_PX = 24;
@@ -331,15 +333,28 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
   }
 
   const overlay = {
-    render(ctx, camera) {
+    render(ctx, camera, renderContext) {
       const selectedId = runtime.getSelectedWidgetId();
-      if (!selectedId) {
+      const focusedId = runtime.getFocusedWidgetId();
+      const hoveredId = runtime.getHoveredWidgetId?.() ?? null;
+      const lod = renderContext?.lod ?? resolveWidgetLod({
+        cameraZoom: camera.zoom,
+        viewMode: renderContext?.viewMode,
+      });
+      const touchPrimary = renderContext?.interaction?.isTouchPrimary === true;
+      const targetId = selectedId ?? focusedId ?? (!touchPrimary ? hoveredId : null);
+      if (!targetId) {
         return;
       }
 
-      const widget = runtime.getWidgetById(selectedId);
+      const widget = runtime.getWidgetById(targetId);
       if (!widget) {
-        runtime.setSelectedWidgetId(null);
+        if (selectedId === targetId) {
+          runtime.setSelectedWidgetId(null);
+        }
+        if (focusedId === targetId) {
+          runtime.setFocusedWidgetId(null);
+        }
         return;
       }
 
@@ -348,22 +363,56 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       const screen = camera.worldToScreen(rects.bounds.x, rects.bounds.y);
       const screenW = rects.bounds.width * camera.zoom;
       const screenH = rects.bounds.height * camera.zoom;
+      const headerH = Math.max(6, rects.header.height * camera.zoom);
+      const selected = selectedId === widget.id || focusedId === widget.id;
+      const hovered = hoveredId === widget.id;
+      const revealActions = selected || (!touchPrimary && hovered);
 
-      strokeRoundedRect(ctx, screen.x - 2, screen.y - 2, screenW + 4, screenH + 4, 14, "#2f7daf", 1.5);
+      if (selected) {
+        strokeRoundedRect(
+          ctx,
+          screen.x - 1.5,
+          screen.y - 1.5,
+          screenW + 3,
+          screenH + 3,
+          14,
+          WIDGET_THEME.palette.selectionAccent,
+          1.2,
+        );
+      }
+
+      ctx.save();
+      ctx.globalAlpha = selected ? 0.95 : 0.72;
+      fillPill(
+        ctx,
+        screen.x + 6,
+        screen.y + 4,
+        Math.max(12, screenW - 12),
+        Math.max(5, Math.min(13, headerH * 0.28)),
+        selected ? WIDGET_THEME.palette.headerAccent : WIDGET_THEME.palette.headerAccentSoft,
+      );
+      ctx.restore();
+
+      if (lod !== "detail" || !revealActions) {
+        return;
+      }
 
       if (flags.collapsible) {
         const collapseScreen = camera.worldToScreen(rects.collapse.x, rects.collapse.y);
         const collapseW = rects.collapse.width * camera.zoom;
         const collapseH = rects.collapse.height * camera.zoom;
 
-        fillPill(ctx, collapseScreen.x, collapseScreen.y, collapseW, collapseH, "rgba(24, 78, 118, 0.9)");
-        ctx.fillStyle = "#f2f8fc";
-        ctx.font = "11px IBM Plex Sans, sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(widget.collapsed ? "+" : "-", collapseScreen.x + collapseW / 2, collapseScreen.y + collapseH / 2);
-        ctx.textAlign = "start";
-        ctx.textBaseline = "alphabetic";
+        fillPill(ctx, collapseScreen.x, collapseScreen.y, collapseW, collapseH, WIDGET_THEME.palette.controlBg);
+        drawControlGlyph(
+          ctx,
+          widget.collapsed ? "plus" : "minus",
+          {
+            x: collapseScreen.x,
+            y: collapseScreen.y,
+            size: Math.min(collapseW, collapseH),
+            color: WIDGET_THEME.palette.controlFg,
+          },
+        );
       }
 
       if (flags.resizable) {
@@ -371,14 +420,17 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         const resizeW = rects.resize.width * camera.zoom;
         const resizeH = rects.resize.height * camera.zoom;
 
-        fillPill(ctx, resizeScreen.x, resizeScreen.y, resizeW, resizeH, "rgba(32, 95, 142, 0.9)");
-        ctx.fillStyle = "#f0f8fd";
-        ctx.font = "10px IBM Plex Sans, sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("[]", resizeScreen.x + resizeW / 2, resizeScreen.y + resizeH / 2);
-        ctx.textAlign = "start";
-        ctx.textBaseline = "alphabetic";
+        fillPill(ctx, resizeScreen.x, resizeScreen.y, resizeW, resizeH, WIDGET_THEME.palette.controlBgSoft);
+        drawControlGlyph(
+          ctx,
+          "resize",
+          {
+            x: resizeScreen.x,
+            y: resizeScreen.y,
+            size: Math.min(resizeW, resizeH),
+            color: WIDGET_THEME.palette.controlFg,
+          },
+        );
       }
     },
   };

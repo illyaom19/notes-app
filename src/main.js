@@ -26,6 +26,7 @@ import { createSuggestionStore } from "./features/suggestions/suggestion-store.j
 import { createSuggestionEngine } from "./features/suggestions/suggestion-engine.js";
 import { createSuggestionUiController } from "./features/suggestions/suggestion-ui-controller.js";
 import { createReferenceManagerUi } from "./features/references/reference-manager-ui.js";
+import { ALLOWED_CREATION_INTENT_TYPES } from "./features/widget-system/widget-types.js";
 
 const toggleUiModeButton = document.querySelector("#toggle-ui-mode");
 const toggleToolsButton = document.querySelector("#toggle-tools");
@@ -648,13 +649,7 @@ function defaultPlacement(baseX, baseY, stepX, stepY) {
   };
 }
 
-const CREATION_TYPES = new Set([
-  "expanded-area",
-  "reference-popup",
-  "library-reference",
-  "pdf-document",
-  "snip",
-]);
+const CREATION_TYPES = new Set(ALLOWED_CREATION_INTENT_TYPES);
 
 function isFiniteNumber(value) {
   return Number.isFinite(value);

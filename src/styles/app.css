@@ -1,10 +1,12 @@
+@import "./theme-rules.css";
+
 :root {
-  --bg: #f4f7f9;
-  --surface: #ffffff;
-  --line: #d7dde3;
-  --text: #0f1720;
-  --muted: #546274;
-  --accent: #0866a8;
+  --bg: var(--theme-bg-canvas);
+  --surface: var(--theme-bg-panel);
+  --line: var(--theme-line);
+  --text: var(--theme-text);
+  --muted: var(--theme-text-muted);
+  --accent: var(--theme-action);
 }
 
 * {
@@ -15,7 +17,7 @@ html,
 body {
   height: 100%;
   margin: 0;
-  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-family: var(--theme-font-sans);
   background: var(--bg);
   color: var(--text);
   user-select: none;
@@ -65,7 +67,7 @@ select,
   [href],
   [tabindex]:not([tabindex="-1"])
 ):focus-visible {
-  outline: 2px solid #1f77b0;
+  outline: 2px solid var(--theme-action);
   outline-offset: 2px;
 }
 
@@ -90,7 +92,7 @@ body[data-ui-mode="production"] .controls [data-production-hidden="true"] {
 body[data-ui-mode="production"] .topbar h1 {
   font-size: 0.92rem;
   letter-spacing: 0.015em;
-  color: #2b455d;
+  color: var(--theme-text-muted);
 }
 
 .topbar {
@@ -139,22 +141,22 @@ body[data-ui-mode="production"] .topbar h1 {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  border: 1px solid #c7d5e1;
+  border: 1px solid var(--theme-line);
   border-radius: 999px;
   padding: 0.3rem 0.5rem 0.3rem 0.6rem;
-  background: #f8fbfe;
+  background: var(--theme-bg-surface);
 }
 
 .context-pick span {
   font-size: 0.8rem;
-  color: #35506a;
+  color: var(--theme-text-muted);
   white-space: nowrap;
 }
 
 .context-pick select {
   border: 0;
   background: transparent;
-  color: #18344c;
+  color: var(--theme-text);
   font-size: 0.85rem;
   min-width: 190px;
   max-width: min(42vw, 260px);
@@ -288,9 +290,9 @@ body[data-ui-mode="production"] .topbar h1 {
 }
 
 .section-tab {
-  border: 1px solid #b9ccdc;
-  background: #ffffff;
-  color: #1e3c55;
+  border: 1px solid var(--theme-line);
+  background: var(--theme-bg-panel);
+  color: var(--theme-text);
   border-radius: 999px;
   padding: 0.32rem 0.7rem;
   font-size: 0.82rem;
@@ -299,9 +301,9 @@ body[data-ui-mode="production"] .topbar h1 {
 }
 
 .section-tab[data-active="true"] {
-  border-color: #2073aa;
-  background: #e6f2fb;
-  color: #104262;
+  border-color: var(--theme-action);
+  background: var(--theme-action-soft);
+  color: var(--theme-action-strong);
 }
 
 .section-switch {
@@ -805,9 +807,9 @@ body[data-ui-mode="production"] .topbar h1 {
 
 .suggestion-chip {
   border-radius: 999px;
-  border: 1px solid #afc8da;
+  border: 1px solid var(--theme-line);
   background: rgba(255, 255, 255, 0.9);
-  color: #1a4967;
+  color: var(--theme-text);
   display: flex;
   align-items: center;
   gap: 0.2rem;
@@ -835,9 +837,9 @@ body[data-ui-mode="production"] .topbar h1 {
   width: 24px;
   height: 24px;
   border-radius: 999px;
-  border: 1px solid #a8c2d5;
+  border: 1px solid var(--theme-line);
   background: #f8fcff;
-  color: #1e5374;
+  color: var(--theme-action-strong);
   font-size: 0.74rem;
   line-height: 1;
   padding: 0;
@@ -845,14 +847,14 @@ body[data-ui-mode="production"] .topbar h1 {
 }
 
 .suggestion-chip-action--accept {
-  border-color: #7eb996;
-  color: #1f7a44;
+  border-color: #8bbda0;
+  color: var(--theme-success);
   background: #ecf8f0;
 }
 
 .suggestion-chip-action--ghost {
   border-color: #c9aeb8;
-  color: #8b3d53;
+  color: var(--theme-danger);
   background: #fbf0f4;
 }
 
@@ -1225,7 +1227,7 @@ body[data-ui-mode="production"] .topbar h1 {
   width: 248px;
   height: 248px;
   border-radius: 999px;
-  border: 1px solid #9ab7cc;
+  border: 1px solid var(--theme-line-strong);
   background: radial-gradient(circle, rgba(255, 255, 255, 0.96) 0%, rgba(238, 246, 252, 0.96) 74%);
   box-shadow: 0 22px 42px rgba(15, 23, 32, 0.22);
   padding: 0;
@@ -1374,9 +1376,9 @@ body[data-ui-mode="production"] .topbar h1 {
 }
 
 .creation-menu[data-mode="radial"] button[data-active="true"] {
-  border-color: #1f77b0;
-  background: #dff0fb;
-  color: #0f4569;
+  border-color: var(--theme-action);
+  background: var(--theme-action-soft);
+  color: var(--theme-action-strong);
 }
 
 .creation-menu[data-mode="radial"] button:nth-child(1) { left: 50%; top: 20%; }

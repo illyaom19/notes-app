@@ -1,6 +1,7 @@
 import { fillPill, fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 import { resolveWidgetLod, widgetTypeTitle } from "../../features/widget-system/widget-lod.js";
+import { drawControlGlyph, interactionStateForWidget, WIDGET_THEME } from "../../features/widget-system/widget-theme.js";
 import { loadPdfJs } from "./pdfjs-loader.js";
 import { PdfTileCache } from "./pdf-tile-cache.js";
 
@@ -23,14 +24,31 @@ function shortName(name) {
   return name.length > 20 ? `${name.slice(0, 17)}...` : name;
 }
 
-function drawFrame(ctx, camera, widget) {
+function drawFrame(ctx, camera, widget, { focused = false } = {}) {
   const screen = camera.worldToScreen(widget.position.x, widget.position.y);
   const width = widget.size.width * camera.zoom;
   const height = widget.size.height * camera.zoom;
   const headerHeight = HEADER_WORLD * camera.zoom;
 
-  fillStrokeRoundedRect(ctx, screen.x, screen.y, width, height, 18, "#ffffff", "#6f8faa", 1.3);
-  fillPill(ctx, screen.x + 10, screen.y + 8, Math.max(100, width - 20), Math.max(18, headerHeight - 16), "#eff4f8");
+  fillStrokeRoundedRect(
+    ctx,
+    screen.x,
+    screen.y,
+    width,
+    height,
+    18,
+    WIDGET_THEME.palette.frameFill,
+    focused ? WIDGET_THEME.palette.frameStroke : WIDGET_THEME.palette.frameStrokeSoft,
+    focused ? 1.35 : 1.05,
+  );
+  fillPill(
+    ctx,
+    screen.x + 10,
+    screen.y + 8,
+    Math.max(100, width - 20),
+    Math.max(18, headerHeight - 16),
+    focused ? WIDGET_THEME.palette.headerAccentSoft : "#ecf1f4",
+  );
 
   return {
     screen,
@@ -378,9 +396,9 @@ export class PdfDocumentWidget extends WidgetBase {
     const badgeX = Math.max(gutterLeft + 3, screen.x - badgeW - 4);
     const badgeY = screen.y + 8;
 
-    fillPill(ctx, badgeX, badgeY, badgeW, badgeH, "rgba(28, 48, 66, 0.78)");
-    ctx.fillStyle = "#f2f7fb";
-    ctx.font = `${Math.max(1, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    fillPill(ctx, badgeX, badgeY, badgeW, badgeH, WIDGET_THEME.palette.pageBadgeBg);
+    ctx.fillStyle = WIDGET_THEME.palette.pageBadgeFg;
+    ctx.font = `${Math.max(1, 11 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(`${pageNumber}`, badgeX + badgeW / 2, badgeY + badgeH / 2);
@@ -403,7 +421,7 @@ export class PdfDocumentWidget extends WidgetBase {
       const dividerY = screen.y;
       const dividerW = Math.max(20, screenW - 12);
       const dividerH = screenH;
-      fillPill(ctx, dividerX, dividerY, dividerW, dividerH, "rgba(220, 232, 242, 0.95)");
+      fillPill(ctx, dividerX, dividerY, dividerW, dividerH, WIDGET_THEME.palette.whitespaceDivider);
 
       const dividerWorld = camera.screenToWorld(dividerX, dividerY);
       this._whitespaceHitRegions.push({
@@ -423,15 +441,14 @@ export class PdfDocumentWidget extends WidgetBase {
     const chipX = Math.max(gutterLeft + 3, screen.x - chipW - 6);
     const chipY = screen.y + Math.max(2, Math.min(screenH - chipH - 2, (screenH - chipH) / 2));
 
-    fillPill(ctx, chipX, chipY, chipW, chipH, "#337eab");
+    fillPill(ctx, chipX, chipY, chipW, chipH, WIDGET_THEME.palette.whitespaceChip);
     if (showGlyph) {
-      ctx.fillStyle = "#f1f7fb";
-      ctx.font = `${Math.max(1, 14 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("-", chipX + chipW / 2, chipY + chipH / 2);
-      ctx.textAlign = "start";
-      ctx.textBaseline = "alphabetic";
+      drawControlGlyph(ctx, "minus", {
+        x: chipX,
+        y: chipY,
+        size: Math.min(chipW, chipH),
+        color: WIDGET_THEME.palette.controlFg,
+      });
     }
 
     const chipWorld = camera.screenToWorld(chipX, chipY);
@@ -529,21 +546,20 @@ export class PdfDocumentWidget extends WidgetBase {
   render(ctx, camera, renderContext) {
     this._computeDisplayLayout();
     this._whitespaceHitRegions = [];
-
-    const frame = drawFrame(ctx, camera, this);
+    const interaction = interactionStateForWidget(this, renderContext);
+    const frame = drawFrame(ctx, camera, this, { focused: interaction.focused });
     const lod = resolveWidgetLod({
       cameraZoom: camera.zoom,
-      screenWidth: frame.width,
-      screenHeight: frame.height,
+      viewMode: renderContext?.viewMode,
     });
-    const isLabelOnly = lod === "label-only";
-    const isCompact = lod === "compact";
+    const showTitle = interaction.focused;
+    const showPageChrome = lod === "detail" && interaction.revealActions;
 
     if (this.loading) {
-      ctx.fillStyle = "#1e3548";
-      ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillStyle = WIDGET_THEME.palette.title;
+      ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
       ctx.fillText(
-        isLabelOnly ? widgetTypeTitle(this.type) : "Loading document...",
+        showTitle ? "Loading document..." : widgetTypeTitle(this.type),
         frame.screen.x + 18,
         frame.screen.y + 20 * camera.zoom,
       );
@@ -552,9 +568,9 @@ export class PdfDocumentWidget extends WidgetBase {
 
     if (this.loadError) {
       ctx.fillStyle = "#9b2b2b";
-      ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
       ctx.fillText(
-        isLabelOnly ? widgetTypeTitle(this.type) : "Document unavailable",
+        showTitle ? "Document unavailable" : widgetTypeTitle(this.type),
         frame.screen.x + 18,
         frame.screen.y + 20 * camera.zoom,
       );
@@ -566,14 +582,14 @@ export class PdfDocumentWidget extends WidgetBase {
       return;
     }
 
-    const docLabel = isLabelOnly
-      ? widgetTypeTitle(this.type)
-      : isCompact
+    if (showTitle) {
+      const docLabel = lod === "compact"
         ? shortName(this.metadata.title)
         : `${shortName(this.metadata.title)} • ${this.pageCount} pages`;
-    ctx.fillStyle = "#1e3548";
-    ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(docLabel, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
+      ctx.fillStyle = WIDGET_THEME.palette.title;
+      ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
+      ctx.fillText(docLabel, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
+    }
 
     let firstVisiblePage = null;
     let lastVisiblePage = null;
@@ -611,7 +627,7 @@ export class PdfDocumentWidget extends WidgetBase {
         pageScreenH,
         10,
         "#ffffff",
-        "#d6e4f0",
+        WIDGET_THEME.palette.line,
         1,
       );
 
@@ -630,27 +646,27 @@ export class PdfDocumentWidget extends WidgetBase {
       });
 
       if (drawnTiles === 0) {
-        if (!isLabelOnly) {
+        if (showTitle) {
           const screen = camera.worldToScreen(pageBounds.x, pageBounds.y);
-          ctx.fillStyle = "#5c7084";
-          ctx.font = `${Math.max(1, 11 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+          ctx.fillStyle = WIDGET_THEME.palette.mutedText;
+          ctx.font = `${Math.max(1, 11 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
           ctx.fillText("...", screen.x + 12, screen.y + 18 * camera.zoom);
         }
       }
 
-      if (lod === "detail") {
+      if (showPageChrome) {
         const zones = this.whitespaceZones.filter((zone) => zone.pageNumber === pageEntry.pageNumber);
         for (const zone of zones) {
           this._drawWhitespaceZone(ctx, camera, zone, { showGlyph: true });
         }
       }
 
-      if (!isLabelOnly) {
+      if (showPageChrome) {
         this._drawPageBadge(ctx, camera, pageBounds, pageEntry.pageNumber);
       }
     }
 
-    if (!isLabelOnly && firstVisiblePage !== null && lastVisiblePage !== null) {
+    if (showPageChrome && firstVisiblePage !== null && lastVisiblePage !== null) {
       const visibleLabel =
         firstVisiblePage === lastVisiblePage
           ? `${firstVisiblePage}`
@@ -660,9 +676,9 @@ export class PdfDocumentWidget extends WidgetBase {
       const pillY = frame.screen.y + frame.headerHeight + 8;
       const pillW = Math.max(18, this._layoutMetrics.gutterWidth * camera.zoom - 4);
       const pillH = Math.max(16, 18 * camera.zoom);
-      fillPill(ctx, pillX, pillY, pillW, pillH, "rgba(31, 56, 75, 0.78)");
-      ctx.fillStyle = "#f2f7fb";
-      ctx.font = `${Math.max(1, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      fillPill(ctx, pillX, pillY, pillW, pillH, WIDGET_THEME.palette.pageBadgeBg);
+      ctx.fillStyle = WIDGET_THEME.palette.pageBadgeFg;
+      ctx.font = `${Math.max(1, 10 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(visibleLabel, pillX + pillW / 2, pillY + pillH / 2);
@@ -671,12 +687,12 @@ export class PdfDocumentWidget extends WidgetBase {
     }
   }
 
-  renderSnapshot(ctx, camera) {
+  renderSnapshot(ctx, camera, _renderContext) {
     this._computeDisplayLayout();
-    const frame = drawFrame(ctx, camera, this);
+    const frame = drawFrame(ctx, camera, this, { focused: true });
 
-    ctx.fillStyle = "#1e3548";
-    ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+    ctx.fillStyle = WIDGET_THEME.palette.title;
+    ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
     ctx.fillText(`${shortName(this.metadata.title)} • ${this.pageCount} pages`, frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
 
     const inset = 10;
@@ -685,7 +701,7 @@ export class PdfDocumentWidget extends WidgetBase {
     const thumbW = frame.width - inset * 2;
     const thumbH = Math.max(40, frame.height - frame.headerHeight - inset * 2);
 
-    fillStrokeRoundedRect(ctx, thumbX, thumbY, thumbW, thumbH, 12, "#f4f8fb", "#d9e6f2", 1);
+    fillStrokeRoundedRect(ctx, thumbX, thumbY, thumbW, thumbH, 12, "#f4f8fb", WIDGET_THEME.palette.line, 1);
 
     if (this.thumbnailCanvas) {
       ctx.drawImage(this.thumbnailCanvas, thumbX, thumbY, thumbW, thumbH);

@@ -1,12 +1,13 @@
 import { createAssetManager } from "../storage/asset-manager.js";
 import { readMigratedEnvelope, writeEnvelope } from "../storage/schema-migrations.js";
 import { STORAGE_SCHEMA_REGISTRY } from "../storage/schema-registry.js";
+import { SUPPORTED_WIDGET_TYPES as SUPPORTED_WIDGET_TYPES_LIST } from "../widget-system/widget-types.js";
 
 const { workspace: WORKSPACE_SCHEMA } = STORAGE_SCHEMA_REGISTRY;
 const STORAGE_PREFIX = WORKSPACE_SCHEMA.keyPrefix;
 const LEGACY_GRAPH_KEY = "notes-app.graph.widgets.v1";
 const WORKSPACE_SCHEMA_VERSION = WORKSPACE_SCHEMA.schemaVersion;
-const SUPPORTED_WIDGET_TYPES = new Set(["expanded-area", "reference-popup", "pdf-document"]);
+const SUPPORTED_WIDGET_TYPES = new Set(SUPPORTED_WIDGET_TYPES_LIST);
 
 const WORKSPACE_MIGRATIONS = {
   2: (candidate) => candidate,

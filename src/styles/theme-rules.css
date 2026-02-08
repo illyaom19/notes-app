@@ -1,0 +1,29 @@
+:root {
+  --theme-font-sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --theme-font-serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+
+  --theme-bg-canvas: #eef2f5;
+  --theme-bg-surface: #f9fbfd;
+  --theme-bg-panel: #ffffff;
+  --theme-bg-soft: #f1f5f8;
+
+  --theme-line: #c7d2dc;
+  --theme-line-strong: #9baab7;
+  --theme-text: #17232d;
+  --theme-text-muted: #4f616f;
+
+  --theme-action: #1f7f8a;
+  --theme-action-soft: #dceef0;
+  --theme-action-strong: #16656f;
+
+  --theme-danger: #8d3f55;
+  --theme-success: #1f7a44;
+
+  --theme-radius-pill: 999px;
+  --theme-radius-card: 14px;
+  --theme-shadow-soft: 0 10px 24px rgba(15, 23, 32, 0.14);
+  --theme-shadow-strong: 0 18px 36px rgba(15, 23, 32, 0.2);
+
+  --theme-lod-detail-min: 1;
+  --theme-lod-peek-max: 0.5;
+}

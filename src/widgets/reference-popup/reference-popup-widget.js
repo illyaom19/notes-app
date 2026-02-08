@@ -1,6 +1,7 @@
 import { fillPill, fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 import { resolveWidgetLod, widgetTypeTitle } from "../../features/widget-system/widget-lod.js";
+import { drawControlGlyph, interactionStateForWidget, WIDGET_THEME } from "../../features/widget-system/widget-theme.js";
 
 const HEADER_HEIGHT = 34;
 const MIN_BODY_HEIGHT = 90;
@@ -9,19 +10,6 @@ const SOURCE_BUTTON_SIZE = { width: 100, height: 24 };
 const CONTROL_SIZE_WORLD = 22;
 const CONTROL_PAD_WORLD = 8;
 const CONTROL_GAP_WORLD = 6;
-
-function formatPopupTypeLabel(type) {
-  if (type === "definition-citation") {
-    return "Definition";
-  }
-  if (type === "research-citation") {
-    return "Research";
-  }
-  if (type === "reference-popup") {
-    return "Reference";
-  }
-  return type;
-}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -230,6 +218,8 @@ export class ReferencePopupWidget extends WidgetBase {
     if (this.citation?.sourceTitle) {
       this.sourceLabel = this.citation.sourceTitle;
     }
+
+    this._revealActions = false;
   }
 
   get displayHeight() {
@@ -299,24 +289,26 @@ export class ReferencePopupWidget extends WidgetBase {
   }
 
   getControlAt(worldX, worldY) {
-    const controls = [
-      ["minimize", this._minimizeButtonRect()],
-      ["close", this._closeButtonRect()],
-      ["resize", this._resizeHandleRect()],
-    ];
+    if (this._revealActions) {
+      const controls = [
+        ["minimize", this._minimizeButtonRect()],
+        ["close", this._closeButtonRect()],
+        ["resize", this._resizeHandleRect()],
+      ];
 
-    for (const [key, rect] of controls) {
-      if (
-        worldX >= rect.x &&
-        worldX <= rect.x + rect.width &&
-        worldY >= rect.y &&
-        worldY <= rect.y + rect.height
-      ) {
-        return key;
+      for (const [key, rect] of controls) {
+        if (
+          worldX >= rect.x &&
+          worldX <= rect.x + rect.width &&
+          worldY >= rect.y &&
+          worldY <= rect.y + rect.height
+        ) {
+          return key;
+        }
       }
     }
 
-    if (!this.metadata.minimized && this.hasSourceAction()) {
+    if (!this.metadata.minimized && this._revealActions && this.hasSourceAction()) {
       const sourceRect = this._sourceButtonRect();
       if (
         worldX >= sourceRect.x &&
@@ -362,118 +354,73 @@ export class ReferencePopupWidget extends WidgetBase {
     this.size.height = clamp(this.size.height + deltaHeight, MIN_SIZE.height, 640);
   }
 
-  render(ctx, camera) {
+  render(ctx, camera, renderContext) {
     const screen = camera.worldToScreen(this.position.x, this.position.y);
     const width = this.size.width * camera.zoom;
     const height = this.displayHeight * camera.zoom;
     const headerHeight = HEADER_HEIGHT * camera.zoom;
     const lod = resolveWidgetLod({
       cameraZoom: camera.zoom,
-      screenWidth: width,
-      screenHeight: height,
+      viewMode: renderContext?.viewMode,
     });
-    const showDetail = lod === "detail";
+    const interaction = interactionStateForWidget(this, renderContext);
+    this._revealActions = interaction.revealActions && lod === "detail";
+
     const popupMetadata = normalizePopupMetadata(this.metadata.popupMetadata, this.metadata.title);
     this.metadata.popupMetadata = popupMetadata;
     this.metadata.title = popupMetadata.title;
 
-    fillStrokeRoundedRect(ctx, screen.x, screen.y, width, height, 16, "#ffffff", "#7b9ab2", 1.4);
+    fillStrokeRoundedRect(
+      ctx,
+      screen.x,
+      screen.y,
+      width,
+      height,
+      16,
+      WIDGET_THEME.palette.frameFill,
+      interaction.focused ? WIDGET_THEME.palette.frameStroke : WIDGET_THEME.palette.frameStrokeSoft,
+      interaction.focused ? 1.35 : 1.05,
+    );
 
-    if (lod === "label-only") {
-      const chipW = Math.max(52, Math.min(92, width - 20));
-      const chipX = screen.x + (width - chipW) / 2;
-      const chipY = screen.y + Math.max(8, (height - 22) / 2);
-      fillPill(ctx, chipX, chipY, chipW, 22, "#e7f2fb");
-      ctx.fillStyle = "#1b4d71";
-      ctx.font = "11px IBM Plex Sans, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(widgetTypeTitle(this.type), chipX + chipW / 2, chipY + 11);
-      ctx.textAlign = "start";
-      ctx.textBaseline = "alphabetic";
+    fillPill(
+      ctx,
+      screen.x + 8,
+      screen.y + 6,
+      Math.max(12, width - 16),
+      Math.max(6, Math.min(14, headerHeight * 0.28)),
+      interaction.focused ? WIDGET_THEME.palette.headerAccent : WIDGET_THEME.palette.headerAccentSoft,
+    );
 
-      const minimizeRect = this._minimizeButtonRect();
-      const closeRect = this._closeButtonRect();
-      const minimizeScreen = camera.worldToScreen(minimizeRect.x, minimizeRect.y);
-      const closeScreen = camera.worldToScreen(closeRect.x, closeRect.y);
-      const iconSize = CONTROL_SIZE_WORLD * camera.zoom;
-
-      fillPill(ctx, minimizeScreen.x, minimizeScreen.y, iconSize, iconSize, "#dce7f1");
-      fillPill(ctx, closeScreen.x, closeScreen.y, iconSize, iconSize, "#dce7f1");
-      ctx.fillStyle = "#284760";
-      ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("-", minimizeScreen.x + 8 * camera.zoom, minimizeScreen.y + 16 * camera.zoom);
-      ctx.fillText("x", closeScreen.x + 6 * camera.zoom, closeScreen.y + 16 * camera.zoom);
-
-      const resizeRect = this._resizeHandleRect();
-      const resizeScreen = camera.worldToScreen(resizeRect.x, resizeRect.y);
-      const handleSize = CONTROL_SIZE_WORLD * camera.zoom;
-      fillPill(ctx, resizeScreen.x, resizeScreen.y, handleSize, handleSize, "#7e9db7");
-      ctx.fillStyle = "#f2f8fc";
-      ctx.fillText("[]", resizeScreen.x + 5 * camera.zoom, resizeScreen.y + 16 * camera.zoom);
-      return;
+    if (interaction.focused) {
+      ctx.fillStyle = WIDGET_THEME.palette.title;
+      ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
+      ctx.fillText(this.metadata.title, screen.x + 14, screen.y + 26);
     }
-
-    fillPill(ctx, screen.x + 10, screen.y + 6, Math.max(90, width - 88), Math.max(12, 20 * camera.zoom), "#edf4fb");
-
-    const formattedType = formatPopupTypeLabel(popupMetadata.type);
-    const typeLabel = showDetail
-      ? formattedType.length > 18
-        ? `${formattedType.slice(0, 15)}...`
-        : formattedType
-      : widgetTypeTitle(this.type);
-    const typeChipWidth = Math.max(54, Math.min(122, (typeLabel.length + 3) * 6.5 * camera.zoom));
-    fillPill(ctx, screen.x + 16, screen.y + 10 * camera.zoom, typeChipWidth, Math.max(8, 12 * camera.zoom), "#d8e9f6");
-
-    ctx.fillStyle = "#245473";
-    ctx.font = `${Math.max(1, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText(typeLabel, screen.x + 21, screen.y + 19 * camera.zoom);
-
-    ctx.fillStyle = "#17354d";
-    ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    const titleText = showDetail ? this.metadata.title : widgetTypeTitle(this.type);
-    ctx.fillText(titleText, screen.x + 16 + typeChipWidth + 8 * camera.zoom, screen.y + 20 * camera.zoom);
-
-    if (showDetail && popupMetadata.tags.length > 0) {
-      const firstTag = popupMetadata.tags[0];
-      const tagLabel = `#${firstTag}`;
-      const tagX = screen.x + width - 162 * camera.zoom;
-      fillPill(ctx, tagX, screen.y + 10 * camera.zoom, 56 * camera.zoom, 12 * camera.zoom, "#e6f0f8");
-      ctx.fillStyle = "#43637b";
-      ctx.font = `${Math.max(1, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText(tagLabel, tagX + 6 * camera.zoom, screen.y + 19 * camera.zoom);
-    }
-
-    const minimizeRect = this._minimizeButtonRect();
-    const closeRect = this._closeButtonRect();
-    const minimizeScreen = camera.worldToScreen(minimizeRect.x, minimizeRect.y);
-    const closeScreen = camera.worldToScreen(closeRect.x, closeRect.y);
-    const iconSize = CONTROL_SIZE_WORLD * camera.zoom;
-
-    fillPill(ctx, minimizeScreen.x, minimizeScreen.y, iconSize, iconSize, "#dce7f1");
-    fillPill(ctx, closeScreen.x, closeScreen.y, iconSize, iconSize, "#dce7f1");
-
-    ctx.fillStyle = "#284760";
-    ctx.font = `${Math.max(1, 12 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText("-", minimizeScreen.x + 8 * camera.zoom, minimizeScreen.y + 16 * camera.zoom);
-    ctx.fillText("x", closeScreen.x + 6 * camera.zoom, closeScreen.y + 16 * camera.zoom);
 
     if (this.metadata.minimized) {
       return;
     }
 
-    const bodyY = screen.y + headerHeight;
-    const bodyH = Math.max(MIN_BODY_HEIGHT * camera.zoom, height - headerHeight);
+    const bodyTop = interaction.focused ? screen.y + headerHeight : screen.y + 14;
     const panelX = screen.x + 8;
-    const panelY = bodyY + 8;
+    const panelY = bodyTop + 8;
     const panelW = width - 16;
-    const panelH = bodyH - 16;
-
-    fillStrokeRoundedRect(ctx, panelX, panelY, panelW, panelH, 12, "#f4f8fb", "#dbe7f2", 1);
+    const panelH = Math.max(18, height - (panelY - screen.y) - 8);
+    fillStrokeRoundedRect(
+      ctx,
+      panelX,
+      panelY,
+      panelW,
+      panelH,
+      12,
+      "#ffffff",
+      WIDGET_THEME.palette.line,
+      1,
+    );
 
     const sourceRect = this._sourceButtonRect();
     const sourceScreen = camera.worldToScreen(sourceRect.x, sourceRect.y);
-    const sourceButtonVisible = showDetail && this.hasSourceAction();
+    const sourceButtonVisible = this._revealActions && this.hasSourceAction();
     if (sourceButtonVisible) {
       fillPill(
         ctx,
@@ -481,33 +428,30 @@ export class ReferencePopupWidget extends WidgetBase {
         sourceScreen.y,
         sourceRect.width * camera.zoom,
         sourceRect.height * camera.zoom,
-        "#dbe9f5",
+        WIDGET_THEME.palette.controlBgSoft,
       );
-      ctx.fillStyle = "#2d536f";
-      ctx.font = `${Math.max(1, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      ctx.fillText("View Source", sourceScreen.x + 8 * camera.zoom, sourceScreen.y + 12 * camera.zoom);
+      ctx.fillStyle = WIDGET_THEME.palette.controlFg;
+      ctx.font = `${Math.max(1, 9 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
+      ctx.fillText("Source", sourceScreen.x + 10 * camera.zoom, sourceScreen.y + 12 * camera.zoom);
     }
 
     const topInset = sourceButtonVisible ? 34 : 12;
-    const citationVisible = showDetail && Boolean(this.citation);
+    const citationVisible = lod === "detail" && Boolean(this.citation);
     const citationHeight = citationVisible ? Math.max(56 * camera.zoom, panelH * 0.3) : 0;
     const contentX = panelX + 8;
     const contentY = panelY + topInset;
     const contentW = panelW - 16;
-    const contentH = Math.max(
-      26 * camera.zoom,
-      panelH - topInset - (citationVisible ? citationHeight + 10 : 10),
-    );
+    const contentH = Math.max(26 * camera.zoom, panelH - topInset - (citationVisible ? citationHeight + 10 : 10));
 
-    fillStrokeRoundedRect(ctx, contentX, contentY, contentW, contentH, 10, "#ffffff", "#d7e6f2", 1);
+    fillStrokeRoundedRect(ctx, contentX, contentY, contentW, contentH, 10, "#ffffff", WIDGET_THEME.palette.line, 1);
 
     if (this.contentType === "image" && this._image) {
       ctx.drawImage(this._image, contentX + 4, contentY + 4, Math.max(10, contentW - 8), Math.max(10, contentH - 8));
     } else {
-      ctx.fillStyle = "#50697f";
-      ctx.font = `${Math.max(1, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-      const text = this.textContent.trim() || (showDetail ? "No reference content" : widgetTypeTitle(this.type));
-      const lineHeight = Math.max(1, 14 * camera.zoom);
+      ctx.fillStyle = WIDGET_THEME.palette.bodyText;
+      ctx.font = `${Math.max(1, 11 * camera.zoom)}px ${WIDGET_THEME.typography.contentFamily}`;
+      const text = this.textContent.trim() || widgetTypeTitle(this.type);
+      const lineHeight = Math.max(1, 15 * camera.zoom);
       drawWrappedText(
         ctx,
         text,
@@ -515,7 +459,7 @@ export class ReferencePopupWidget extends WidgetBase {
         contentY + 18 * camera.zoom,
         Math.max(10, contentW - 16),
         lineHeight,
-        showDetail ? Math.max(2, Math.floor(contentH / lineHeight)) : 2,
+        lod === "detail" ? Math.max(2, Math.floor(contentH / lineHeight)) : 2,
       );
     }
 
@@ -524,10 +468,10 @@ export class ReferencePopupWidget extends WidgetBase {
       const cardY = panelY + panelH - citationHeight - 8;
       const cardW = panelW - 16;
       const cardH = citationHeight;
-      fillStrokeRoundedRect(ctx, cardX, cardY, cardW, cardH, 10, "#eaf3fa", "#d1e2ef", 1);
+      fillStrokeRoundedRect(ctx, cardX, cardY, cardW, cardH, 10, "#eef4f8", WIDGET_THEME.palette.line, 1);
 
-      ctx.fillStyle = "#21445d";
-      ctx.font = `${Math.max(1, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillStyle = WIDGET_THEME.palette.title;
+      ctx.font = `${Math.max(1, 10 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
       const sourceTitle = ellipsis(this.citation.sourceTitle, 72);
       ctx.fillText(sourceTitle, cardX + 8, cardY + 14 * camera.zoom);
 
@@ -540,8 +484,8 @@ export class ReferencePopupWidget extends WidgetBase {
       }
       details.push(this.citation.attributionText);
 
-      ctx.fillStyle = "#43637b";
-      ctx.font = `${Math.max(1, 9 * camera.zoom)}px IBM Plex Sans, sans-serif`;
+      ctx.fillStyle = WIDGET_THEME.palette.mutedText;
+      ctx.font = `${Math.max(1, 9 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
       drawWrappedText(
         ctx,
         details.join(" • "),
@@ -553,25 +497,62 @@ export class ReferencePopupWidget extends WidgetBase {
       );
 
       if (this.citation.url) {
-        ctx.fillStyle = "#345e7d";
+        ctx.fillStyle = WIDGET_THEME.palette.mutedText;
         const urlLabel = ellipsis(this.citation.url, 74);
         ctx.fillText(urlLabel, cardX + 8, cardY + cardH - 10 * camera.zoom);
       }
     }
 
+    if (!this._revealActions) {
+      return;
+    }
+
+    const minimizeRect = this._minimizeButtonRect();
+    const closeRect = this._closeButtonRect();
     const resizeRect = this._resizeHandleRect();
+    const minimizeScreen = camera.worldToScreen(minimizeRect.x, minimizeRect.y);
+    const closeScreen = camera.worldToScreen(closeRect.x, closeRect.y);
     const resizeScreen = camera.worldToScreen(resizeRect.x, resizeRect.y);
+    const iconSize = CONTROL_SIZE_WORLD * camera.zoom;
     const handleSize = 18 * camera.zoom;
-    fillPill(ctx, resizeScreen.x, resizeScreen.y, handleSize, handleSize, "#7e9db7");
-    ctx.fillStyle = "#f2f8fc";
-    ctx.font = `${Math.max(1, 10 * camera.zoom)}px IBM Plex Sans, sans-serif`;
-    ctx.fillText("[]", resizeScreen.x + 3 * camera.zoom, resizeScreen.y + 12 * camera.zoom);
+
+    fillPill(ctx, minimizeScreen.x, minimizeScreen.y, iconSize, iconSize, WIDGET_THEME.palette.controlBg);
+    drawControlGlyph(ctx, "minus", {
+      x: minimizeScreen.x,
+      y: minimizeScreen.y,
+      size: iconSize,
+      color: WIDGET_THEME.palette.controlFg,
+    });
+
+    fillPill(ctx, closeScreen.x, closeScreen.y, iconSize, iconSize, WIDGET_THEME.palette.controlBg);
+    drawControlGlyph(ctx, "close", {
+      x: closeScreen.x,
+      y: closeScreen.y,
+      size: iconSize,
+      color: WIDGET_THEME.palette.controlFg,
+    });
+
+    fillPill(ctx, resizeScreen.x, resizeScreen.y, handleSize, handleSize, WIDGET_THEME.palette.controlBgSoft);
+    drawControlGlyph(ctx, "resize", {
+      x: resizeScreen.x,
+      y: resizeScreen.y,
+      size: handleSize,
+      color: WIDGET_THEME.palette.controlFg,
+    });
   }
 
-  renderSnapshot(ctx, camera) {
+  renderSnapshot(ctx, camera, renderContext) {
     const wasMinimized = this.metadata.minimized;
     this.metadata.minimized = true;
-    this.render(ctx, camera);
+    this.render(ctx, camera, {
+      ...renderContext,
+      interaction: {
+        selectedWidgetId: this.id,
+        focusedWidgetId: this.id,
+        hoverWidgetId: this.id,
+        isTouchPrimary: false,
+      },
+    });
     this.metadata.minimized = wasMinimized;
   }
 }

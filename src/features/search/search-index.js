@@ -98,11 +98,6 @@ function referencePopupSnippet(widget) {
   return safeString(widget.sourceLabel);
 }
 
-function graphSnippet(widget) {
-  const equation = safeString(widget.state?.equation);
-  return equation || "Graph";
-}
-
 function widgetTitle(widget, typeLabel) {
   const metadataTitle = safeString(widget.metadata?.title);
   if (metadataTitle) {
@@ -149,11 +144,6 @@ function extractFields(widget) {
   if (widget.type === "expanded-area") {
     pushUnique(indexedValues, widget.metadata?.note);
     pushUnique(snippets, widget.metadata?.note);
-  }
-
-  if (widget.type === "graph-widget") {
-    pushUnique(indexedValues, widget.state?.equation);
-    pushUnique(snippets, graphSnippet(widget));
   }
 
   if (widget.type === "pdf-document") {
