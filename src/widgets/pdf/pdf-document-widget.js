@@ -30,6 +30,18 @@ function shortName(name) {
   return name.length > 20 ? `${name.slice(0, 17)}...` : name;
 }
 
+function preferredPdfLabel(widget) {
+  const title =
+    typeof widget?.metadata?.title === "string" && widget.metadata.title.trim()
+      ? widget.metadata.title.trim()
+      : "";
+  const fileName =
+    typeof widget?.fileName === "string" && widget.fileName.trim()
+      ? widget.fileName.trim()
+      : "";
+  return title || fileName || "document.pdf";
+}
+
 export class PdfDocumentWidget extends WidgetBase {
   constructor(definition) {
     super({
@@ -68,7 +80,7 @@ export class PdfDocumentWidget extends WidgetBase {
   async initialize() {
     if (!(this.pdfBytes instanceof Uint8Array) || this.pdfBytes.length === 0) {
       this.loading = false;
-      this.loadError = "Invalid PDF";
+      this.loadError = `PDF data missing. Reimport "${preferredPdfLabel(this)}".`;
       return;
     }
 
@@ -83,7 +95,11 @@ export class PdfDocumentWidget extends WidgetBase {
       this.loading = false;
     } catch (error) {
       this.loading = false;
-      this.loadError = error?.message ?? "PDF load failed";
+      const reason =
+        typeof error?.message === "string" && error.message.trim()
+          ? error.message.trim()
+          : "PDF render failed";
+      this.loadError = `${reason}. Reimport "${preferredPdfLabel(this)}".`;
     }
   }
 
@@ -593,9 +609,31 @@ export class PdfDocumentWidget extends WidgetBase {
     }
 
     if (this.loadError) {
+      const inset = 12;
+      const bodyX = frame.screen.x + inset;
+      const bodyY = frame.screen.y + frame.headerHeight + inset;
+      const bodyW = Math.max(40, frame.width - inset * 2);
+      const bodyH = Math.max(52, frame.height - frame.headerHeight - inset * 2);
+      fillStrokeRoundedRect(
+        ctx,
+        bodyX,
+        bodyY,
+        bodyW,
+        bodyH,
+        12,
+        "#f7fbfe",
+        WIDGET_THEME.palette.line,
+        1,
+      );
+
+      const lineY = bodyY + Math.max(14, 18 * camera.zoom);
       ctx.fillStyle = "#9b2b2b";
-      ctx.font = `${Math.max(1, 12 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      ctx.fillText("Document unavailable", frame.screen.x + 18, frame.screen.y + 20 * camera.zoom);
+      ctx.font = `${Math.max(1, 11 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
+      ctx.fillText("PDF unavailable in this section state.", bodyX + 10, lineY);
+
+      ctx.fillStyle = WIDGET_THEME.palette.bodyText;
+      ctx.font = `${Math.max(1, 10 * camera.zoom)}px ${WIDGET_THEME.typography.contentFamily}`;
+      ctx.fillText(`Please reimport "${preferredPdfLabel(this)}".`, bodyX + 10, lineY + Math.max(14, 16 * camera.zoom));
       return;
     }
 
