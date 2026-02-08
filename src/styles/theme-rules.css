@@ -6,6 +6,9 @@
   --theme-bg-surface: #f9fbfd;
   --theme-bg-panel: #ffffff;
   --theme-bg-soft: #f1f5f8;
+  --theme-bg-canvas-start: #ffffff;
+  --theme-bg-canvas-mid: #edf2f6;
+  --theme-bg-canvas-end: #e3e9ef;
 
   --theme-line: #c7d2dc;
   --theme-line-strong: #9baab7;
@@ -21,8 +24,11 @@
 
   --theme-radius-pill: 999px;
   --theme-radius-card: 14px;
+  --theme-radius-card-lg: 16px;
   --theme-shadow-soft: 0 10px 24px rgba(15, 23, 32, 0.14);
   --theme-shadow-strong: 0 18px 36px rgba(15, 23, 32, 0.2);
+  --theme-shadow-float: 0 14px 30px rgba(15, 23, 32, 0.16);
+  --theme-shadow-modal: 0 24px 42px rgba(10, 21, 32, 0.3);
 
   --theme-lod-detail-min: 1;
   --theme-lod-peek-max: 0.5;
