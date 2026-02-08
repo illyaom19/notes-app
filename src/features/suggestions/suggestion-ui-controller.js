@@ -4,7 +4,7 @@ function clamp(value, min, max) {
 
 const RAIL_TOP_MIN = 8;
 const RAIL_BOTTOM_RESERVED = 40;
-const RAIL_STACK_GAP = 34;
+const RAIL_STACK_GAP = 42;
 
 function compactLabel(suggestion) {
   const base = typeof suggestion?.label === "string" ? suggestion.label.trim() : "";
@@ -39,41 +39,55 @@ function desiredScreenTop(runtime, widget, suggestion, fallbackIndex) {
 }
 
 function buildActiveChip(suggestion) {
-  const row = document.createElement("div");
-  row.className = "suggestion-chip suggestion-chip--active";
+  const row = document.createElement("article");
+  row.className = "suggestion-card suggestion-card--active";
 
   const focusButton = document.createElement("button");
   focusButton.type = "button";
-  focusButton.className = "suggestion-chip-label";
+  focusButton.className = "suggestion-card-label";
   focusButton.dataset.action = "focus";
   focusButton.dataset.suggestionId = suggestion.id;
   focusButton.textContent = compactLabel(suggestion);
 
+  const actions = document.createElement("div");
+  actions.className = "suggestion-card-actions";
+
   const acceptButton = document.createElement("button");
   acceptButton.type = "button";
-  acceptButton.className = "suggestion-chip-action suggestion-chip-action--accept";
+  acceptButton.className = "suggestion-card-action suggestion-card-action--accept";
   acceptButton.dataset.action = "accept";
   acceptButton.dataset.suggestionId = suggestion.id;
   acceptButton.textContent = "✓";
 
   const ghostButton = document.createElement("button");
   ghostButton.type = "button";
-  ghostButton.className = "suggestion-chip-action suggestion-chip-action--ghost";
+  ghostButton.className = "suggestion-card-action suggestion-card-action--ghost";
   ghostButton.dataset.action = "ghost";
   ghostButton.dataset.suggestionId = suggestion.id;
   ghostButton.textContent = "✕";
 
-  row.append(focusButton, acceptButton, ghostButton);
+  actions.append(acceptButton, ghostButton);
+  row.append(focusButton, actions);
   return row;
 }
 
 function buildGhostChip(suggestion) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "suggestion-chip suggestion-chip--ghost";
+  button.className = "suggestion-card suggestion-card--ghost";
   button.dataset.action = "restore";
   button.dataset.suggestionId = suggestion.id;
-  button.textContent = `○ ${compactLabel(suggestion)}`;
+
+  const dot = document.createElement("span");
+  dot.className = "suggestion-card-ghost-dot";
+  dot.setAttribute("aria-hidden", "true");
+  dot.textContent = "•";
+
+  const label = document.createElement("span");
+  label.className = "suggestion-card-ghost-label";
+  label.textContent = compactLabel(suggestion);
+
+  button.append(dot, label);
   return button;
 }
 

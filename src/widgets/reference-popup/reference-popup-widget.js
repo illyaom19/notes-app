@@ -4,12 +4,24 @@ import { resolveWidgetLod, widgetTypeTitle } from "../../features/widget-system/
 import { drawControlGlyph, interactionStateForWidget, WIDGET_THEME } from "../../features/widget-system/widget-theme.js";
 
 const HEADER_HEIGHT = 34;
-const MIN_BODY_HEIGHT = 90;
 const MIN_SIZE = { width: 180, height: 120 };
-const SOURCE_BUTTON_SIZE = { width: 100, height: 24 };
+const SOURCE_BUTTON_SIZE = { width: 82, height: 22 };
 const CONTROL_SIZE_WORLD = 22;
 const CONTROL_PAD_WORLD = 8;
 const CONTROL_GAP_WORLD = 6;
+const PANEL_INSET_WORLD = 8;
+const BODY_INSET_WORLD = 10;
+
+function normalizeTagLabel(tag) {
+  if (typeof tag !== "string") {
+    return "";
+  }
+  const trimmed = tag.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -168,6 +180,40 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
   return rendered;
 }
 
+function buildInfoRows({ popupMetadata, citation }) {
+  const rows = [];
+  if (citation?.sourceTitle) {
+    rows.push(`Source: ${citation.sourceTitle}`);
+  }
+
+  const details = [];
+  if (citation?.author) {
+    details.push(citation.author);
+  }
+  if (citation?.publisher) {
+    details.push(citation.publisher);
+  }
+  if (citation?.attributionText) {
+    details.push(citation.attributionText);
+  }
+  if (details.length > 0) {
+    rows.push(details.join(" • "));
+  }
+
+  const tags = Array.isArray(popupMetadata?.tags)
+    ? popupMetadata.tags.map((entry) => normalizeTagLabel(entry)).filter(Boolean)
+    : [];
+  if (tags.length > 0) {
+    rows.push(`Tags: ${tags.join(" ")}`);
+  }
+
+  if (citation?.url) {
+    rows.push(ellipsis(citation.url, 90));
+  }
+
+  return rows;
+}
+
 export class ReferencePopupWidget extends WidgetBase {
   constructor(definition) {
     const title = definition.metadata?.title ?? "Reference";
@@ -269,8 +315,8 @@ export class ReferencePopupWidget extends WidgetBase {
 
   _sourceButtonRect() {
     return {
-      x: this.position.x + this.size.width - SOURCE_BUTTON_SIZE.width - 12,
-      y: this.position.y + HEADER_HEIGHT + 10,
+      x: this.position.x + this.size.width - SOURCE_BUTTON_SIZE.width - (PANEL_INSET_WORLD + BODY_INSET_WORLD),
+      y: this.position.y + HEADER_HEIGHT + PANEL_INSET_WORLD + BODY_INSET_WORLD,
       width: SOURCE_BUTTON_SIZE.width,
       height: SOURCE_BUTTON_SIZE.height,
     };
@@ -401,11 +447,11 @@ export class ReferencePopupWidget extends WidgetBase {
       return;
     }
 
-    const bodyTop = interaction.focused ? screen.y + headerHeight : screen.y + 14;
-    const panelX = screen.x + 8;
-    const panelY = bodyTop + 8;
-    const panelW = width - 16;
-    const panelH = Math.max(18, height - (panelY - screen.y) - 8);
+    const bodyTop = interaction.focused ? screen.y + headerHeight : screen.y + 12;
+    const panelX = screen.x + PANEL_INSET_WORLD;
+    const panelY = bodyTop + PANEL_INSET_WORLD;
+    const panelW = width - PANEL_INSET_WORLD * 2;
+    const panelH = Math.max(18, height - (panelY - screen.y) - PANEL_INSET_WORLD);
     fillStrokeRoundedRect(
       ctx,
       panelX,
@@ -413,7 +459,7 @@ export class ReferencePopupWidget extends WidgetBase {
       panelW,
       panelH,
       12,
-      "#ffffff",
+      WIDGET_THEME.palette.frameFill,
       WIDGET_THEME.palette.line,
       1,
     );
@@ -428,22 +474,35 @@ export class ReferencePopupWidget extends WidgetBase {
         sourceScreen.y,
         sourceRect.width * camera.zoom,
         sourceRect.height * camera.zoom,
-        WIDGET_THEME.palette.controlBgSoft,
+        WIDGET_THEME.palette.headerAccentSoft,
       );
-      ctx.fillStyle = WIDGET_THEME.palette.controlFg;
-      ctx.font = `${Math.max(1, 9 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      ctx.fillText("Source", sourceScreen.x + 10 * camera.zoom, sourceScreen.y + 12 * camera.zoom);
+      ctx.fillStyle = WIDGET_THEME.palette.headerAccent;
+      ctx.font = `${Math.max(1, 8.5 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
+      ctx.fillText("Source", sourceScreen.x + 8 * camera.zoom, sourceScreen.y + 13 * camera.zoom);
     }
 
-    const topInset = sourceButtonVisible ? 34 : 12;
-    const citationVisible = lod === "detail" && Boolean(this.citation);
-    const citationHeight = citationVisible ? Math.max(56 * camera.zoom, panelH * 0.3) : 0;
-    const contentX = panelX + 8;
+    const topInset = BODY_INSET_WORLD + (sourceButtonVisible ? SOURCE_BUTTON_SIZE.height * camera.zoom + 7 : 0);
+    const showInfoSection = lod === "detail" && panelH >= 112 * camera.zoom;
+    const contentX = panelX + BODY_INSET_WORLD;
     const contentY = panelY + topInset;
-    const contentW = panelW - 16;
-    const contentH = Math.max(26 * camera.zoom, panelH - topInset - (citationVisible ? citationHeight + 10 : 10));
+    const contentW = panelW - BODY_INSET_WORLD * 2;
+    const infoHeight = showInfoSection ? Math.max(54 * camera.zoom, Math.min(96 * camera.zoom, panelH * 0.36)) : 0;
+    const contentH = Math.max(
+      30 * camera.zoom,
+      panelH - topInset - BODY_INSET_WORLD - (showInfoSection ? infoHeight + 8 : 0),
+    );
 
-    fillStrokeRoundedRect(ctx, contentX, contentY, contentW, contentH, 10, "#ffffff", WIDGET_THEME.palette.line, 1);
+    fillStrokeRoundedRect(
+      ctx,
+      contentX,
+      contentY,
+      contentW,
+      contentH,
+      10,
+      WIDGET_THEME.palette.frameFill,
+      WIDGET_THEME.palette.line,
+      1,
+    );
 
     if (this.contentType === "image" && this._image) {
       ctx.drawImage(this._image, contentX + 4, contentY + 4, Math.max(10, contentW - 8), Math.max(10, contentH - 8));
@@ -459,48 +518,43 @@ export class ReferencePopupWidget extends WidgetBase {
         contentY + 18 * camera.zoom,
         Math.max(10, contentW - 16),
         lineHeight,
-        lod === "detail" ? Math.max(2, Math.floor(contentH / lineHeight)) : 2,
+        lod === "detail" ? Math.max(2, Math.floor((contentH - 10 * camera.zoom) / lineHeight)) : 2,
       );
     }
 
-    if (citationVisible) {
-      const cardX = panelX + 8;
-      const cardY = panelY + panelH - citationHeight - 8;
-      const cardW = panelW - 16;
-      const cardH = citationHeight;
-      fillStrokeRoundedRect(ctx, cardX, cardY, cardW, cardH, 10, "#eef4f8", WIDGET_THEME.palette.line, 1);
-
-      ctx.fillStyle = WIDGET_THEME.palette.title;
-      ctx.font = `${Math.max(1, 10 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      const sourceTitle = ellipsis(this.citation.sourceTitle, 72);
-      ctx.fillText(sourceTitle, cardX + 8, cardY + 14 * camera.zoom);
-
-      const details = [];
-      if (this.citation.author) {
-        details.push(this.citation.author);
-      }
-      if (this.citation.publisher) {
-        details.push(this.citation.publisher);
-      }
-      details.push(this.citation.attributionText);
-
-      ctx.fillStyle = WIDGET_THEME.palette.mutedText;
-      ctx.font = `${Math.max(1, 9 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
-      drawWrappedText(
+    if (showInfoSection) {
+      const infoX = panelX + BODY_INSET_WORLD;
+      const infoY = panelY + panelH - infoHeight - BODY_INSET_WORLD;
+      const infoW = panelW - BODY_INSET_WORLD * 2;
+      const infoRows = buildInfoRows({ popupMetadata, citation: this.citation });
+      fillStrokeRoundedRect(
         ctx,
-        details.join(" • "),
-        cardX + 8,
-        cardY + 28 * camera.zoom,
-        Math.max(10, cardW - 16),
-        12 * camera.zoom,
-        2,
+        infoX,
+        infoY,
+        infoW,
+        infoHeight,
+        10,
+        WIDGET_THEME.palette.infoFill,
+        WIDGET_THEME.palette.infoStroke,
+        1,
       );
 
-      if (this.citation.url) {
-        ctx.fillStyle = WIDGET_THEME.palette.mutedText;
-        const urlLabel = ellipsis(this.citation.url, 74);
-        ctx.fillText(urlLabel, cardX + 8, cardY + cardH - 10 * camera.zoom);
-      }
+      ctx.fillStyle = WIDGET_THEME.palette.headerAccent;
+      ctx.font = `${Math.max(1, 9 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
+      ctx.fillText("Info", infoX + 8 * camera.zoom, infoY + 14 * camera.zoom);
+
+      ctx.fillStyle = WIDGET_THEME.palette.mutedText;
+      ctx.font = `${Math.max(1, 8.5 * camera.zoom)}px ${WIDGET_THEME.typography.uiFamily}`;
+      const detailsLabel = infoRows.length > 0 ? infoRows.join(" · ") : "No source metadata yet.";
+      drawWrappedText(
+        ctx,
+        detailsLabel,
+        infoX + 8 * camera.zoom,
+        infoY + 28 * camera.zoom,
+        Math.max(12, infoW - 16 * camera.zoom),
+        11.5 * camera.zoom,
+        3,
+      );
     }
 
     if (!this._revealActions) {

@@ -9,9 +9,12 @@
   --theme-bg-canvas-start: #ffffff;
   --theme-bg-canvas-mid: #edf2f6;
   --theme-bg-canvas-end: #e3e9ef;
+  --theme-widget-surface: #f8fafc;
+  --theme-widget-info-surface: #edf4f7;
 
   --theme-line: #c7d2dc;
   --theme-line-strong: #9baab7;
+  --theme-line-widget-info: #cbd8e1;
   --theme-text: #17232d;
   --theme-text-muted: #4f616f;
 

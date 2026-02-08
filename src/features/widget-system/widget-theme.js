@@ -7,6 +7,8 @@ export const WIDGET_THEME = Object.freeze({
     frameFill: "#f8fafc",
     frameStroke: "#8fa1af",
     frameStrokeSoft: "#a9b6c2",
+    infoFill: "#edf4f7",
+    infoStroke: "#cbd8e1",
     headerAccent: "#2f7f88",
     headerAccentSoft: "#d8ebed",
     title: "#1b2731",
