@@ -178,6 +178,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         return false;
       }
 
+      const isTouch = event.pointerType === "touch";
       if (event.pointerType === "touch") {
         activeTouchPointerIds.add(event.pointerId);
         if (activeTouchPointerIds.size > 1) {
@@ -185,7 +186,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         }
       }
 
-      if (event.button !== 0) {
+      if (!isTouch && event.button !== 0) {
         return false;
       }
 
@@ -198,18 +199,15 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         return false;
       }
 
-      // Touch should keep camera pan/pinch control even over widgets; use tap-up
-      // selection only and avoid capturing widget drag/resize controls.
-      if (event.pointerType === "touch") {
-        beginTapCandidate(event, widget);
-        return false;
-      }
-
       const flags = interactionFlags(widget);
       const point = worldPoint(event, camera);
       const rects = controlRects(widget, camera);
+      const touchCanCaptureInteraction = !isTouch || activeTouchPointerIds.size === 1;
 
       if (flags.collapsible && rectContains(rects.collapse, point.x, point.y)) {
+        if (!touchCanCaptureInteraction) {
+          return false;
+        }
         clearTapState();
         runtime.bringWidgetToFront(widget.id);
         runtime.setFocusedWidgetId(widget.id);
@@ -220,6 +218,9 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       }
 
       if (flags.resizable && rectContains(rects.resize, point.x, point.y)) {
+        if (!touchCanCaptureInteraction) {
+          return false;
+        }
         clearTapState();
         runtime.bringWidgetToFront(widget.id);
         runtime.setFocusedWidgetId(widget.id);
@@ -232,6 +233,9 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       }
 
       if (flags.movable && rectContains(rects.header, point.x, point.y)) {
+        if (!touchCanCaptureInteraction) {
+          return false;
+        }
         clearTapState();
         runtime.bringWidgetToFront(widget.id);
         runtime.setFocusedWidgetId(widget.id);
@@ -241,6 +245,12 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         dragState.mode = "move";
         dragState.lastWorld = point;
         return true;
+      }
+
+      // Keep canvas pan/pinch available for body touches while still allowing tap-to-select.
+      if (isTouch) {
+        beginTapCandidate(event, widget);
+        return false;
       }
 
       beginTapCandidate(event, widget);
