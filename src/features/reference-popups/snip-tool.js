@@ -98,21 +98,27 @@ export function createSnipTool({ runtime, onSnipReady, onStateChange }) {
       const rect = normalizeRect(state.start, state.current);
       clearDrag();
       if (rect.width < 20 || rect.height < 20) {
+        state.armed = false;
         emitState();
         return true;
       }
 
-      const dataUrl = captureSnipDataUrl(canvas, rect);
-      if (dataUrl) {
-        onSnipReady({
-          dataUrl,
-          width: rect.width,
-          height: rect.height,
-          rect,
-        });
-      }
       state.armed = false;
       emitState();
+      const captureCanvas = canvas;
+      const captureRect = { ...rect };
+      requestAnimationFrame(() => {
+        const dataUrl = captureSnipDataUrl(captureCanvas, captureRect);
+        if (!dataUrl) {
+          return;
+        }
+        onSnipReady({
+          dataUrl,
+          width: captureRect.width,
+          height: captureRect.height,
+          rect: captureRect,
+        });
+      });
       return true;
     },
 

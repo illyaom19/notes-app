@@ -15,6 +15,7 @@ const SOURCE_BUTTON_SIZE = { width: 82, height: 22 };
 const CONTROL_SIZE_WORLD = 22;
 const PANEL_INSET_WORLD = 8;
 const BODY_INSET_WORLD = 10;
+const IMAGE_INSET_WORLD = 4;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -214,6 +215,17 @@ export class ReferencePopupWidget extends WidgetBase {
 
     if (this.imageDataUrl) {
       this._image = new Image();
+      this._image.onload = () => {
+        const naturalWidth = Number(this._image?.naturalWidth);
+        const naturalHeight = Number(this._image?.naturalHeight);
+        if (Number.isFinite(naturalWidth) && naturalWidth > 0 && Number.isFinite(naturalHeight) && naturalHeight > 0) {
+          this.metadata.snipDimensions = {
+            widthPx: Math.round(naturalWidth),
+            heightPx: Math.round(naturalHeight),
+          };
+          this._aspectRatio = this._resolveAspectRatio();
+        }
+      };
       this._image.src = this.imageDataUrl;
     }
 
@@ -229,8 +241,24 @@ export class ReferencePopupWidget extends WidgetBase {
       this.sourceLabel = this.citation.sourceTitle;
     }
 
+    const snipDimensionsSource =
+      definition.metadata?.snipDimensions && typeof definition.metadata.snipDimensions === "object"
+        ? definition.metadata.snipDimensions
+        : null;
+    const snipWidthPx = Number(snipDimensionsSource?.widthPx);
+    const snipHeightPx = Number(snipDimensionsSource?.heightPx);
+    const hasSnipDimensions = Number.isFinite(snipWidthPx) && snipWidthPx > 0 && Number.isFinite(snipHeightPx) && snipHeightPx > 0;
+    if (this.contentType === "image") {
+      this.metadata.snipDimensions = {
+        widthPx: hasSnipDimensions ? snipWidthPx : Math.max(1, Math.round(this.size.width)),
+        heightPx: hasSnipDimensions ? snipHeightPx : Math.max(1, Math.round(this.size.height)),
+      };
+    } else if (this.metadata?.snipDimensions) {
+      delete this.metadata.snipDimensions;
+    }
+
     this._revealActions = false;
-    this._aspectRatio = Math.max(0.5, this.size.width / Math.max(1, this.size.height));
+    this._aspectRatio = this._resolveAspectRatio();
   }
 
   get displayHeight() {
@@ -267,6 +295,53 @@ export class ReferencePopupWidget extends WidgetBase {
       y: this.position.y + HEADER_HEIGHT + panelInset + bodyInset,
       width: sourceWidth,
       height: sourceHeight,
+    };
+  }
+
+  _resolveAspectRatio() {
+    if (this.contentType === "image") {
+      const widthPx = Number(this.metadata?.snipDimensions?.widthPx);
+      const heightPx = Number(this.metadata?.snipDimensions?.heightPx);
+      if (Number.isFinite(widthPx) && widthPx > 0 && Number.isFinite(heightPx) && heightPx > 0) {
+        return Math.max(0.3, widthPx / heightPx);
+      }
+    }
+    return Math.max(0.5, this.size.width / Math.max(1, this.size.height));
+  }
+
+  _contentWorldRect(camera) {
+    const panelX = this.position.x + PANEL_INSET_WORLD;
+    const panelY = this.position.y + HEADER_HEIGHT + PANEL_INSET_WORLD;
+    const panelW = Math.max(18, this.size.width - PANEL_INSET_WORLD * 2);
+    const panelH = Math.max(18, this.size.height - HEADER_HEIGHT - PANEL_INSET_WORLD * 2);
+
+    const contentX = panelX + BODY_INSET_WORLD;
+    const contentY = panelY + BODY_INSET_WORLD;
+    const contentW = Math.max(10, panelW - BODY_INSET_WORLD * 2);
+    const contentH = Math.max(10, panelH - BODY_INSET_WORLD * 2);
+
+    return {
+      x: contentX,
+      y: contentY,
+      width: contentW,
+      height: contentH,
+      panel: { x: panelX, y: panelY, width: panelW, height: panelH },
+      content: { x: contentX, y: contentY, width: contentW, height: contentH },
+      panelScreen: camera.worldToScreen(panelX, panelY),
+      contentScreen: camera.worldToScreen(contentX, contentY),
+    };
+  }
+
+  getInkAnchorBounds(camera) {
+    if (this.collapsed || this.contentType !== "image") {
+      return null;
+    }
+    const rect = this._contentWorldRect(camera ?? { zoom: 1, worldToScreen: (x, y) => ({ x, y }) }).content;
+    return {
+      x: rect.x + IMAGE_INSET_WORLD,
+      y: rect.y + IMAGE_INSET_WORLD,
+      width: Math.max(1, rect.width - IMAGE_INSET_WORLD * 2),
+      height: Math.max(1, rect.height - IMAGE_INSET_WORLD * 2),
     };
   }
 
@@ -315,11 +390,27 @@ export class ReferencePopupWidget extends WidgetBase {
     this.contentType = "image";
     this.textContent = "";
     this._image = new Image();
+    this._image.onload = () => {
+      const naturalWidth = Number(this._image?.naturalWidth);
+      const naturalHeight = Number(this._image?.naturalHeight);
+      if (Number.isFinite(naturalWidth) && naturalWidth > 0 && Number.isFinite(naturalHeight) && naturalHeight > 0) {
+        this.metadata.snipDimensions = {
+          widthPx: Math.round(naturalWidth),
+          heightPx: Math.round(naturalHeight),
+        };
+      } else {
+        this.metadata.snipDimensions = {
+          widthPx: Math.max(1, Math.round(this.size.width)),
+          heightPx: Math.max(1, Math.round(this.size.height)),
+        };
+      }
+      this._aspectRatio = this._resolveAspectRatio();
+    };
     this._image.src = dataUrl;
   }
 
   resizeFromCorner(deltaWidth, deltaHeight) {
-    const ratio = Math.max(0.5, this._aspectRatio || this.size.width / Math.max(1, this.size.height));
+    const ratio = this._resolveAspectRatio();
     const weightedHeightDelta = deltaHeight * ratio;
     const nextWidth = clamp(
       this.size.width + (Math.abs(weightedHeightDelta) > Math.abs(deltaWidth) ? weightedHeightDelta : deltaWidth),
@@ -359,21 +450,15 @@ export class ReferencePopupWidget extends WidgetBase {
     const width = frame.width;
     const height = frame.height;
     const bodyTop = screen.y + frame.headerHeight;
-    const panelX = screen.x + PANEL_INSET_WORLD;
-    const panelY = bodyTop + PANEL_INSET_WORLD;
-    const panelW = width - PANEL_INSET_WORLD * 2;
-    const panelH = Math.max(18, height - (panelY - screen.y) - PANEL_INSET_WORLD);
-    fillStrokeRoundedRect(
-      ctx,
-      panelX,
-      panelY,
-      panelW,
-      panelH,
-      12,
-      WIDGET_THEME.palette.frameFill,
-      WIDGET_THEME.palette.line,
-      1,
-    );
+    const contentRect = this._contentWorldRect(camera);
+    const panelX = contentRect.panelScreen.x;
+    const panelY = contentRect.panelScreen.y;
+    const panelW = contentRect.panel.width * camera.zoom;
+    const panelH = contentRect.panel.height * camera.zoom;
+    const contentX = contentRect.contentScreen.x;
+    const contentY = contentRect.contentScreen.y;
+    const contentW = contentRect.content.width * camera.zoom;
+    const contentH = contentRect.content.height * camera.zoom;
 
     const sourceRect = this._sourceButtonRect(camera);
     const sourceScreen = camera.worldToScreen(sourceRect.x, sourceRect.y);
@@ -392,27 +477,46 @@ export class ReferencePopupWidget extends WidgetBase {
       ctx.fillText("Source", sourceScreen.x + 8 * camera.zoom, sourceScreen.y + 13 * camera.zoom);
     }
 
-    const topInset = BODY_INSET_WORLD + (sourceButtonVisible ? sourceRect.height * camera.zoom + 7 : 0);
-    const contentX = panelX + BODY_INSET_WORLD;
-    const contentY = panelY + topInset;
-    const contentW = panelW - BODY_INSET_WORLD * 2;
-    const contentH = Math.max(30 * camera.zoom, panelH - topInset - BODY_INSET_WORLD);
-
-    fillStrokeRoundedRect(
-      ctx,
-      contentX,
-      contentY,
-      contentW,
-      contentH,
-      10,
-      WIDGET_THEME.palette.frameFill,
-      WIDGET_THEME.palette.line,
-      1,
-    );
-
     if (this.contentType === "image" && this._image) {
-      ctx.drawImage(this._image, contentX + 4, contentY + 4, Math.max(10, contentW - 8), Math.max(10, contentH - 8));
+      fillStrokeRoundedRect(
+        ctx,
+        contentX,
+        contentY,
+        contentW,
+        contentH,
+        10,
+        WIDGET_THEME.palette.frameFill,
+        WIDGET_THEME.palette.line,
+        1,
+      );
+      const imageX = contentX + IMAGE_INSET_WORLD * camera.zoom;
+      const imageY = contentY + IMAGE_INSET_WORLD * camera.zoom;
+      const imageW = Math.max(10, contentW - IMAGE_INSET_WORLD * 2 * camera.zoom);
+      const imageH = Math.max(10, contentH - IMAGE_INSET_WORLD * 2 * camera.zoom);
+      ctx.drawImage(this._image, imageX, imageY, imageW, imageH);
     } else {
+      fillStrokeRoundedRect(
+        ctx,
+        panelX,
+        panelY,
+        panelW,
+        panelH,
+        12,
+        WIDGET_THEME.palette.frameFill,
+        WIDGET_THEME.palette.line,
+        1,
+      );
+      fillStrokeRoundedRect(
+        ctx,
+        contentX,
+        contentY,
+        contentW,
+        contentH,
+        10,
+        WIDGET_THEME.palette.frameFill,
+        WIDGET_THEME.palette.line,
+        1,
+      );
       ctx.fillStyle = WIDGET_THEME.palette.bodyText;
       ctx.font = `${Math.max(1, 11 * camera.zoom)}px ${WIDGET_THEME.typography.contentFamily}`;
       const text = this.textContent.trim() || widgetTypeTitle(this.type);

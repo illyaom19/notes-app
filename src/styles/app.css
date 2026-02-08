@@ -1144,13 +1144,15 @@ body[data-ui-mode="production"] .topbar h1 {
 .reference-preview-layer {
   position: fixed;
   inset: 0;
-  z-index: 63;
+  z-index: 55;
   pointer-events: none;
 }
 
 .reference-preview-card {
   position: absolute;
-  width: min(340px, calc(100vw - 1rem));
+  width: min(420px, calc(100vw - 2rem), calc(100vh - 6rem));
+  max-width: calc(100vw - 2rem);
+  max-height: min(72vh, 560px);
   min-height: 152px;
   border: 1px solid var(--theme-line);
   border-radius: var(--theme-radius-card-lg);
@@ -1198,20 +1200,44 @@ body[data-ui-mode="production"] .topbar h1 {
 
 .reference-preview-card-body {
   margin: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .reference-preview-content {
   width: 100%;
+  max-height: min(58vh, 460px);
 }
 
 .reference-preview-viewport {
   position: relative;
   width: 100%;
   min-height: 180px;
+  height: min(50vh, 360px);
+  max-height: min(50vh, 360px);
   border: 1px solid var(--theme-line);
   border-radius: 12px;
   overflow: hidden;
   background: #ffffff;
+  touch-action: none;
+  cursor: grab;
+}
+
+.reference-preview-viewport[data-panzoom="true"]:active {
+  cursor: grabbing;
+}
+
+.reference-preview-viewport--pdf {
+  height: min(54vh, 420px);
+  max-height: min(54vh, 420px);
+}
+
+.reference-preview-panzoom-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: top left;
+  will-change: transform;
 }
 
 .reference-preview-canvas,
@@ -1223,7 +1249,7 @@ body[data-ui-mode="production"] .topbar h1 {
 }
 
 .reference-preview-image {
-  object-fit: cover;
+  object-fit: contain;
   min-height: 180px;
 }
 
@@ -1259,6 +1285,10 @@ body[data-ui-mode="production"] .topbar h1 {
   border: 1px solid var(--theme-line);
   border-radius: 12px;
   background: #f7fbff;
+}
+
+.reference-preview-pdf-content {
+  position: relative;
 }
 
 .reference-preview-pdf-page {

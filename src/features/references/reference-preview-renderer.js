@@ -108,6 +108,174 @@ function messageCard(text) {
   return message;
 }
 
+function clampPan(scale, tx, ty, viewportWidth, viewportHeight, contentWidth, contentHeight) {
+  const scaledWidth = contentWidth * scale;
+  const scaledHeight = contentHeight * scale;
+
+  const minTx = scaledWidth <= viewportWidth ? (viewportWidth - scaledWidth) * 0.5 : viewportWidth - scaledWidth;
+  const maxTx = scaledWidth <= viewportWidth ? minTx : 0;
+  const minTy = scaledHeight <= viewportHeight ? (viewportHeight - scaledHeight) * 0.5 : viewportHeight - scaledHeight;
+  const maxTy = scaledHeight <= viewportHeight ? minTy : 0;
+
+  return {
+    tx: clamp(tx, minTx, maxTx),
+    ty: clamp(ty, minTy, maxTy),
+  };
+}
+
+function attachPanZoomInteraction(viewport, stage, {
+  contentWidth,
+  contentHeight,
+  minScale = 0.6,
+  maxScale = 4,
+  initialScale = 1,
+} = {}) {
+  if (!(viewport instanceof HTMLElement) || !(stage instanceof HTMLElement)) {
+    return;
+  }
+
+  let scale = clamp(initialScale, minScale, maxScale);
+  let tx = 0;
+  let ty = 0;
+  let drag = null;
+  const pointers = new Map();
+  let pinchState = null;
+  const abortController = new AbortController();
+
+  const apply = () => {
+    const viewportRect = viewport.getBoundingClientRect();
+    const clamped = clampPan(
+      scale,
+      tx,
+      ty,
+      Math.max(1, viewportRect.width),
+      Math.max(1, viewportRect.height),
+      Math.max(1, contentWidth),
+      Math.max(1, contentHeight),
+    );
+    tx = clamped.tx;
+    ty = clamped.ty;
+    stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+  };
+
+  const zoomTo = (targetScale, pivotClientX, pivotClientY) => {
+    const nextScale = clamp(targetScale, minScale, maxScale);
+    if (Math.abs(nextScale - scale) < 0.0001) {
+      return;
+    }
+
+    const rect = viewport.getBoundingClientRect();
+    const pivotX = pivotClientX - rect.left;
+    const pivotY = pivotClientY - rect.top;
+    const worldX = (pivotX - tx) / Math.max(0.0001, scale);
+    const worldY = (pivotY - ty) / Math.max(0.0001, scale);
+
+    scale = nextScale;
+    tx = pivotX - worldX * scale;
+    ty = pivotY - worldY * scale;
+    apply();
+  };
+
+  viewport.dataset.panzoom = "true";
+  apply();
+
+  const onPointerDown = (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size >= 2) {
+      const [a, b] = Array.from(pointers.values());
+      const distance = Math.hypot(b.x - a.x, b.y - a.y);
+      pinchState = {
+        distance: Math.max(1, distance),
+        scale,
+      };
+      drag = null;
+    } else {
+      drag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startTx: tx,
+        startTy: ty,
+      };
+    }
+    viewport.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  };
+
+  const onPointerMove = (event) => {
+    if (!pointers.has(event.pointerId)) {
+      return;
+    }
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (pointers.size >= 2) {
+      const [a, b] = Array.from(pointers.values());
+      const distance = Math.hypot(b.x - a.x, b.y - a.y);
+      const centerX = (a.x + b.x) * 0.5;
+      const centerY = (a.y + b.y) * 0.5;
+      if (!pinchState) {
+        pinchState = { distance: Math.max(1, distance), scale };
+      }
+      const ratio = Math.max(0.01, distance) / Math.max(1, pinchState.distance);
+      zoomTo(pinchState.scale * ratio, centerX, centerY);
+      return;
+    }
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    tx = drag.startTx + (event.clientX - drag.startX);
+    ty = drag.startTy + (event.clientY - drag.startY);
+    apply();
+    event.preventDefault();
+  };
+
+  const onPointerUp = (event) => {
+    pointers.delete(event.pointerId);
+    if (drag?.pointerId === event.pointerId) {
+      drag = null;
+    }
+    if (pointers.size < 2) {
+      pinchState = null;
+    }
+    viewport.releasePointerCapture?.(event.pointerId);
+  };
+
+  const onWheel = (event) => {
+    if (event.ctrlKey || event.metaKey) {
+      const nextScale = scale * Math.exp(-event.deltaY * 0.0015);
+      zoomTo(nextScale, event.clientX, event.clientY);
+      event.preventDefault();
+      return;
+    }
+
+    ty -= event.deltaY * 0.9;
+    tx -= event.deltaX * 0.9;
+    apply();
+    event.preventDefault();
+  };
+
+  viewport.addEventListener("pointerdown", onPointerDown, { signal: abortController.signal });
+  viewport.addEventListener("pointermove", onPointerMove, { signal: abortController.signal });
+  viewport.addEventListener("pointerup", onPointerUp, { signal: abortController.signal });
+  viewport.addEventListener("pointercancel", onPointerUp, { signal: abortController.signal });
+  viewport.addEventListener("wheel", onWheel, { passive: false, signal: abortController.signal });
+  window.addEventListener("resize", apply, { passive: true, signal: abortController.signal });
+
+  const observer = new MutationObserver(() => {
+    if (viewport.isConnected) {
+      return;
+    }
+    abortController.abort();
+    observer.disconnect();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
 export function renderNotePreview(container, entry) {
   clearElement(container);
   if (!(container instanceof HTMLElement)) {
@@ -116,6 +284,8 @@ export function renderNotePreview(container, entry) {
 
   const viewport = document.createElement("div");
   viewport.className = "reference-preview-viewport";
+  const stage = document.createElement("div");
+  stage.className = "reference-preview-panzoom-stage";
   const width = 320;
   const height = 180;
   const paper = makeCanvas(width, height);
@@ -129,8 +299,18 @@ export function renderNotePreview(container, entry) {
     width: entry?.size?.width ?? width,
     height: entry?.size?.height ?? height,
   });
-  viewport.append(paper);
+  stage.style.width = `${width}px`;
+  stage.style.height = `${height}px`;
+  stage.append(paper);
+  viewport.append(stage);
   container.append(viewport);
+  attachPanZoomInteraction(viewport, stage, {
+    contentWidth: width,
+    contentHeight: height,
+    minScale: 0.7,
+    maxScale: 4,
+    initialScale: 1,
+  });
 }
 
 export function renderReferencePreview(container, entry) {
@@ -141,8 +321,19 @@ export function renderReferencePreview(container, entry) {
 
   const viewport = document.createElement("div");
   viewport.className = "reference-preview-viewport";
+  const stage = document.createElement("div");
+  stage.className = "reference-preview-panzoom-stage";
+  const rawSnipWidth = Number(entry?.popupMetadata?.snipDimensions?.widthPx ?? entry?.snipDimensions?.widthPx);
+  const rawSnipHeight = Number(entry?.popupMetadata?.snipDimensions?.heightPx ?? entry?.snipDimensions?.heightPx);
+  const hasNativeSnipSize =
+    Number.isFinite(rawSnipWidth) &&
+    rawSnipWidth > 0 &&
+    Number.isFinite(rawSnipHeight) &&
+    rawSnipHeight > 0;
   const width = 320;
-  const height = 180;
+  const height = hasNativeSnipSize
+    ? clamp((rawSnipHeight / rawSnipWidth) * width, 140, 340)
+    : 180;
 
   const imageDataUrl =
     typeof entry?.imageDataUrl === "string" && entry.imageDataUrl.trim() ? entry.imageDataUrl : null;
@@ -151,7 +342,7 @@ export function renderReferencePreview(container, entry) {
     image.className = "reference-preview-image";
     image.alt = "Reference snip";
     image.src = imageDataUrl;
-    viewport.append(image);
+    stage.append(image);
   } else {
     const fallback = document.createElement("div");
     fallback.className = "reference-preview-text";
@@ -159,7 +350,7 @@ export function renderReferencePreview(container, entry) {
       typeof entry?.textContent === "string" && entry.textContent.trim()
         ? entry.textContent.trim()
         : "No snip image available for this reference.";
-    viewport.append(fallback);
+    stage.append(fallback);
   }
 
   const overlay = makeCanvas(width, height);
@@ -168,8 +359,18 @@ export function renderReferencePreview(container, entry) {
     width,
     height,
   });
-  viewport.append(overlay);
+  stage.style.width = `${width}px`;
+  stage.style.height = `${height}px`;
+  stage.append(overlay);
+  viewport.append(stage);
   container.append(viewport);
+  attachPanZoomInteraction(viewport, stage, {
+    contentWidth: width,
+    contentHeight: height,
+    minScale: 0.7,
+    maxScale: 4,
+    initialScale: 1,
+  });
 }
 
 export async function renderPdfPreview(container, entry, { loadDocumentBytes, signal } = {}) {
@@ -193,10 +394,12 @@ export async function renderPdfPreview(container, entry, { loadDocumentBytes, si
     return;
   }
 
-  const scroller = document.createElement("div");
-  scroller.className = "reference-preview-pdf-scroll";
-  scroller.style.position = "relative";
-  container.append(scroller);
+  const viewport = document.createElement("div");
+  viewport.className = "reference-preview-viewport reference-preview-viewport--pdf";
+  const stage = document.createElement("div");
+  stage.className = "reference-preview-panzoom-stage";
+  viewport.append(stage);
+  container.append(viewport);
 
   let pdfDocument = null;
   try {
@@ -233,6 +436,12 @@ export async function renderPdfPreview(container, entry, { loadDocumentBytes, si
     height: totalHeight,
   });
 
+  const pdfContent = document.createElement("div");
+  pdfContent.className = "reference-preview-pdf-content";
+  pdfContent.style.width = `${pageWidth}px`;
+  pdfContent.style.height = `${Math.max(1, Math.ceil(totalHeight))}px`;
+  stage.append(pdfContent);
+
   let yOffset = 0;
   for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
     const page = await pdfDocument.getPage(pageNumber);
@@ -252,7 +461,7 @@ export async function renderPdfPreview(container, entry, { loadDocumentBytes, si
     const canvas = makeCanvas(viewport.width, viewport.height);
     canvas.className = "reference-preview-pdf-canvas";
     pageWrap.append(canvas);
-    scroller.append(pageWrap);
+    pdfContent.append(pageWrap);
 
     const ctx = canvas.getContext("2d", { alpha: false });
     if (ctx) {
@@ -265,9 +474,15 @@ export async function renderPdfPreview(container, entry, { loadDocumentBytes, si
     }
     yOffset += viewport.height + gap;
   }
-
-  scroller.style.height = "220px";
-  scroller.style.minHeight = "220px";
-  scroller.style.paddingBottom = `${Math.max(0, Math.ceil(totalHeight + 12))}px`;
-  scroller.append(inkOverlay);
+  pdfContent.append(inkOverlay);
+  stage.style.width = `${pageWidth + 20}px`;
+  stage.style.height = `${Math.max(1, Math.ceil(totalHeight))}px`;
+  stage.style.padding = "0 10px 10px 10px";
+  attachPanZoomInteraction(viewport, stage, {
+    contentWidth: pageWidth + 20,
+    contentHeight: Math.max(1, Math.ceil(totalHeight)),
+    minScale: 0.45,
+    maxScale: 3,
+    initialScale: 1,
+  });
 }

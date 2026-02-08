@@ -9,8 +9,8 @@ const PREVIEW_BASE_Y = 84;
 const PREVIEW_STACK_OFFSET = 28;
 const PREVIEW_MIN_WIDTH = 240;
 const PREVIEW_MIN_HEIGHT = 152;
-const STYLUS_AVOID_RADIUS = 150;
-const STYLUS_AVOID_STEP = 18;
+const PREVIEW_EDGE_PADDING = 8;
+const PREVIEW_SNAP_THRESHOLD = 14;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -101,6 +101,7 @@ export function createReferenceManagerUi({
   onRenameDocument,
   onDeleteDocument,
   onLoadDocumentBytes,
+  canvasElement,
 }) {
   if (!(launcherButton instanceof HTMLButtonElement)) {
     return {
@@ -215,55 +216,66 @@ export function createReferenceManagerUi({
     return references.find((entry) => entry.id === entryId) ?? null;
   }
 
-  function previewCardBounds(card) {
-    const rect = card.getBoundingClientRect();
+  function canvasViewportBounds() {
+    const rect =
+      canvasElement instanceof HTMLElement
+        ? canvasElement.getBoundingClientRect()
+        : {
+            left: 0,
+            top: 0,
+            right: window.innerWidth,
+            bottom: window.innerHeight,
+          };
     return {
-      minX: rect.left,
-      maxX: rect.right,
-      minY: rect.top,
-      maxY: rect.bottom,
-      width: rect.width,
-      height: rect.height,
+      minX: rect.left + PREVIEW_EDGE_PADDING,
+      maxX: rect.right - PREVIEW_EDGE_PADDING,
+      minY: rect.top + PREVIEW_EDGE_PADDING,
+      maxY: rect.bottom - PREVIEW_EDGE_PADDING,
     };
   }
 
-  function nudgePreviewCardsAwayFromStylus(event) {
-    if (event.pointerType !== "pen" || event.buttons !== 0 || previewCards.size < 1) {
-      return;
+  function clampCardPosition(card, left, top) {
+    const viewport = canvasViewportBounds();
+    return {
+      left: clamp(left, viewport.minX, Math.max(viewport.minX, viewport.maxX - card.offsetWidth)),
+      top: clamp(top, viewport.minY, Math.max(viewport.minY, viewport.maxY - card.offsetHeight)),
+    };
+  }
+
+  function snapCardToCanvasEdges(card) {
+    const viewport = canvasViewportBounds();
+    const minLeft = viewport.minX;
+    const maxLeft = Math.max(viewport.minX, viewport.maxX - card.offsetWidth);
+    const minTop = viewport.minY;
+    const maxTop = Math.max(viewport.minY, viewport.maxY - card.offsetHeight);
+
+    let left = card.offsetLeft;
+    let top = card.offsetTop;
+
+    if (Math.abs(left - minLeft) <= PREVIEW_SNAP_THRESHOLD) {
+      left = minLeft;
+    } else if (Math.abs(left - maxLeft) <= PREVIEW_SNAP_THRESHOLD) {
+      left = maxLeft;
     }
 
+    if (Math.abs(top - minTop) <= PREVIEW_SNAP_THRESHOLD) {
+      top = minTop;
+    } else if (Math.abs(top - maxTop) <= PREVIEW_SNAP_THRESHOLD) {
+      top = maxTop;
+    }
+
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+  }
+
+  function clampAllPreviewCards() {
     for (const card of previewCards.values()) {
       if (!(card instanceof HTMLElement)) {
         continue;
       }
-
-      const bounds = previewCardBounds(card);
-      const centerX = bounds.minX + bounds.width / 2;
-      const centerY = bounds.minY + bounds.height / 2;
-      const dx = centerX - event.clientX;
-      const dy = centerY - event.clientY;
-      const distance = Math.hypot(dx, dy);
-      if (!Number.isFinite(distance) || distance <= 0 || distance > STYLUS_AVOID_RADIUS) {
-        continue;
-      }
-
-      const influence = 1 - distance / STYLUS_AVOID_RADIUS;
-      const step = Math.max(2, STYLUS_AVOID_STEP * influence);
-      const ux = dx / distance;
-      const uy = dy / distance;
-      const nextLeft = clamp(
-        card.offsetLeft + ux * step,
-        8,
-        Math.max(8, window.innerWidth - Math.max(PREVIEW_MIN_WIDTH, bounds.width) - 8),
-      );
-      const nextTop = clamp(
-        card.offsetTop + uy * step,
-        8,
-        Math.max(8, window.innerHeight - Math.max(PREVIEW_MIN_HEIGHT, bounds.height) - 8),
-      );
-
-      card.style.left = `${nextLeft}px`;
-      card.style.top = `${nextTop}px`;
+      const next = clampCardPosition(card, card.offsetLeft, card.offsetTop);
+      card.style.left = `${next.left}px`;
+      card.style.top = `${next.top}px`;
     }
   }
 
@@ -340,15 +352,16 @@ export function createReferenceManagerUi({
     card.dataset.entryId = entry.id;
 
     const stackDepth = previewCards.size;
+    const viewport = canvasViewportBounds();
     const initialLeft = clamp(
-      PREVIEW_BASE_X + stackDepth * PREVIEW_STACK_OFFSET,
-      8,
-      Math.max(8, window.innerWidth - PREVIEW_MIN_WIDTH - 8),
+      viewport.minX + PREVIEW_BASE_X + stackDepth * PREVIEW_STACK_OFFSET,
+      viewport.minX,
+      Math.max(viewport.minX, viewport.maxX - PREVIEW_MIN_WIDTH),
     );
     const initialTop = clamp(
-      PREVIEW_BASE_Y + stackDepth * PREVIEW_STACK_OFFSET,
-      8,
-      Math.max(8, window.innerHeight - PREVIEW_MIN_HEIGHT - 8),
+      viewport.minY + PREVIEW_BASE_Y + stackDepth * PREVIEW_STACK_OFFSET,
+      viewport.minY,
+      Math.max(viewport.minY, viewport.maxY - PREVIEW_MIN_HEIGHT),
     );
     card.style.left = `${initialLeft}px`;
     card.style.top = `${initialTop}px`;
@@ -593,19 +606,10 @@ export function createReferenceManagerUi({
     }
 
     const card = dragState.card;
-    const nextLeft = clamp(
-      event.clientX - dragState.offsetX,
-      8,
-      Math.max(8, window.innerWidth - card.offsetWidth - 8),
-    );
-    const nextTop = clamp(
-      event.clientY - dragState.offsetY,
-      8,
-      Math.max(8, window.innerHeight - card.offsetHeight - 8),
-    );
+    const nextPosition = clampCardPosition(card, event.clientX - dragState.offsetX, event.clientY - dragState.offsetY);
 
-    card.style.left = `${nextLeft}px`;
-    card.style.top = `${nextTop}px`;
+    card.style.left = `${nextPosition.left}px`;
+    card.style.top = `${nextPosition.top}px`;
   }
 
   function endPreviewDrag(event) {
@@ -616,6 +620,7 @@ export function createReferenceManagerUi({
     if (dragState.card.releasePointerCapture && dragState.card.hasPointerCapture(event.pointerId)) {
       dragState.card.releasePointerCapture(event.pointerId);
     }
+    snapCardToCanvasEdges(dragState.card);
     dragState = null;
   }
 
@@ -674,10 +679,6 @@ export function createReferenceManagerUi({
     void handlePreviewAction(event);
   };
 
-  const onWindowPointerMove = (event) => {
-    nudgePreviewCardsAwayFromStylus(event);
-  };
-
   const onWindowKeyDown = (event) => {
     if (overlayOpen && event.key === "Tab") {
       const focusables = getOverlayFocusables();
@@ -714,6 +715,10 @@ export function createReferenceManagerUi({
     }
   };
 
+  const onWindowResize = () => {
+    clampAllPreviewCards();
+  };
+
   function wireStaticEvents() {
     bind(launcherButton, "click", onLauncherClick);
     bind(closeButton, "click", onCloseClick);
@@ -729,8 +734,8 @@ export function createReferenceManagerUi({
     bind(previewLayerElement, "pointermove", movePreviewDrag);
     bind(previewLayerElement, "pointerup", endPreviewDrag);
     bind(previewLayerElement, "pointercancel", endPreviewDrag);
-    bind(window, "pointermove", onWindowPointerMove, { passive: true });
     bind(window, "keydown", onWindowKeyDown);
+    bind(window, "resize", onWindowResize, { passive: true });
   }
 
   wireStaticEvents();

@@ -156,6 +156,24 @@ export class InkEngine {
       return null;
     }
 
+    if (typeof widget.getInkAnchorBounds === "function") {
+      const anchorBounds = widget.getInkAnchorBounds(this.runtime.camera);
+      if (
+        anchorBounds &&
+        Number.isFinite(anchorBounds.x) &&
+        Number.isFinite(anchorBounds.y) &&
+        Number.isFinite(anchorBounds.width) &&
+        Number.isFinite(anchorBounds.height)
+      ) {
+        return {
+          x: anchorBounds.x,
+          y: anchorBounds.y,
+          width: Math.max(1, anchorBounds.width),
+          height: Math.max(1, anchorBounds.height),
+        };
+      }
+    }
+
     const interactionBounds =
       typeof widget.getInteractionBounds === "function"
         ? widget.getInteractionBounds(this.runtime.camera)

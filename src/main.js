@@ -172,6 +172,7 @@ let referenceManagerUiController = null;
 let suggestionAnalysisTimer = null;
 let suggestionAnalysisInFlight = false;
 let suggestionAnalysisQueued = false;
+let linkedWidgetRefreshTimer = null;
 
 let activeContextId = null;
 let activeSectionId = null;
@@ -1748,24 +1749,41 @@ function syncLinkedNotebookDocumentInstances({ sourceDocumentId = null } = {}) {
         title: source.title,
         sourceType: source.sourceType,
       };
-
-      documentManager.setDocumentSourceState(entry.id, {
-        sourceDocumentId: source.id,
-        linkStatus: "linked",
-        sourceSnapshot: nextSnapshot,
-        title: nextTitle,
-        sourceType: nextSourceType,
-      });
+      const previousSnapshot = entry.sourceSnapshot ?? null;
+      const stateChanged =
+        (entry.sourceDocumentId ?? null) !== source.id ||
+        entry.linkStatus !== "linked" ||
+        entry.title !== nextTitle ||
+        entry.sourceType !== nextSourceType ||
+        (previousSnapshot?.title ?? null) !== (nextSnapshot.title ?? null) ||
+        (previousSnapshot?.sourceType ?? null) !== (nextSnapshot.sourceType ?? null);
+      if (stateChanged) {
+        documentManager.setDocumentSourceState(entry.id, {
+          sourceDocumentId: source.id,
+          linkStatus: "linked",
+          sourceSnapshot: nextSnapshot,
+          title: nextTitle,
+          sourceType: nextSourceType,
+        });
+      }
 
       const widget = runtime.getWidgetById(entry.widgetId);
       if (widget?.type === "pdf-document") {
-        widget.metadata = {
-          ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
-          title: nextTitle,
-          sourceDocumentId: source.id,
-        };
+        const widgetTitle = typeof widget.metadata?.title === "string" ? widget.metadata.title : "";
+        const widgetSourceDocumentId =
+          typeof widget.metadata?.sourceDocumentId === "string" ? widget.metadata.sourceDocumentId : null;
+        const widgetChanged = widgetTitle !== nextTitle || widgetSourceDocumentId !== source.id;
+        if (widgetChanged) {
+          widget.metadata = {
+            ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+            title: nextTitle,
+            sourceDocumentId: source.id,
+          };
+        }
+        changed = changed || stateChanged || widgetChanged;
+      } else {
+        changed = changed || stateChanged;
       }
-      changed = true;
       continue;
     }
 
@@ -1774,23 +1792,41 @@ function syncLinkedNotebookDocumentInstances({ sourceDocumentId = null } = {}) {
         title: source?.title ?? entry.sourceSnapshot?.title ?? entry.title,
         sourceType: source?.sourceType ?? entry.sourceSnapshot?.sourceType ?? entry.sourceType,
       };
-      documentManager.setDocumentSourceState(entry.id, {
-        sourceDocumentId: null,
-        linkStatus: "frozen",
-        sourceSnapshot: frozenSnapshot,
-        title: frozenSnapshot.title,
-        sourceType: frozenSnapshot.sourceType,
-      });
+      const previousSnapshot = entry.sourceSnapshot ?? null;
+      const stateChanged =
+        (entry.sourceDocumentId ?? null) !== null ||
+        entry.linkStatus !== "frozen" ||
+        entry.title !== frozenSnapshot.title ||
+        entry.sourceType !== frozenSnapshot.sourceType ||
+        (previousSnapshot?.title ?? null) !== (frozenSnapshot.title ?? null) ||
+        (previousSnapshot?.sourceType ?? null) !== (frozenSnapshot.sourceType ?? null);
+      if (stateChanged) {
+        documentManager.setDocumentSourceState(entry.id, {
+          sourceDocumentId: null,
+          linkStatus: "frozen",
+          sourceSnapshot: frozenSnapshot,
+          title: frozenSnapshot.title,
+          sourceType: frozenSnapshot.sourceType,
+        });
+      }
 
       const widget = runtime.getWidgetById(entry.widgetId);
       if (widget?.type === "pdf-document") {
-        widget.metadata = {
-          ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
-          title: frozenSnapshot.title,
-          sourceDocumentId: null,
-        };
+        const widgetTitle = typeof widget.metadata?.title === "string" ? widget.metadata.title : "";
+        const widgetSourceDocumentId =
+          typeof widget.metadata?.sourceDocumentId === "string" ? widget.metadata.sourceDocumentId : null;
+        const widgetChanged = widgetTitle !== frozenSnapshot.title || widgetSourceDocumentId !== null;
+        if (widgetChanged) {
+          widget.metadata = {
+            ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+            title: frozenSnapshot.title,
+            sourceDocumentId: null,
+          };
+        }
+        changed = changed || stateChanged || widgetChanged;
+      } else {
+        changed = changed || stateChanged;
       }
-      changed = true;
     }
   }
 
@@ -2352,8 +2388,10 @@ async function toggleWidgetLibraryFromContextMenu(widget) {
 
 function syncLinkedLibraryMetadata() {
   if (!activeContextId) {
-    return;
+    return false;
   }
+
+  let changed = false;
 
   for (const widget of runtime.listWidgets()) {
     if (!widget || widget.type !== "reference-popup") {
@@ -2373,16 +2411,34 @@ function syncLinkedLibraryMetadata() {
       continue;
     }
 
+    const currentTitle = typeof widget.metadata?.title === "string" ? widget.metadata.title : "";
+    const currentSourceLabel = typeof widget.sourceLabel === "string" ? widget.sourceLabel : "";
+    const currentPopupMetadata =
+      widget.metadata?.popupMetadata && typeof widget.metadata.popupMetadata === "object"
+        ? widget.metadata.popupMetadata
+        : {};
+    const nextPopupMetadata = {
+      ...source.popupMetadata,
+      title: source.title,
+    };
+    const popupChanged =
+      (currentPopupMetadata.id ?? null) !== (nextPopupMetadata.id ?? null) ||
+      (currentPopupMetadata.type ?? null) !== (nextPopupMetadata.type ?? null) ||
+      (currentPopupMetadata.sourceDocumentId ?? null) !== (nextPopupMetadata.sourceDocumentId ?? null) ||
+      (currentPopupMetadata.title ?? null) !== (nextPopupMetadata.title ?? null);
+    const widgetChanged = currentTitle !== source.title || currentSourceLabel !== source.sourceLabel || popupChanged;
+    if (!widgetChanged) {
+      continue;
+    }
+
     widget.metadata = {
       ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
       title: source.title,
       librarySourceId: source.id,
-      popupMetadata: {
-        ...source.popupMetadata,
-        title: source.title,
-      },
+      popupMetadata: nextPopupMetadata,
     };
     widget.sourceLabel = source.sourceLabel;
+    changed = true;
   }
 
   for (const widget of runtime.listWidgets()) {
@@ -2403,12 +2459,31 @@ function syncLinkedLibraryMetadata() {
       continue;
     }
 
+    const sourceNote = source.metadata?.note ?? "";
+    const currentTitle = typeof widget.metadata?.title === "string" ? widget.metadata.title : "";
+    const currentNote = typeof widget.metadata?.note === "string" ? widget.metadata.note : "";
+    if (currentTitle === source.title && currentNote === sourceNote) {
+      continue;
+    }
+
     widget.metadata = {
       ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
       title: source.title,
-      note: source.metadata?.note ?? "",
+      note: sourceNote,
       libraryNoteId: source.id,
     };
+    changed = true;
+  }
+
+  return changed;
+}
+
+function refreshLinkedWidgets({ sourceDocumentId = null } = {}) {
+  const linkedDocsChanged = syncLinkedNotebookDocumentInstances({ sourceDocumentId });
+  const linkedLibraryChanged = syncLinkedLibraryMetadata();
+  if (linkedDocsChanged || linkedLibraryChanged) {
+    updateWidgetUi();
+    scheduleSuggestionAnalysis({ immediate: true });
   }
 }
 
@@ -4085,6 +4160,10 @@ async function createReferencePopupFromSnip({ dataUrl, width, height, intent = n
       },
       metadata: {
         title: "Reference",
+        snipDimensions: {
+          widthPx: Math.max(1, Math.round(width)),
+          heightPx: Math.max(1, Math.round(height)),
+        },
         popupMetadata: {
           tags: ["snip"],
         },
@@ -4574,6 +4653,7 @@ async function switchContext(nextContextId) {
   documentManager.setContextId(workspaceScopeId());
   updateContextUi();
   await restoreWorkspaceForActiveContext();
+  refreshLinkedWidgets();
   updateOnboardingControlsUi();
   scheduleOnboardingRefresh(0);
   if (searchPanelController && typeof searchPanelController.runQuery === "function") {
@@ -4603,6 +4683,7 @@ async function switchSection(nextSectionId) {
   documentManager.setContextId(workspaceScopeId());
   updateContextUi();
   await restoreWorkspaceForActiveContext();
+  refreshLinkedWidgets();
   updateOnboardingControlsUi();
   scheduleOnboardingRefresh(0);
   if (searchPanelController && typeof searchPanelController.runQuery === "function") {
@@ -5378,7 +5459,12 @@ function wireBaseEventHandlers() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       flushWorkspacePersist();
+      return;
     }
+    refreshLinkedWidgets();
+  });
+  window.addEventListener("focus", () => {
+    refreshLinkedWidgets();
   });
 }
 
@@ -5517,6 +5603,7 @@ function wireReferenceManagerUi() {
       }
       return notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, entry.id);
     },
+    canvasElement: canvas,
   });
 
   updateReferenceManagerUi();
@@ -5996,6 +6083,12 @@ async function bootstrap() {
     };
     updateGestureUi();
   }
+  if (linkedWidgetRefreshTimer) {
+    window.clearInterval(linkedWidgetRefreshTimer);
+  }
+  linkedWidgetRefreshTimer = window.setInterval(() => {
+    refreshLinkedWidgets();
+  }, 3000);
   updateWidgetUi();
   updateOnboardingControlsUi();
   scheduleOnboardingRefresh(0);
