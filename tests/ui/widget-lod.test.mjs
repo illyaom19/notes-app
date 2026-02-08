@@ -8,7 +8,7 @@ test("widget lod resolves peek for explicit peek mode", () => {
 });
 
 test("widget lod resolves by zoom thresholds", () => {
-  assert.equal(resolveWidgetLod({ cameraZoom: 0.45, viewMode: "interactive" }), "peek");
+  assert.equal(resolveWidgetLod({ cameraZoom: 0.45, viewMode: "interactive" }), "compact");
   assert.equal(resolveWidgetLod({ cameraZoom: 0.8, viewMode: "interactive" }), "compact");
   assert.equal(resolveWidgetLod({ cameraZoom: 1, viewMode: "interactive" }), "detail");
   assert.equal(resolveWidgetLod({ cameraZoom: 3.6, viewMode: "interactive" }), "detail");

@@ -26,6 +26,7 @@ import { createSuggestionStore } from "./features/suggestions/suggestion-store.j
 import { createSuggestionEngine } from "./features/suggestions/suggestion-engine.js";
 import { createSuggestionUiController } from "./features/suggestions/suggestion-ui-controller.js";
 import { createReferenceManagerUi } from "./features/references/reference-manager-ui.js";
+import { createSectionMinimapController } from "./features/minimap/section-minimap-controller.js";
 import { ALLOWED_CREATION_INTENT_TYPES } from "./features/widget-system/widget-types.js";
 
 const toggleUiModeButton = document.querySelector("#toggle-ui-mode");
@@ -67,6 +68,8 @@ const pdfFileInput = document.querySelector("#pdf-file-input");
 const researchPanel = document.querySelector("#research-panel");
 const searchPanel = document.querySelector("#search-panel");
 const suggestionRail = document.querySelector("#suggestion-rail");
+const sectionMinimap = document.querySelector("#section-minimap");
+const sectionMinimapCanvas = document.querySelector("#section-minimap-canvas");
 const referenceManagerLauncher = document.querySelector("#reference-manager-launcher");
 const referenceManagerOverlay = document.querySelector("#reference-manager-overlay");
 const referenceManagerPanel = document.querySelector("#reference-manager-panel");
@@ -154,8 +157,7 @@ let inkStateSnapshot = {
   activeTool: "pen",
   enabled: false,
 };
-let peekModeActive = false;
-let peekModeHoldKeyboard = false;
+let minimapVisible = false;
 
 let contextStore = null;
 let contextWorkspaceStore = null;
@@ -167,6 +169,7 @@ const notebookDocumentLibraryStore = createNotebookDocumentLibraryStore();
 const suggestionStore = createSuggestionStore();
 const suggestionEngine = createSuggestionEngine();
 let suggestionUiController = null;
+let sectionMinimapController = null;
 let referenceManagerUiController = null;
 let suggestionAnalysisTimer = null;
 let suggestionAnalysisInFlight = false;
@@ -550,19 +553,16 @@ const runtime = new CanvasRuntime({
       cameraOutput.textContent = `x=${x.toFixed(1)}, y=${y.toFixed(1)}, zoom=${zoom.toFixed(2)}`;
     }
     renderSuggestionRail();
+    renderSectionMinimap();
   },
   onViewModeChange: ({ mode }) => {
-    peekModeActive = mode === "peek";
     if (peekStateOutput) {
-      peekStateOutput.textContent = peekModeActive ? "on (LOD)" : "off";
-    }
-    if (peekModeActive) {
-      onboardingRuntimeSignals.peekActivated = true;
-      scheduleOnboardingRefresh(40);
+      peekStateOutput.textContent = mode === "peek" ? "legacy-peek" : `minimap:${minimapVisible ? "on" : "off"}`;
     }
   },
   onSelectionChange: () => {
     renderSuggestionRail();
+    renderSectionMinimap();
   },
 });
 
@@ -792,6 +792,15 @@ function updateCameraOutputFromState() {
   cameraOutput.textContent = `x=${worldAtCenter.x.toFixed(1)}, y=${worldAtCenter.y.toFixed(1)}, zoom=${runtime.camera.zoom.toFixed(2)}`;
 }
 
+function renderSectionMinimap() {
+  const visible = sectionMinimapController?.render?.() === true;
+  minimapVisible = visible;
+  if (peekStateOutput) {
+    peekStateOutput.textContent = `minimap:${visible ? "on" : "off"}`;
+  }
+  return visible;
+}
+
 function normalizeGesturePrefs(candidate) {
   const source = candidate && typeof candidate === "object" ? candidate : {};
   const gestures = source.gestures && typeof source.gestures === "object" ? source.gestures : {};
@@ -923,28 +932,6 @@ function resolvePlacementForCreation({ type, intent, requestedSize, fallbackPlac
     position: resolvedPosition,
     anchor: resolvedAnchor,
   };
-}
-
-function setPeekMode(nextEnabled, source = "manual") {
-  const wantsPeek = Boolean(nextEnabled);
-  if (wantsPeek && inkStateSnapshot.activePointers > 0) {
-    if (peekStateOutput) {
-      peekStateOutput.textContent = "blocked (ink-active)";
-    }
-    return false;
-  }
-
-  runtime.setViewMode(wantsPeek ? "peek" : "interactive");
-  peekModeActive = runtime.isPeekMode();
-  if (peekStateOutput) {
-    peekStateOutput.textContent = peekModeActive ? `on (LOD/${source})` : "off";
-  }
-  return peekModeActive;
-}
-
-function updatePeekModeFromHolds(source) {
-  const shouldPeek = peekModeHoldKeyboard;
-  setPeekMode(shouldPeek, source);
 }
 
 function viewportCenterAnchor() {
@@ -1374,16 +1361,10 @@ function updateInkUi(state) {
 
   if (activePointers > 0) {
     inkStateOutput.textContent = activeTool === "eraser" ? "erasing" : "writing";
-    if (peekModeActive) {
-      setPeekMode(false, "ink-active");
-    }
     return;
   }
 
   inkStateOutput.textContent = inkFeature ? (enabled ? "active" : "paused") : "idle";
-  if (peekModeHoldKeyboard && !peekModeActive) {
-    updatePeekModeFromHolds("hold");
-  }
 }
 
 function currentInkTool() {
@@ -2924,6 +2905,7 @@ function updateWidgetUi() {
   updateContextUi();
   updateReferenceManagerUi();
   renderSuggestionRail();
+  renderSectionMinimap();
   if (searchIndex && workspaceScopeId()) {
     searchIndex.scheduleReindex({
       runtime,
@@ -5062,15 +5044,6 @@ function wireBaseEventHandlers() {
       syncToolsUi();
     }
 
-    if ((key === " " || key === "spacebar") && !isTypingTarget(event.target)) {
-      if (!event.repeat) {
-        peekModeHoldKeyboard = true;
-        updatePeekModeFromHolds("space");
-      }
-      event.preventDefault();
-      return;
-    }
-
     if ((event.ctrlKey || event.metaKey) && key === "f") {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -5124,20 +5097,6 @@ function wireBaseEventHandlers() {
     }
   });
 
-  window.addEventListener("keyup", (event) => {
-    const key = event.key.toLowerCase();
-    if (key === " " || key === "spacebar") {
-      peekModeHoldKeyboard = false;
-      updatePeekModeFromHolds("space");
-      event.preventDefault();
-    }
-  });
-
-  window.addEventListener("blur", () => {
-    peekModeHoldKeyboard = false;
-    updatePeekModeFromHolds("blur");
-  });
-
   window.addEventListener("beforeunload", () => {
     flushWorkspacePersist();
   });
@@ -5189,6 +5148,24 @@ function wireSuggestionUi() {
   });
 
   renderSuggestionRail();
+}
+
+function wireSectionMinimap() {
+  if (sectionMinimapController) {
+    return;
+  }
+
+  sectionMinimapController = createSectionMinimapController({
+    runtime,
+    rootElement: sectionMinimap,
+    canvasElement: sectionMinimapCanvas,
+    onFocusFromMinimap: () => {
+      onboardingRuntimeSignals.peekActivated = true;
+      scheduleOnboardingRefresh(40);
+    },
+  });
+
+  renderSectionMinimap();
 }
 
 function wireReferenceManagerUi() {
@@ -5673,6 +5650,7 @@ async function bootstrap() {
   wireDocumentFocusSync();
   wireContextMenu();
   wireSuggestionUi();
+  wireSectionMinimap();
   wireReferenceManagerUi();
 
   updateSnipUi({ armed: false, dragging: false });
@@ -5680,7 +5658,7 @@ async function bootstrap() {
   toolsPanelOpen = safeLocalStorageGetItem("notes-app.tools-panel.open") === "1";
   syncToolsUi();
   syncUiModeControls();
-  setPeekMode(false, "boot");
+  renderSectionMinimap();
   updateInkUi({
     completedStrokes: 0,
     undoDepth: 0,

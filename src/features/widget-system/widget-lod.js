@@ -6,7 +6,7 @@ function safeNumber(value, fallback = 0) {
 
 export function resolveWidgetLod({ cameraZoom, viewMode } = {}) {
   const zoom = Math.max(0, safeNumber(cameraZoom, 1));
-  if (viewMode === "peek" || zoom <= WIDGET_THEME.lod.peekMaxZoom) {
+  if (viewMode === "peek") {
     return "peek";
   }
   if (zoom < WIDGET_THEME.lod.detailMinZoom) {

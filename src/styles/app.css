@@ -931,6 +931,41 @@ body[data-ui-mode="production"] .topbar h1 {
   cursor: pointer;
 }
 
+.section-minimap {
+  --minimap-size: 100px;
+  position: fixed;
+  top: 0.84rem;
+  right: 0.84rem;
+  z-index: 56;
+  width: var(--minimap-size);
+  height: var(--minimap-size);
+  border: 1px solid var(--theme-line-strong);
+  border-radius: var(--theme-radius-card);
+  background: color-mix(in srgb, var(--theme-bg-panel) 70%, transparent);
+  box-shadow: var(--theme-shadow-soft);
+  backdrop-filter: blur(4px);
+  overflow: hidden;
+  opacity: 0.46;
+  transition: opacity 130ms ease, border-color 130ms ease;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.section-minimap[data-hovered="true"] {
+  opacity: 0.84;
+  border-color: var(--theme-action);
+}
+
+.section-minimap[hidden] {
+  display: none !important;
+}
+
+.section-minimap canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .reference-manager-launcher {
   position: fixed;
   right: 1rem;

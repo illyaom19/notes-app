@@ -90,9 +90,13 @@ export class CanvasRuntime {
 
   pickWidgetAtScreenPoint(screenX, screenY) {
     const world = this.camera.screenToWorld(screenX, screenY);
+    return this.pickWidgetAtWorldPoint(world.x, world.y);
+  }
+
+  pickWidgetAtWorldPoint(worldX, worldY) {
     for (let index = this.widgets.length - 1; index >= 0; index -= 1) {
       const widget = this.widgets[index];
-      if (widget.containsWorldPoint(world.x, world.y)) {
+      if (widget.containsWorldPoint(worldX, worldY)) {
         return widget;
       }
     }
@@ -101,6 +105,50 @@ export class CanvasRuntime {
 
   getWidgetCount() {
     return this.widgets.length;
+  }
+
+  getWidgetWorldRect(widgetOrId) {
+    const widget = typeof widgetOrId === "string" ? this.getWidgetById(widgetOrId) : widgetOrId;
+    return this._widgetWorldRect(widget);
+  }
+
+  getSectionWorldBounds() {
+    return this._computeSectionWorldBounds();
+  }
+
+  getVisibleWorldBounds() {
+    return this._visibleWorldBounds(this.canvas.clientWidth, this.canvas.clientHeight);
+  }
+
+  focusWidget(widgetId, { fitRatio = 0.75, worldPoint = null } = {}) {
+    const widget = this.getWidgetById(widgetId);
+    if (!widget) {
+      return false;
+    }
+
+    const focusRect = this._contentWorldRectForWidget(widget, worldPoint);
+    this._fitWorldRectToViewport(focusRect, fitRatio);
+    this.bringWidgetToFront(widget.id);
+    this.setFocusedWidgetId(widget.id);
+    this.setSelectedWidgetId(widget.id);
+    this._emitCamera();
+    return true;
+  }
+
+  focusWidgetAtWorldPoint(worldX, worldY, { fitRatio = 0.75 } = {}) {
+    if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) {
+      return false;
+    }
+
+    const widget = this.pickWidgetAtWorldPoint(worldX, worldY);
+    if (!widget) {
+      return false;
+    }
+
+    return this.focusWidget(widget.id, {
+      fitRatio,
+      worldPoint: { x: worldX, y: worldY },
+    });
   }
 
   registerInputHandler(handler) {
@@ -226,13 +274,16 @@ export class CanvasRuntime {
     };
   }
 
-  _contentWorldRectForWidgetAtPoint(widget, offsetX, offsetY) {
+  _contentWorldRectForWidget(widget, worldPoint = null) {
     if (!widget) {
       return null;
     }
 
     if (widget.type === "pdf-document" && typeof widget.getPageWorldRect === "function") {
-      const point = this.camera.screenToWorld(offsetX, offsetY);
+      const point =
+        worldPoint && Number.isFinite(worldPoint.x) && Number.isFinite(worldPoint.y)
+          ? worldPoint
+          : null;
       const pageCount = Number.isFinite(widget.pageCount) ? widget.pageCount : 0;
       for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
         const pageRect = widget.getPageWorldRect(pageNumber);
@@ -240,6 +291,7 @@ export class CanvasRuntime {
           continue;
         }
         if (
+          point &&
           point.x >= pageRect.x &&
           point.x <= pageRect.x + pageRect.width &&
           point.y >= pageRect.y &&
@@ -251,6 +303,14 @@ export class CanvasRuntime {
     }
 
     return this._widgetWorldRect(widget);
+  }
+
+  _contentWorldRectForWidgetAtPoint(widget, offsetX, offsetY) {
+    if (!widget) {
+      return null;
+    }
+    const point = this.camera.screenToWorld(offsetX, offsetY);
+    return this._contentWorldRectForWidget(widget, point);
   }
 
   _fitWorldRectToViewport(rect, fillRatio = 0.75) {
@@ -272,8 +332,17 @@ export class CanvasRuntime {
   }
 
   _fitUsedWorldToViewport(fillRatio = 0.92) {
-    if (!Array.isArray(this.widgets) || this.widgets.length < 1) {
+    const bounds = this._computeSectionWorldBounds();
+    if (!bounds) {
       return;
+    }
+
+    this._fitWorldRectToViewport(bounds, fillRatio);
+  }
+
+  _computeSectionWorldBounds() {
+    if (!Array.isArray(this.widgets) || this.widgets.length < 1) {
+      return null;
     }
 
     let minX = Number.POSITIVE_INFINITY;
@@ -293,38 +362,15 @@ export class CanvasRuntime {
     }
 
     if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-      return;
+      return null;
     }
 
-    this._fitWorldRectToViewport(
-      {
-        x: minX,
-        y: minY,
-        width: Math.max(1, maxX - minX),
-        height: Math.max(1, maxY - minY),
-      },
-      fillRatio,
-    );
-  }
-
-  _handlePeekPointerDown(event) {
-    if (event.button !== 0 && event.pointerType !== "touch") {
-      return false;
-    }
-
-    const widget = this.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
-    if (!widget) {
-      return false;
-    }
-
-    const focusRect = this._contentWorldRectForWidgetAtPoint(widget, event.offsetX, event.offsetY);
-    this.setViewMode("interactive");
-    this._fitWorldRectToViewport(focusRect, 0.75);
-    this.bringWidgetToFront(widget.id);
-    this.setFocusedWidgetId(widget.id);
-    this.setSelectedWidgetId(widget.id);
-    this._emitCamera();
-    return true;
+    return {
+      x: minX,
+      y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+    };
   }
 
   _bindEvents() {
@@ -332,10 +378,6 @@ export class CanvasRuntime {
 
     this.canvas.addEventListener("pointerdown", (event) => {
       this._lastPointerType = event.pointerType || this._lastPointerType;
-      if (this._viewMode === "peek" && this._handlePeekPointerDown(event)) {
-        event.preventDefault();
-        return;
-      }
 
       if (event.pointerType === "touch") {
         const canDispatchToInteraction = this._touchControllerOwner !== "camera";
@@ -368,10 +410,6 @@ export class CanvasRuntime {
 
       if (this._dispatchPointer("onPointerDown", event)) {
         this.canvas.setPointerCapture(event.pointerId);
-        return;
-      }
-
-      if (this._viewMode === "peek") {
         return;
       }
 
@@ -411,40 +449,22 @@ export class CanvasRuntime {
           if (this._touchGesture) {
             if (this._touchGesture.distance > 0 && metrics.distance > 0) {
               const zoomFactor = metrics.distance / this._touchGesture.distance;
-              if (this._viewMode === "peek") {
-                if (zoomFactor > 1.02) {
-                  this.setViewMode("interactive");
-                  this.camera.zoomAt(metrics.center.x, metrics.center.y, zoomFactor);
-                  if (this.camera.zoom <= WIDGET_THEME.lod.peekMaxZoom) {
-                    this.setViewMode("peek");
-                  } else {
-                    this._emitCamera();
-                  }
-                }
-              } else {
-                this.camera.zoomAt(metrics.center.x, metrics.center.y, zoomFactor);
-                if (this.camera.zoom <= WIDGET_THEME.lod.peekMaxZoom) {
-                  this.setViewMode("peek");
-                } else {
-                  this._emitCamera();
-                }
-              }
-            }
-
-            if (this._viewMode !== "peek") {
-              this.camera.panBy(
-                metrics.center.x - this._touchGesture.center.x,
-                metrics.center.y - this._touchGesture.center.y,
-              );
+              this.camera.zoomAt(metrics.center.x, metrics.center.y, zoomFactor);
               this._emitCamera();
             }
+
+            this.camera.panBy(
+              metrics.center.x - this._touchGesture.center.x,
+              metrics.center.y - this._touchGesture.center.y,
+            );
+            this._emitCamera();
           }
           this._touchGesture = metrics;
           return;
         }
 
         this._touchGesture = null;
-        if (previous && this._viewMode !== "peek") {
+        if (previous) {
           this.camera.panBy(event.clientX - previous.x, event.clientY - previous.y);
           this._emitCamera();
         }
@@ -455,10 +475,6 @@ export class CanvasRuntime {
       this._hoverWidgetId = hoveredWidget?.id ?? null;
 
       if (this._dispatchPointer("onPointerMove", event)) {
-        return;
-      }
-
-      if (this._viewMode === "peek") {
         return;
       }
 
@@ -516,10 +532,6 @@ export class CanvasRuntime {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
-        return;
-      }
-
-      if (this._viewMode === "peek") {
         return;
       }
 
@@ -582,21 +594,9 @@ export class CanvasRuntime {
       (event) => {
         event.preventDefault();
         this._lastPointerType = "mouse";
-        if (this._viewMode === "peek") {
-          if (event.deltaY < 0) {
-            this.setViewMode("interactive");
-            this.camera.zoomAt(event.offsetX, event.offsetY, 1.08);
-            this._emitCamera();
-          }
-          return;
-        }
         const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08;
         this.camera.zoomAt(event.offsetX, event.offsetY, zoomFactor);
-        if (this.camera.zoom <= WIDGET_THEME.lod.peekMaxZoom) {
-          this.setViewMode("peek");
-        } else {
-          this._emitCamera();
-        }
+        this._emitCamera();
       },
       { passive: false },
     );
@@ -698,10 +698,9 @@ export class CanvasRuntime {
       theme: WIDGET_THEME,
     };
     const visibleWorld = this._visibleWorldBounds(width, height);
-    const peekMode = this._viewMode === "peek";
 
     this.ctx.clearRect(0, 0, width, height);
-    this._drawGrid(width, height, this._viewMode);
+    this._drawGrid(width, height);
 
     for (const widget of this.widgets) {
       if (!this._isWidgetVisible(widget, visibleWorld)) {
@@ -709,19 +708,15 @@ export class CanvasRuntime {
       }
 
       widget.update(dt);
-      if ((peekMode || widget.collapsed) && typeof widget.renderSnapshot === "function") {
+      if (widget.collapsed && typeof widget.renderSnapshot === "function") {
         widget.renderSnapshot(this.ctx, this.camera, renderContext);
       } else {
         widget.render(this.ctx, this.camera, renderContext);
       }
     }
 
-    const renderLayers = peekMode
-      ? this._renderLayers.filter((layer) => layer?.renderInPeek === true)
-      : this._renderLayers;
-
     // Render layers (for example ink) are painted after widgets so strokes remain visible on top.
-    for (const layer of renderLayers) {
+    for (const layer of this._renderLayers) {
       if (typeof layer.update === "function") {
         layer.update(dt);
       }
@@ -730,11 +725,7 @@ export class CanvasRuntime {
       }
     }
 
-    const overlayLayers = peekMode
-      ? this._overlayLayers.filter((layer) => layer?.renderInPeek === true)
-      : this._overlayLayers;
-
-    for (const layer of overlayLayers) {
+    for (const layer of this._overlayLayers) {
       if (typeof layer.update === "function") {
         layer.update(dt);
       }
@@ -744,9 +735,9 @@ export class CanvasRuntime {
     }
   }
 
-  _drawGrid(width, height, viewMode = "interactive") {
+  _drawGrid(width, height) {
     const { ctx, camera } = this;
-    const spacing = viewMode === "peek" ? 180 : 80;
+    const spacing = 80;
     const minWorld = camera.screenToWorld(0, 0);
     const maxWorld = camera.screenToWorld(width, height);
 
@@ -755,7 +746,7 @@ export class CanvasRuntime {
     const startY = Math.floor(minWorld.y / spacing) * spacing;
     const endY = Math.ceil(maxWorld.y / spacing) * spacing;
 
-    ctx.strokeStyle = viewMode === "peek" ? "#d0d8df" : "#d6dde5";
+    ctx.strokeStyle = "#d6dde5";
     ctx.lineWidth = 1;
 
     for (let x = startX; x <= endX; x += spacing) {
@@ -775,7 +766,7 @@ export class CanvasRuntime {
     }
 
     const origin = camera.worldToScreen(0, 0);
-    ctx.strokeStyle = viewMode === "peek" ? "#8ea0ad" : "#8ba0b2";
+    ctx.strokeStyle = "#8ba0b2";
     ctx.beginPath();
     ctx.moveTo(origin.x - 12, origin.y);
     ctx.lineTo(origin.x + 12, origin.y);
