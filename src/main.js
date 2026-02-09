@@ -2315,6 +2315,7 @@ function formatWidgetInfo(widget) {
   const size = `${Math.round(widget.size.width)} x ${Math.round(widget.size.height)}`;
 
   const details = [`${kind}`, `Title: ${title}`, `Size: ${size}`];
+  details.push(`Pinned: ${widget.metadata?.pinned ? "Yes" : "No"}`);
 
   if (widget.type === "reference-popup") {
     const source = typeof widget.sourceLabel === "string" && widget.sourceLabel.trim() ? widget.sourceLabel.trim() : "Unknown";
@@ -2329,6 +2330,19 @@ function formatWidgetInfo(widget) {
   }
 
   return details.join("\n");
+}
+
+function toggleWidgetPinFromContextMenu(widget) {
+  if (!widget) {
+    return false;
+  }
+
+  widget.metadata = {
+    ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+    pinned: !Boolean(widget.metadata?.pinned),
+  };
+  updateWidgetUi();
+  return true;
 }
 
 async function toggleWidgetLibraryFromContextMenu(widget) {
@@ -5681,6 +5695,7 @@ function wireContextMenu() {
     onCopyWidget: (widget) => copyWidgetFromContextMenu(widget),
     onRenameWidget: (widget) => renameWidgetFromContextMenu(widget),
     onToggleLibrary: (widget) => toggleWidgetLibraryFromContextMenu(widget),
+    onTogglePin: (widget) => toggleWidgetPinFromContextMenu(widget),
     onShowWidgetInfo: async (widget) => {
       await showNoticeDialog(formatWidgetInfo(widget), { title: "Widget Info" });
     },

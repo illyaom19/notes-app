@@ -134,13 +134,15 @@ test("workspace load repairs stale widget asset ids using inline fallback payloa
     envelope.data.widgets[0].dataPayload.imageDataUrl = "data:image/png;base64,DDDD";
     storage.setItem(workspaceKey(contextId), JSON.stringify(envelope));
 
-    const repaired = store.loadWorkspace(contextId);
+    // Recreate the store to avoid in-memory asset payload cache masking stale-asset recovery.
+    const repairedStore = createContextWorkspaceStore({ storage });
+    const repaired = repairedStore.loadWorkspace(contextId);
     const repairedWidget = repaired.widgets[0];
 
     assert.notEqual(repairedWidget.dataPayload.imageAssetId, staleAssetId);
     assert.equal(repairedWidget.dataPayload.imageDataUrl, null);
 
-    const definition = store.toWidgetDefinition(repairedWidget);
+    const definition = repairedStore.toWidgetDefinition(repairedWidget);
     assert.equal(definition.dataPayload.imageDataUrl, "data:image/png;base64,DDDD");
   } finally {
     restoreEnv();

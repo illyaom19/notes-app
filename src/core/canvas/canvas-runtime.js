@@ -224,6 +224,9 @@ export class CanvasRuntime {
 
   setSelectedWidgetId(widgetId) {
     const nextSelectedId = !widgetId || !this.getWidgetById(widgetId) ? null : widgetId;
+    if (nextSelectedId) {
+      this.bringWidgetToFront(nextSelectedId);
+    }
     if (nextSelectedId === this._selectedWidgetId) {
       return;
     }

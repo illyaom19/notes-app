@@ -57,6 +57,10 @@ function interactionFlags(widget) {
   };
 }
 
+function isWidgetPinned(widget) {
+  return Boolean(widget?.metadata?.pinned);
+}
+
 function widgetBounds(widget, camera) {
   if (typeof widget.getInteractionBounds === "function") {
     const bounds = widget.getInteractionBounds(camera);
@@ -117,10 +121,10 @@ function controlRects(widget, camera) {
   };
 }
 
-function controlsUnavailable({ flags, rects, camera, collapsed }) {
+function controlsUnavailable({ flags, rects, camera, collapsed, pinned = false }) {
   const unavailable = {
     collapse: false,
-    resize: collapsed,
+    resize: collapsed || pinned,
   };
 
   if (flags.collapsible) {
@@ -270,6 +274,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         rects,
         camera,
         collapsed: widget.collapsed,
+        pinned: isWidgetPinned(widget),
       });
       const touchCanCaptureInteraction = !isTouch || activeTouchPointerIds.size === 1;
 
@@ -307,6 +312,10 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       }
 
       if (flags.movable && rectContains(rects.header, point.x, point.y)) {
+        if (isWidgetPinned(widget)) {
+          beginTapCandidate(event, widget);
+          return false;
+        }
         if (!touchCanCaptureInteraction) {
           return false;
         }
@@ -466,6 +475,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         rects,
         camera,
         collapsed: widget.collapsed,
+        pinned: isWidgetPinned(widget),
       });
 
       if (!revealActions) {

@@ -28,6 +28,10 @@ function isWidgetInLibrary(widget) {
   return false;
 }
 
+function isWidgetPinned(widget) {
+  return Boolean(widget?.metadata?.pinned);
+}
+
 export function createWidgetContextMenu({
   canvas,
   menuElement,
@@ -35,6 +39,7 @@ export function createWidgetContextMenu({
   onCopyWidget,
   onRenameWidget,
   onToggleLibrary,
+  onTogglePin,
   onShowWidgetInfo,
   onWidgetMutated,
 }) {
@@ -57,6 +62,7 @@ export function createWidgetContextMenu({
   const copyButton = menuElement.querySelector('[data-action="copy-widget"]');
   const renameButton = menuElement.querySelector('[data-action="rename-widget"]');
   const libraryButton = menuElement.querySelector('[data-action="toggle-library"]');
+  const pinButton = menuElement.querySelector('[data-action="toggle-pin"]');
   const infoButton = menuElement.querySelector('[data-action="widget-info"]');
   const removeButton = menuElement.querySelector('[data-action="remove-widget"]');
 
@@ -85,6 +91,7 @@ export function createWidgetContextMenu({
     const canActOnWidget = true;
     const canLibrary = isLibraryEligible(widget);
     const inLibrary = canLibrary && isWidgetInLibrary(widget);
+    const pinned = isWidgetPinned(widget);
 
     if (copyButton) {
       copyButton.disabled = !canActOnWidget;
@@ -95,6 +102,10 @@ export function createWidgetContextMenu({
     if (libraryButton) {
       libraryButton.disabled = !canLibrary;
       libraryButton.textContent = inLibrary ? "Remove From Library" : "Add To Library";
+    }
+    if (pinButton) {
+      pinButton.disabled = !canActOnWidget;
+      pinButton.textContent = pinned ? "Unpin" : "Pin";
     }
     if (infoButton) {
       infoButton.disabled = !canActOnWidget;
@@ -272,6 +283,12 @@ export function createWidgetContextMenu({
 
     if (action === "toggle-library" && activeWidget) {
       await onToggleLibrary?.(activeWidget);
+      closeMenu();
+      return;
+    }
+
+    if (action === "toggle-pin" && activeWidget) {
+      await onTogglePin?.(activeWidget);
       closeMenu();
       return;
     }

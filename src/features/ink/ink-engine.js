@@ -143,7 +143,7 @@ export class InkEngine {
     return stroke.contextId === null || stroke.contextId === activeContextId;
   }
 
-  _resolveWidgetBounds(widgetId) {
+  _resolveWidgetBounds(widgetId, camera = this.runtime.camera) {
     if (!widgetId) {
       return null;
     }
@@ -157,7 +157,7 @@ export class InkEngine {
     }
 
     if (typeof widget.getInkAnchorBounds === "function") {
-      const anchorBounds = widget.getInkAnchorBounds(this.runtime.camera);
+      const anchorBounds = widget.getInkAnchorBounds(camera);
       if (
         anchorBounds &&
         Number.isFinite(anchorBounds.x) &&
@@ -176,7 +176,7 @@ export class InkEngine {
 
     const interactionBounds =
       typeof widget.getInteractionBounds === "function"
-        ? widget.getInteractionBounds(this.runtime.camera)
+        ? widget.getInteractionBounds(camera)
         : { width: widget.size.width, height: widget.size.height };
 
     return {
@@ -285,6 +285,87 @@ export class InkEngine {
     return Boolean(widget && widget.type === "expanded-area" && !widget.collapsed);
   }
 
+  _drawStrokeWithOcclusionClip(ctx, camera, stroke, renderable) {
+    if (
+      !stroke ||
+      stroke.layer === "global" ||
+      typeof stroke.sourceWidgetId !== "string" ||
+      !stroke.sourceWidgetId.trim()
+    ) {
+      drawStroke(ctx, camera, renderable);
+      return;
+    }
+
+    const widgets = this.runtime.listWidgets();
+    const sourceIndex = widgets.findIndex((widget) => widget.id === stroke.sourceWidgetId);
+    if (sourceIndex < 0) {
+      return;
+    }
+
+    const sourceWidget = widgets[sourceIndex];
+    const sourceBounds =
+      typeof sourceWidget.getInteractionBounds === "function"
+        ? sourceWidget.getInteractionBounds(camera)
+        : { width: sourceWidget.size.width, height: sourceWidget.size.height };
+    if (
+      !sourceBounds ||
+      !Number.isFinite(sourceBounds.width) ||
+      !Number.isFinite(sourceBounds.height) ||
+      sourceBounds.width <= 0 ||
+      sourceBounds.height <= 0
+    ) {
+      return;
+    }
+
+    const sourceScreen = camera.worldToScreen(sourceWidget.position.x, sourceWidget.position.y);
+    const sourceWidth = Math.max(1, sourceBounds.width * camera.zoom);
+    const sourceHeight = Math.max(1, sourceBounds.height * camera.zoom);
+    const sourceMaxX = sourceScreen.x + sourceWidth;
+    const sourceMaxY = sourceScreen.y + sourceHeight;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(sourceScreen.x, sourceScreen.y, sourceWidth, sourceHeight);
+
+    for (let index = sourceIndex + 1; index < widgets.length; index += 1) {
+      const occluder = widgets[index];
+      const occluderBounds =
+        typeof occluder.getInteractionBounds === "function"
+          ? occluder.getInteractionBounds(camera)
+          : { width: occluder.size.width, height: occluder.size.height };
+      if (
+        !occluderBounds ||
+        !Number.isFinite(occluderBounds.width) ||
+        !Number.isFinite(occluderBounds.height) ||
+        occluderBounds.width <= 0 ||
+        occluderBounds.height <= 0
+      ) {
+        continue;
+      }
+
+      const occluderScreen = camera.worldToScreen(occluder.position.x, occluder.position.y);
+      const occluderWidth = Math.max(1, occluderBounds.width * camera.zoom);
+      const occluderHeight = Math.max(1, occluderBounds.height * camera.zoom);
+      const occluderMaxX = occluderScreen.x + occluderWidth;
+      const occluderMaxY = occluderScreen.y + occluderHeight;
+
+      if (
+        occluderScreen.x >= sourceMaxX ||
+        occluderScreen.y >= sourceMaxY ||
+        occluderMaxX <= sourceScreen.x ||
+        occluderMaxY <= sourceScreen.y
+      ) {
+        continue;
+      }
+
+      ctx.rect(occluderScreen.x, occluderScreen.y, occluderWidth, occluderHeight);
+    }
+
+    ctx.clip("evenodd");
+    drawStroke(ctx, camera, renderable);
+    ctx.restore();
+  }
+
   _drawLayer(ctx, camera, layer) {
     const completed = this.store
       .getCompletedStrokes()
@@ -295,20 +376,8 @@ export class InkEngine {
       if (!renderable || !Array.isArray(renderable.points) || renderable.points.length < 1) {
         continue;
       }
-      if (this._isCropAnchoredWidgetStroke(stroke)) {
-        const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId);
-        if (!bounds) {
-          continue;
-        }
-        const screen = camera.worldToScreen(bounds.x, bounds.y);
-        const width = Math.max(1, bounds.width * camera.zoom);
-        const height = Math.max(1, bounds.height * camera.zoom);
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(screen.x, screen.y, width, height);
-        ctx.clip();
-        drawStroke(ctx, camera, renderable);
-        ctx.restore();
+      if (this._isCropAnchoredWidgetStroke(stroke) || stroke.layer === "pdf" || stroke.layer === "widget") {
+        this._drawStrokeWithOcclusionClip(ctx, camera, stroke, renderable);
       } else {
         drawStroke(ctx, camera, renderable);
       }
@@ -322,20 +391,8 @@ export class InkEngine {
       if (!renderable || !Array.isArray(renderable.points) || renderable.points.length < 1) {
         continue;
       }
-      if (this._isCropAnchoredWidgetStroke(stroke)) {
-        const bounds = this._resolveWidgetBounds(stroke.sourceWidgetId);
-        if (!bounds) {
-          continue;
-        }
-        const screen = camera.worldToScreen(bounds.x, bounds.y);
-        const width = Math.max(1, bounds.width * camera.zoom);
-        const height = Math.max(1, bounds.height * camera.zoom);
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(screen.x, screen.y, width, height);
-        ctx.clip();
-        drawStroke(ctx, camera, renderable);
-        ctx.restore();
+      if (this._isCropAnchoredWidgetStroke(stroke) || stroke.layer === "pdf" || stroke.layer === "widget") {
+        this._drawStrokeWithOcclusionClip(ctx, camera, stroke, renderable);
       } else {
         drawStroke(ctx, camera, renderable);
       }
