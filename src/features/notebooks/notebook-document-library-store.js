@@ -250,6 +250,12 @@ export function createNotebookDocumentLibraryStore({ storage = window.localStora
   }
 
   return {
+    async prepare() {
+      if (typeof assetManager.hydratePayloadCache === "function") {
+        await assetManager.hydratePayloadCache();
+      }
+    },
+
     listDocuments(notebookId, { includeDeleted = false } = {}) {
       const notebook = ensureNotebook(notebookId);
       if (!notebook) {

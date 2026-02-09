@@ -218,6 +218,60 @@ function safeLocalStorageGetItem(key) {
   }
 }
 
+async function requestPersistentStorageQuota() {
+  if (typeof navigator === "undefined" || !navigator.storage) {
+    return;
+  }
+
+  try {
+    const storage = navigator.storage;
+    const alreadyPersisted =
+      typeof storage.persisted === "function" ? await storage.persisted() : false;
+    if (!alreadyPersisted && typeof storage.persist === "function") {
+      await storage.persist();
+    }
+  } catch (error) {
+    console.warn("[storage] failed to request persistent storage.", error);
+  }
+}
+
+async function prepareStorageBackends() {
+  await requestPersistentStorageQuota();
+  if (typeof notebookDocumentLibraryStore.prepare === "function") {
+    try {
+      await notebookDocumentLibraryStore.prepare();
+    } catch (error) {
+      console.warn("[storage] failed to prepare notebook document storage.", error);
+    }
+  }
+}
+
+function registerPwaServiceWorker() {
+  const hostname =
+    typeof window !== "undefined" && window.location ? window.location.hostname : "";
+  const isLocalDevHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  const isSecureContext =
+    typeof window !== "undefined" && window.location
+      ? window.location.protocol === "https:" || isLocalDevHost
+      : false;
+
+  if (
+    typeof window === "undefined" ||
+    !("serviceWorker" in navigator) ||
+    !isSecureContext
+  ) {
+    return;
+  }
+
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("./sw.js")
+      .catch((error) => {
+        console.warn("[pwa] failed to register service worker.", error);
+      });
+  });
+}
+
 let activeAppDialog = null;
 
 function closeActiveAppDialog() {
@@ -5857,6 +5911,9 @@ async function setupContextFeatures() {
 
   contextStore = contextStoreModule.createContextStore();
   contextWorkspaceStore = contextWorkspaceModule.createContextWorkspaceStore();
+  if (typeof contextWorkspaceStore.prepare === "function") {
+    await contextWorkspaceStore.prepare();
+  }
   activeContextId = contextStore.getActiveContextId();
   sectionsStore.ensureNotebook(activeContextId);
   activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
@@ -6193,6 +6250,9 @@ async function setupContextFeatures() {
 }
 
 async function bootstrap() {
+  registerPwaServiceWorker();
+  await prepareStorageBackends();
+
   uiModeState = loadUiModeState();
   setUiMode(uiModeState.mode, { persist: false });
 

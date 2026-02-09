@@ -7,6 +7,9 @@ const DATA_PREFIX = ASSET_SCHEMA.dataPrefix;
 const SCHEMA_VERSION = ASSET_SCHEMA.schemaVersion;
 const DEFAULT_MAX_BYTES = ASSET_SCHEMA.defaultMaxBytes;
 const PDF_BYTES_BINARY_PREFIX = "bin:";
+const ASSET_DB_NAME = "notes-app-assets";
+const ASSET_DB_VERSION = 1;
+const ASSET_DB_STORE = "payloads";
 
 function nowIso() {
   return new Date().toISOString();
@@ -136,10 +139,12 @@ function normalizeAssetRecord(candidate) {
 
 function normalizeCatalog(candidate, maxBytes) {
   const source = asObject(candidate);
+  const fallbackMaxBytes = Math.max(1024, Math.floor(maxBytes));
+  const storedMaxBytes = Number.isFinite(source.maxBytes)
+    ? Math.max(1024, Math.floor(source.maxBytes))
+    : fallbackMaxBytes;
   const normalized = {
-    maxBytes: Number.isFinite(source.maxBytes)
-      ? Math.max(1024, Math.floor(source.maxBytes))
-      : Math.max(1024, Math.floor(maxBytes)),
+    maxBytes: Math.max(storedMaxBytes, fallbackMaxBytes),
     records: [],
   };
 
@@ -166,6 +171,11 @@ export function createAssetManager({
   chunkSize = 24,
 } = {}) {
   let gcTimer = null;
+  const payloadCache = new Map();
+  let payloadsHydrated = false;
+  let hydratePromise = null;
+  let dbPromise = null;
+  let indexedDbUsable = false;
 
   const migrationState = readMigratedEnvelope({
     storage,
@@ -188,6 +198,111 @@ export function createAssetManager({
 
   function dataKey(assetId) {
     return `${DATA_PREFIX}${assetId}`;
+  }
+
+  function supportsIndexedDb() {
+    return typeof window !== "undefined" && "indexedDB" in window;
+  }
+
+  function isDbHandle(candidate) {
+    return candidate && typeof candidate.transaction === "function";
+  }
+
+  function openAssetDb() {
+    if (!supportsIndexedDb()) {
+      return Promise.resolve(null);
+    }
+    if (dbPromise) {
+      return dbPromise;
+    }
+
+    dbPromise = new Promise((resolve) => {
+      const request = window.indexedDB.open(ASSET_DB_NAME, ASSET_DB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (db && !db.objectStoreNames.contains(ASSET_DB_STORE)) {
+          db.createObjectStore(ASSET_DB_STORE);
+        }
+      };
+      request.onsuccess = () => {
+        resolve(request.result ?? null);
+      };
+      request.onerror = () => {
+        console.warn("[storage] failed to open asset IndexedDB.", request.error);
+        resolve(null);
+      };
+    });
+
+    return dbPromise;
+  }
+
+  function loadAllPayloadsFromDb(db) {
+    return new Promise((resolve) => {
+      if (!isDbHandle(db)) {
+        resolve(new Map());
+        return;
+      }
+
+      const tx = db.transaction(ASSET_DB_STORE, "readonly");
+      const store = tx.objectStore(ASSET_DB_STORE);
+      const request = store.openCursor();
+      const payloads = new Map();
+
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve(payloads);
+          return;
+        }
+        if (typeof cursor.key === "string" && typeof cursor.value === "string" && cursor.value.length > 0) {
+          payloads.set(cursor.key, cursor.value);
+        }
+        cursor.continue();
+      };
+
+      request.onerror = () => {
+        console.warn("[storage] failed to read asset payloads from IndexedDB.", request.error);
+        resolve(payloads);
+      };
+    });
+  }
+
+  async function putPayloadToDb(assetId, payload) {
+    const db = await openAssetDb();
+    if (!isDbHandle(db)) {
+      return false;
+    }
+
+    return new Promise((resolve) => {
+      const tx = db.transaction(ASSET_DB_STORE, "readwrite");
+      const store = tx.objectStore(ASSET_DB_STORE);
+      store.put(payload, assetId);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => {
+        console.warn(`[storage] failed to persist asset payload ${assetId} in IndexedDB.`, tx.error);
+        resolve(false);
+      };
+      tx.onabort = () => resolve(false);
+    });
+  }
+
+  async function removePayloadFromDb(assetId) {
+    if (!indexedDbUsable) {
+      return false;
+    }
+    const db = await openAssetDb();
+    if (!isDbHandle(db)) {
+      return false;
+    }
+
+    return new Promise((resolve) => {
+      const tx = db.transaction(ASSET_DB_STORE, "readwrite");
+      const store = tx.objectStore(ASSET_DB_STORE);
+      store.delete(assetId);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    });
   }
 
   function persistCatalog() {
@@ -224,20 +339,29 @@ export function createAssetManager({
       return false;
     }
 
+    payloadCache.delete(assetId);
     storage.removeItem(dataKey(assetId));
+    if (indexedDbUsable) {
+      void removePayloadFromDb(assetId);
+    }
     return true;
   }
 
   function removeStaleRecordsSync() {
+    if (supportsIndexedDb() && !payloadsHydrated) {
+      return false;
+    }
+
     let changed = false;
     const kept = [];
 
     for (const entry of catalog.records) {
-      const payload = storage.getItem(dataKey(entry.id));
+      const payload = payloadCache.get(entry.id) ?? storage.getItem(dataKey(entry.id));
       if (typeof payload !== "string" || payload.length < 1) {
         changed = true;
         continue;
       }
+      payloadCache.set(entry.id, payload);
       kept.push(entry);
     }
 
@@ -293,12 +417,17 @@ export function createAssetManager({
 
       const processChunk = () => {
         const end = Math.min(index + Math.max(4, chunkSize), toProcess.length);
+        const shouldValidatePayloads = !supportsIndexedDb() || payloadsHydrated;
         for (; index < end; index += 1) {
           const entry = toProcess[index];
-          const payload = storage.getItem(dataKey(entry.id));
-          if (typeof payload !== "string" || payload.length < 1) {
-            if (removeRecord(entry.id)) {
-              changed = true;
+          if (shouldValidatePayloads) {
+            const payload = payloadCache.get(entry.id) ?? storage.getItem(dataKey(entry.id));
+            if (typeof payload !== "string" || payload.length < 1) {
+              if (removeRecord(entry.id)) {
+                changed = true;
+              }
+            } else {
+              payloadCache.set(entry.id, payload);
             }
           }
         }
@@ -358,11 +487,12 @@ export function createAssetManager({
         continue;
       }
 
-      const current = storage.getItem(dataKey(entry.id));
+      const current = payloadCache.get(entry.id) ?? storage.getItem(dataKey(entry.id));
       if (current !== payload) {
         continue;
       }
 
+      payloadCache.set(entry.id, current);
       touchRecord(entry);
       if (owner) {
         normalizeRefsForRecord(entry, [...entry.refs, owner]);
@@ -383,11 +513,19 @@ export function createAssetManager({
     }
 
     const id = makeId("asset");
-    try {
-      storage.setItem(dataKey(id), payload);
-    } catch (error) {
-      console.warn("[storage] failed to persist asset payload.", error);
-      return null;
+    payloadCache.set(id, payload);
+
+    if (indexedDbUsable) {
+      void putPayloadToDb(id, payload);
+      storage.removeItem(dataKey(id));
+    } else {
+      try {
+        storage.setItem(dataKey(id), payload);
+      } catch (error) {
+        payloadCache.delete(id);
+        console.warn("[storage] failed to persist asset payload.", error);
+        return null;
+      }
     }
 
     const timestamp = nowIso();
@@ -406,7 +544,11 @@ export function createAssetManager({
     catalog.records.push(record);
     if (!persistCatalog()) {
       catalog.records = catalog.records.filter((entry) => entry.id !== id);
+      payloadCache.delete(id);
       storage.removeItem(dataKey(id));
+      if (indexedDbUsable) {
+        void removePayloadFromDb(id);
+      }
       return null;
     }
     scheduleGarbageCollection({ enforceBudget: true });
@@ -452,8 +594,21 @@ export function createAssetManager({
       return null;
     }
 
-    const payload = storage.getItem(dataKey(assetId));
+    let payload = payloadCache.get(assetId) ?? null;
     if (typeof payload !== "string" || payload.length < 1) {
+      payload = storage.getItem(dataKey(assetId));
+      if (typeof payload === "string" && payload.length > 0) {
+        payloadCache.set(assetId, payload);
+        if (indexedDbUsable) {
+          void putPayloadToDb(assetId, payload);
+          storage.removeItem(dataKey(assetId));
+        }
+      }
+    }
+    if (typeof payload !== "string" || payload.length < 1) {
+      if (supportsIndexedDb() && !payloadsHydrated) {
+        return null;
+      }
       removeRecord(assetId);
       persistCatalog();
       return null;
@@ -549,7 +704,70 @@ export function createAssetManager({
       maxBytes: catalog.maxBytes,
       totalBytes: getTotalBytes(),
       recordCount: catalog.records.length,
+      payloadsHydrated,
+      usesIndexedDb: supportsIndexedDb(),
+      indexedDbUsable,
     };
+  }
+
+  async function hydratePayloadCache() {
+    if (payloadsHydrated) {
+      return true;
+    }
+    if (hydratePromise) {
+      return hydratePromise;
+    }
+
+    hydratePromise = (async () => {
+      const db = await openAssetDb();
+      indexedDbUsable = isDbHandle(db);
+      const dbPayloads = await loadAllPayloadsFromDb(db);
+      let changed = false;
+      const migratedLocalKeys = [];
+
+      for (const record of [...catalog.records]) {
+        let payload = dbPayloads.get(record.id) ?? null;
+        if (typeof payload !== "string" || payload.length < 1) {
+          const legacyPayload = storage.getItem(dataKey(record.id));
+          if (typeof legacyPayload === "string" && legacyPayload.length > 0) {
+            payload = legacyPayload;
+            if (indexedDbUsable) {
+              void putPayloadToDb(record.id, payload);
+              migratedLocalKeys.push(dataKey(record.id));
+            }
+          }
+        }
+
+        if (typeof payload !== "string" || payload.length < 1) {
+          removeRecord(record.id);
+          changed = true;
+          continue;
+        }
+
+        payloadCache.set(record.id, payload);
+      }
+
+      for (const key of migratedLocalKeys) {
+        storage.removeItem(key);
+      }
+
+      if (changed) {
+        persistCatalog();
+      }
+      payloadsHydrated = true;
+      return true;
+    })()
+      .catch((error) => {
+        console.warn("[storage] failed to hydrate asset payload cache.", error);
+        indexedDbUsable = false;
+        payloadsHydrated = true;
+        return false;
+      })
+      .finally(() => {
+        hydratePromise = null;
+      });
+
+    return hydratePromise;
   }
 
   scheduleGarbageCollection({ delayMs: 60, enforceBudget: true });
@@ -566,5 +784,6 @@ export function createAssetManager({
     ownerRef,
     scheduleGarbageCollection,
     snapshot,
+    hydratePayloadCache,
   };
 }

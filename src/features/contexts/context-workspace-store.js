@@ -1025,6 +1025,12 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
   const assetManager = createAssetManager({ storage });
 
   return {
+    async prepare() {
+      if (typeof assetManager.hydratePayloadCache === "function") {
+        await assetManager.hydratePayloadCache();
+      }
+    },
+
     loadWorkspace(contextId) {
       const key = keyForContext(contextId);
       let workspace = defaultWorkspace(contextId);
