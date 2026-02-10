@@ -185,7 +185,13 @@ function isTypingTarget(target) {
   );
 }
 
-export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutated, onWidgetTap }) {
+export function createWidgetInteractionManager({
+  runtime,
+  canvas,
+  onWidgetMutated,
+  onWidgetTap,
+  onWidgetDragStateChange,
+}) {
   const dragState = {
     pointerId: null,
     widgetId: null,
@@ -200,6 +206,27 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
     moved: false,
   };
   const activeTouchPointerIds = new Set();
+
+  function emitWidgetDragState(phase, event, widgetId, mode) {
+    if (typeof onWidgetDragStateChange !== "function") {
+      return;
+    }
+    if (typeof widgetId !== "string" || !widgetId.trim()) {
+      return;
+    }
+    if (mode !== "move" && mode !== "resize") {
+      return;
+    }
+    onWidgetDragStateChange({
+      phase,
+      widgetId,
+      mode,
+      pointerType: event?.pointerType ?? null,
+      clientX: Number.isFinite(event?.clientX) ? event.clientX : null,
+      clientY: Number.isFinite(event?.clientY) ? event.clientY : null,
+      pointerId: Number.isFinite(event?.pointerId) ? event.pointerId : null,
+    });
+  }
 
   function clearDragState() {
     if (typeof runtime.setWidgetTransformState === "function") {
@@ -314,6 +341,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         if (typeof runtime.setWidgetTransformState === "function") {
           runtime.setWidgetTransformState(widget.id, "resize");
         }
+        emitWidgetDragState("start", event, widget.id, "resize");
         return true;
       }
 
@@ -336,6 +364,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         if (typeof runtime.setWidgetTransformState === "function") {
           runtime.setWidgetTransformState(widget.id, "move");
         }
+        emitWidgetDragState("start", event, widget.id, "move");
         return true;
       }
 
@@ -381,6 +410,7 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         mutateWidgetSize(widget, dx, dy);
       }
 
+      emitWidgetDragState("move", event, widget.id, dragState.mode);
       onWidgetMutated(widget);
       return true;
     },
@@ -391,7 +421,10 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
       }
 
       if (dragState.pointerId === event.pointerId) {
+        const draggedWidgetId = dragState.widgetId;
+        const draggedMode = dragState.mode;
         clearDragState();
+        emitWidgetDragState("end", event, draggedWidgetId, draggedMode);
         clearTapState();
         return true;
       }
@@ -425,7 +458,10 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         activeTouchPointerIds.delete(event.pointerId);
       }
       if (dragState.pointerId === event.pointerId) {
+        const draggedWidgetId = dragState.widgetId;
+        const draggedMode = dragState.mode;
         clearDragState();
+        emitWidgetDragState("end", event, draggedWidgetId, draggedMode);
       }
       if (tapState.pointerId === event.pointerId) {
         clearTapState();

@@ -4,7 +4,7 @@ const LONG_PRESS_MS = 430;
 const PREVIEW_WIDTH = 220;
 const PREVIEW_HEIGHT = 152;
 const PREVIEW_MARGIN = 12;
-const PREVIEW_HIDE_DELAY_MS = 140;
+const PREVIEW_HIDE_DELAY_MS = 420;
 const DRAG_THRESHOLD_PX = 7;
 const MAX_VISIBLE_CHIPS = 6;
 const MAX_RECENT = 3;
@@ -250,7 +250,9 @@ export function createReferenceManagerUi({
   let previewHideTimer = null;
   let longPressState = null;
   let draggingState = null;
+  let previewHovered = false;
   let previewAbortController = null;
+  let feedbackTimer = null;
 
   const eventDisposers = [];
   const allListElement = referencesListElement instanceof HTMLElement ? referencesListElement : null;
@@ -277,6 +279,10 @@ export function createReferenceManagerUi({
     <div class="library-widget-drag-ghost-body"></div>
   `;
 
+  const dropFeedback = document.createElement("div");
+  dropFeedback.className = "library-drop-feedback";
+  dropFeedback.hidden = true;
+
   function bind(target, type, handler, options) {
     if (!target || typeof target.addEventListener !== "function") {
       return;
@@ -294,6 +300,9 @@ export function createReferenceManagerUi({
     }
     if (!dragGhost.isConnected) {
       shellElement.append(dragGhost);
+    }
+    if (!dropFeedback.isConnected) {
+      shellElement.append(dropFeedback);
     }
   }
 
@@ -327,28 +336,18 @@ export function createReferenceManagerUi({
     container.replaceChildren();
   }
 
-  function renderSubtitle(row, item) {
-    const subtitle = row.querySelector('[data-role="chip-subtitle"]');
-    if (!(subtitle instanceof HTMLElement)) {
-      return;
-    }
-    subtitle.textContent = kindLabel(item);
-  }
-
   function makeChipRow(item) {
     const row = document.createElement("article");
     row.className = "library-chip-row";
     row.dataset.key = item.key;
     row.innerHTML = `
       <button type="button" class="library-chip" data-action="focus-chip">${item.title}</button>
-      <p class="library-chip-subtitle" data-role="chip-subtitle"></p>
       <div class="library-chip-menu" data-role="chip-menu">
         <button type="button" data-action="chip-info">Info</button>
         <button type="button" data-action="chip-rename">Rename</button>
         <button type="button" data-action="chip-delete">Delete</button>
       </div>
     `;
-    renderSubtitle(row, item);
     return row;
   }
 
@@ -454,6 +453,7 @@ export function createReferenceManagerUi({
       previewHideTimer = null;
     }
     previewKey = null;
+    previewHovered = false;
     previewElement.hidden = true;
     clearPreviewBody();
     if (previewAbortController) {
@@ -463,12 +463,15 @@ export function createReferenceManagerUi({
   }
 
   function hidePreviewLater() {
+    if (draggingState || previewHovered) {
+      return;
+    }
     if (previewHideTimer) {
       window.clearTimeout(previewHideTimer);
     }
     previewHideTimer = window.setTimeout(() => {
       previewHideTimer = null;
-      if (!menuRowKey) {
+      if (!menuRowKey && !draggingState && !previewHovered) {
         hidePreviewNow();
         setActiveRowKey(null);
       }
@@ -691,6 +694,7 @@ export function createReferenceManagerUi({
   }
 
   function beginDrag(item, event) {
+    cancelPendingHide();
     draggingState = {
       item,
       pointerId: event.pointerId,
@@ -718,6 +722,9 @@ export function createReferenceManagerUi({
     previewElement.releasePointerCapture?.(draggingState.pointerId);
     draggingState = null;
     dragGhost.hidden = true;
+    if (!previewHovered && !menuRowKey) {
+      hidePreviewLater();
+    }
   }
 
   function onPreviewPointerDown(event) {
@@ -728,6 +735,7 @@ export function createReferenceManagerUi({
     if (!item) {
       return;
     }
+    cancelPendingHide();
     beginDrag(item, event);
     event.preventDefault();
     event.stopPropagation();
@@ -881,6 +889,45 @@ function onListPointerLeave(event) {
   hidePreviewLater();
 }
 
+  function updateDropFeedbackPosition() {
+    if (!(launcherButton instanceof HTMLElement)) {
+      return;
+    }
+    const rect = launcherButton.getBoundingClientRect();
+    dropFeedback.style.left = `${Math.round(rect.left - 8)}px`;
+    dropFeedback.style.top = `${Math.round(rect.top - 34)}px`;
+  }
+
+  function applyDropTargetState({ active = false, over = false } = {}) {
+    launcherButton.dataset.dropActive = active ? "true" : "false";
+    launcherButton.dataset.dropOver = active && over ? "true" : "false";
+    if (!active) {
+      launcherButton.dataset.dropOver = "false";
+    }
+  }
+
+  function triggerDropFeedback({ kind = "deny", message = "" } = {}) {
+    if (!(launcherButton instanceof HTMLElement)) {
+      return;
+    }
+    if (feedbackTimer) {
+      window.clearTimeout(feedbackTimer);
+      feedbackTimer = null;
+    }
+
+    launcherButton.dataset.dropFeedback = kind === "success" ? "success" : "deny";
+    dropFeedback.dataset.kind = kind === "success" ? "success" : "deny";
+    dropFeedback.textContent = text(message, kind === "success" ? "Added to Library" : "Already in Library");
+    updateDropFeedbackPosition();
+    dropFeedback.hidden = false;
+
+    feedbackTimer = window.setTimeout(() => {
+      feedbackTimer = null;
+      dropFeedback.hidden = true;
+      launcherButton.dataset.dropFeedback = "none";
+    }, 980);
+  }
+
   function onListClick(event) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
@@ -973,12 +1020,21 @@ function onListPointerLeave(event) {
       setOpen(!open);
     });
 
-    bind(previewElement, "pointerenter", cancelPendingHide);
-    bind(previewElement, "pointerleave", hidePreviewLater);
+    bind(previewElement, "pointerenter", () => {
+      previewHovered = true;
+      cancelPendingHide();
+    });
+    bind(previewElement, "pointerleave", () => {
+      previewHovered = false;
+      hidePreviewLater();
+    });
     bind(previewElement, "pointerdown", onPreviewPointerDown);
     bind(previewElement, "pointermove", onPreviewPointerMove);
     bind(previewElement, "pointerup", onPreviewPointerUp);
     bind(previewElement, "pointercancel", onPreviewPointerUp);
+    bind(window, "pointermove", onPreviewPointerMove, true);
+    bind(window, "pointerup", onPreviewPointerUp, true);
+    bind(window, "pointercancel", onPreviewPointerUp, true);
 
     bind(allListElement, "pointerdown", onListPointerDown);
     bind(allListElement, "pointermove", onListPointerMove);
@@ -1002,16 +1058,20 @@ function onListPointerLeave(event) {
     bind(window, "keydown", onWindowKeyDown);
     bind(window, "resize", () => {
       if (!previewKey) {
-        return;
+        updateDropFeedbackPosition();
+      } else {
+        const row = rowMap.get(previewKey) ?? rowMap.get(`recent:${previewKey}`);
+        if (row instanceof HTMLElement) {
+          positionPreviewForRow(row);
+        }
       }
-      const row = rowMap.get(previewKey) ?? rowMap.get(`recent:${previewKey}`);
-      if (row instanceof HTMLElement) {
-        positionPreviewForRow(row);
-      }
+      updateDropFeedbackPosition();
     }, { passive: true });
   }
 
   wireEvents();
+  applyDropTargetState({ active: false, over: false });
+  launcherButton.dataset.dropFeedback = "none";
   setOpen(false);
 
   return {
@@ -1032,6 +1092,14 @@ function onListPointerLeave(event) {
       setOpen(!open);
     },
 
+    setDropTargetState({ active = false, over = false } = {}) {
+      applyDropTargetState({ active, over });
+    },
+
+    showDropFeedback({ kind = "deny", message = "" } = {}) {
+      triggerDropFeedback({ kind, message });
+    },
+
     isOpen() {
       return open;
     },
@@ -1040,11 +1108,17 @@ function onListPointerLeave(event) {
       clearLongPress();
       hidePreviewNow();
       stopDrag();
+      applyDropTargetState({ active: false, over: false });
+      if (feedbackTimer) {
+        window.clearTimeout(feedbackTimer);
+        feedbackTimer = null;
+      }
       for (const disposeEvent of eventDisposers.splice(0, eventDisposers.length)) {
         disposeEvent();
       }
       previewElement.remove();
       dragGhost.remove();
+      dropFeedback.remove();
     },
   };
 }
