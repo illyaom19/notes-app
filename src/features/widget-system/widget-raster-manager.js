@@ -3,6 +3,8 @@ const DEFAULT_MAX_CACHE_BYTES = 96 * 1024 * 1024;
 const DEFAULT_MAX_BUCKETS_PER_WIDGET = 2;
 const DEFAULT_MAX_QUEUE_SIZE = 120;
 const DEFAULT_ZOOM_BUCKETS = Object.freeze([0.75, 1, 1.5, 2.25]);
+const DEFAULT_MAX_SNAPSHOT_PIXELS = 2_000_000;
+const DEFAULT_MAX_SNAPSHOT_DIMENSION = 4096;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -159,6 +161,9 @@ export function createWidgetRasterManager({
   maxBucketsPerWidget = DEFAULT_MAX_BUCKETS_PER_WIDGET,
   maxQueueSize = DEFAULT_MAX_QUEUE_SIZE,
   zoomBuckets = DEFAULT_ZOOM_BUCKETS,
+  maxSnapshotPixels = DEFAULT_MAX_SNAPSHOT_PIXELS,
+  maxSnapshotDimension = DEFAULT_MAX_SNAPSHOT_DIMENSION,
+  shouldRasterizeWidget = null,
   isWidgetActive = null,
   getWidgetRuntimeRevision = null,
   drawContributors = [],
@@ -280,6 +285,10 @@ export function createWidgetRasterManager({
       drawVector(ctx, camera, renderContext);
       return false;
     }
+    if (typeof shouldRasterizeWidget === "function" && shouldRasterizeWidget(widget, renderContext) === false) {
+      drawVector(ctx, camera, renderContext);
+      return false;
+    }
 
     const interactionActive =
       isWidgetInteractionActive(widget, renderContext) ||
@@ -391,6 +400,14 @@ export function createWidgetRasterManager({
     const logicalHeight = Math.max(1, Math.ceil(worldBounds.height * job.zoomBucketValue));
     const pixelWidth = Math.max(1, Math.floor(logicalWidth * job.dprBucketValue));
     const pixelHeight = Math.max(1, Math.floor(logicalHeight * job.dprBucketValue));
+    const pixelArea = pixelWidth * pixelHeight;
+    if (
+      pixelWidth > maxSnapshotDimension ||
+      pixelHeight > maxSnapshotDimension ||
+      pixelArea > maxSnapshotPixels
+    ) {
+      return;
+    }
     const canvas = document.createElement("canvas");
     canvas.width = pixelWidth;
     canvas.height = pixelHeight;

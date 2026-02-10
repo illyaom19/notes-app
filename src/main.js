@@ -627,6 +627,10 @@ const runtime = new CanvasRuntime({
 
 widgetRasterManager = createWidgetRasterManager({
   runtime,
+  shouldRasterizeWidget: (widget) => {
+    // Keep large PDF surfaces on their native renderer path to avoid heavy snapshot stalls/artifacts.
+    return widget?.type !== "pdf-document";
+  },
   isWidgetActive: (widget) => {
     if (!inkFeature || typeof inkFeature.isWidgetInkActive !== "function") {
       return false;
@@ -3364,8 +3368,6 @@ function scheduleWorkspacePersist() {
 }
 
 function updateWidgetUi() {
-  runtime.bumpWidgetRasterEpoch();
-
   if (widgetCountOutput) {
     widgetCountOutput.textContent = String(runtime.getWidgetCount());
   }
