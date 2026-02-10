@@ -268,6 +268,28 @@ export class PdfTileCache {
     return `${scaleBucket}:${tileX}:${tileY}`;
   }
 
+  closestAvailableScaleBucket(targetScaleBucket) {
+    const target = Number.isFinite(targetScaleBucket) ? targetScaleBucket : 1;
+    let closest = null;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    for (const key of this.tiles.keys()) {
+      const separatorIndex = key.indexOf(":");
+      if (separatorIndex < 1) {
+        continue;
+      }
+      const scale = Number(key.slice(0, separatorIndex));
+      if (!Number.isFinite(scale)) {
+        continue;
+      }
+      const distance = Math.abs(scale - target);
+      if (distance < closestDistance) {
+        closest = scale;
+        closestDistance = distance;
+      }
+    }
+    return closest;
+  }
+
   async _drainQueue() {
     if (this.processing) {
       return;

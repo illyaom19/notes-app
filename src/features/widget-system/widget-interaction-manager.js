@@ -202,6 +202,9 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
   const activeTouchPointerIds = new Set();
 
   function clearDragState() {
+    if (typeof runtime.setWidgetTransformState === "function") {
+      runtime.setWidgetTransformState(null, null);
+    }
     dragState.pointerId = null;
     dragState.widgetId = null;
     dragState.mode = null;
@@ -308,6 +311,9 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         dragState.widgetId = widget.id;
         dragState.mode = "resize";
         dragState.lastWorld = point;
+        if (typeof runtime.setWidgetTransformState === "function") {
+          runtime.setWidgetTransformState(widget.id, "resize");
+        }
         return true;
       }
 
@@ -327,6 +333,9 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
         dragState.widgetId = widget.id;
         dragState.mode = "move";
         dragState.lastWorld = point;
+        if (typeof runtime.setWidgetTransformState === "function") {
+          runtime.setWidgetTransformState(widget.id, "move");
+        }
         return true;
       }
 
@@ -602,6 +611,9 @@ export function createWidgetInteractionManager({ runtime, canvas, onWidgetMutate
 
   return {
     dispose() {
+      if (typeof runtime.setWidgetTransformState === "function") {
+        runtime.setWidgetTransformState(null, null);
+      }
       if (canvas instanceof HTMLCanvasElement) {
         canvas.removeEventListener("pointermove", handleRawPointerMove);
         canvas.removeEventListener("pointerup", handleRawPointerEnd);

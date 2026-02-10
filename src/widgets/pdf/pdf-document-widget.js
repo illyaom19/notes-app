@@ -669,6 +669,11 @@ export class PdfDocumentWidget extends WidgetBase {
       viewMode: renderContext?.viewMode,
     });
     const showPageChrome = interaction.revealActions;
+    const transformingWidgetId =
+      typeof renderContext?.interaction?.transformingWidgetId === "string"
+        ? renderContext.interaction.transformingWidgetId
+        : null;
+    const externalWidgetTransformActive = Boolean(transformingWidgetId && transformingWidgetId !== this.id);
     const titleLabel =
       lod === "compact"
         ? shortName(this.metadata.title)
@@ -763,16 +768,22 @@ export class PdfDocumentWidget extends WidgetBase {
 
       const scaleBucket = this._getScaleBucket(camera.zoom);
       const mappings = this._buildPageTileMappings(pageEntry, scaleBucket, visibleWorld);
-      pageEntry.tileCache.requestMappedRegions({
-        mappings,
-        scaleBucket,
-      });
+      if (!externalWidgetTransformActive) {
+        pageEntry.tileCache.requestMappedRegions({
+          mappings,
+          scaleBucket,
+        });
+      }
+      const drawScaleBucket =
+        externalWidgetTransformActive
+          ? pageEntry.tileCache.closestAvailableScaleBucket(scaleBucket) ?? scaleBucket
+          : scaleBucket;
 
       const drawnTiles = pageEntry.tileCache.drawMappedRegions({
         ctx,
         camera,
         mappings,
-        scaleBucket,
+        scaleBucket: drawScaleBucket,
       });
 
       if (drawnTiles === 0) {
@@ -784,7 +795,7 @@ export class PdfDocumentWidget extends WidgetBase {
         }
       }
 
-      if (showPageChrome) {
+      if (showPageChrome && !externalWidgetTransformActive) {
         const zones = this._zonesForPage(pageEntry.pageNumber);
         for (const zone of zones) {
           this._drawWhitespaceZone(ctx, camera, zone, {
@@ -794,12 +805,17 @@ export class PdfDocumentWidget extends WidgetBase {
         }
       }
 
-      if (showPageChrome) {
+      if (showPageChrome && !externalWidgetTransformActive) {
         this._drawPageBadge(ctx, camera, pageBounds, pageEntry.pageNumber);
       }
     }
 
-    if (showPageChrome && firstVisiblePage !== null && lastVisiblePage !== null) {
+    if (
+      showPageChrome &&
+      !externalWidgetTransformActive &&
+      firstVisiblePage !== null &&
+      lastVisiblePage !== null
+    ) {
       const visibleLabel =
         firstVisiblePage === lastVisiblePage
           ? `${firstVisiblePage}`

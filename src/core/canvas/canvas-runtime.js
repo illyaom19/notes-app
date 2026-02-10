@@ -32,6 +32,7 @@ export class CanvasRuntime {
     this._hoverWidgetId = null;
     this._lastPointerType = "mouse";
     this._viewMode = "interactive";
+    this._widgetTransformState = null;
     this._widgetRasterManager = null;
     this._widgetRasterEpoch = 0;
     this._rasterizedWidgetIds = new Set();
@@ -317,6 +318,25 @@ export class CanvasRuntime {
     }
     this._emitCamera();
     return this._viewMode;
+  }
+
+  setWidgetTransformState(widgetId = null, mode = null) {
+    const normalizedWidgetId =
+      typeof widgetId === "string" && widgetId.trim() ? widgetId.trim() : null;
+    const normalizedMode =
+      normalizedWidgetId && (mode === "move" || mode === "resize") ? mode : null;
+    if (!normalizedWidgetId || !normalizedMode) {
+      this._widgetTransformState = null;
+      return;
+    }
+    this._widgetTransformState = {
+      widgetId: normalizedWidgetId,
+      mode: normalizedMode,
+    };
+  }
+
+  getWidgetTransformState() {
+    return this._widgetTransformState ? { ...this._widgetTransformState } : null;
   }
 
   _widgetWorldRect(widget) {
@@ -766,6 +786,8 @@ export class CanvasRuntime {
         focusedWidgetId: this._focusedWidgetId,
         hoverWidgetId: this._hoverWidgetId,
         isTouchPrimary: this._lastPointerType === "touch",
+        transformingWidgetId: this._widgetTransformState?.widgetId ?? null,
+        transformingWidgetMode: this._widgetTransformState?.mode ?? null,
       },
       theme: WIDGET_THEME,
     };
