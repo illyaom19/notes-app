@@ -3,12 +3,8 @@ export const RENDER_MODE = Object.freeze({
   SNAPSHOT: "snapshot",
 });
 
-const COLLAPSED_WIDTH_PX = 40;
-const COLLAPSED_MIN_HEIGHT_PX = 40;
-
-function worldFromPixels(camera, px) {
-  return px / Math.max(0.25, camera?.zoom ?? 1);
-}
+const COLLAPSED_WIDTH_WORLD = 40;
+const COLLAPSED_MIN_HEIGHT_WORLD = 40;
 
 function normalizeInteractionFlags(candidate) {
   const source = candidate && typeof candidate === "object" ? candidate : {};
@@ -68,10 +64,10 @@ export class WidgetBase {
     return { ...this.interactionFlags };
   }
 
-  getCollapsedInteractionBounds(camera) {
+  getCollapsedInteractionBounds(_camera) {
     return {
-      width: worldFromPixels(camera, COLLAPSED_WIDTH_PX),
-      height: worldFromPixels(camera, COLLAPSED_MIN_HEIGHT_PX),
+      width: COLLAPSED_WIDTH_WORLD,
+      height: COLLAPSED_MIN_HEIGHT_WORLD,
     };
   }
 
