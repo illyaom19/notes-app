@@ -18,6 +18,14 @@ export class ExpandedAreaWidget extends WidgetBase {
     });
   }
 
+  getRasterRevision() {
+    return [
+      this.collapsed ? 1 : 0,
+      this.metadata?.title ?? "",
+      this.metadata?.note ?? "",
+    ].join("::");
+  }
+
   render(ctx, camera, renderContext) {
     const interaction = interactionStateForWidget(this, renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {

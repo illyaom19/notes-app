@@ -32,6 +32,9 @@ export class CanvasRuntime {
     this._hoverWidgetId = null;
     this._lastPointerType = "mouse";
     this._viewMode = "interactive";
+    this._widgetRasterManager = null;
+    this._widgetRasterEpoch = 0;
+    this._rasterizedWidgetIds = new Set();
 
     if (!this.ctx) {
       throw new Error("Canvas 2D context unavailable.");
@@ -195,6 +198,26 @@ export class CanvasRuntime {
     return () => {
       this._overlayLayers = this._overlayLayers.filter((entry) => entry !== layer);
     };
+  }
+
+  setWidgetRasterManager(manager) {
+    this._widgetRasterManager = manager ?? null;
+  }
+
+  getWidgetRasterEpoch() {
+    return this._widgetRasterEpoch;
+  }
+
+  bumpWidgetRasterEpoch() {
+    this._widgetRasterEpoch += 1;
+    return this._widgetRasterEpoch;
+  }
+
+  isWidgetRasterizedInFrame(widgetId) {
+    if (typeof widgetId !== "string" || !widgetId.trim()) {
+      return false;
+    }
+    return this._rasterizedWidgetIds.has(widgetId);
   }
 
   registerWidgetRemovedListener(listener) {
@@ -747,6 +770,7 @@ export class CanvasRuntime {
       theme: WIDGET_THEME,
     };
     const visibleWorld = this._visibleWorldBounds(width, height);
+    this._rasterizedWidgetIds.clear();
 
     this.ctx.clearRect(0, 0, width, height);
     this._drawGrid(width, height, visibleWorld);
@@ -766,10 +790,29 @@ export class CanvasRuntime {
       }
 
       widget.update(dt);
-      if (widget.collapsed && typeof widget.renderSnapshot === "function") {
-        widget.renderSnapshot(this.ctx, this.camera, renderContext);
+      const drawWidgetVector = (targetCtx, targetCamera, targetRenderContext) => {
+        if (widget.collapsed && typeof widget.renderSnapshot === "function") {
+          widget.renderSnapshot(targetCtx, targetCamera, targetRenderContext);
+          return;
+        }
+        widget.render(targetCtx, targetCamera, targetRenderContext);
+      };
+      if (this._widgetRasterManager && typeof this._widgetRasterManager.renderWidget === "function") {
+        const usedRaster = this._widgetRasterManager.renderWidget({
+          ctx: this.ctx,
+          camera: this.camera,
+          widget,
+          renderContext,
+          drawVector: drawWidgetVector,
+        });
+        if (usedRaster) {
+          this._rasterizedWidgetIds.add(widget.id);
+        } else {
+          this._rasterizedWidgetIds.delete(widget.id);
+        }
       } else {
-        widget.render(this.ctx, this.camera, renderContext);
+        this._rasterizedWidgetIds.delete(widget.id);
+        drawWidgetVector(this.ctx, this.camera, renderContext);
       }
     }
 

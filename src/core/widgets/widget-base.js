@@ -110,6 +110,10 @@ export class WidgetBase {
     this.render(ctx, camera);
   }
 
+  getRasterRevision() {
+    return "";
+  }
+
   toSerializableState() {
     return {
       id: this.id,

@@ -635,6 +635,26 @@ export class PdfDocumentWidget extends WidgetBase {
     };
   }
 
+  getRasterRevision() {
+    let tileRevision = 0;
+    for (const page of this.pages) {
+      const revision = Number(page?.tileCache?.revision) || 0;
+      tileRevision = (tileRevision + revision) >>> 0;
+    }
+    const whitespaceRevision = this.whitespaceZones
+      .map((zone) => `${zone.id}:${zone.collapsed ? 1 : 0}:${zone.linkedWidgetId ? 1 : 0}`)
+      .join("|");
+    return [
+      this.loading ? "loading" : "ready",
+      this.loadError ?? "",
+      this.fileName ?? "",
+      this.pageCount,
+      this.documentWorldHeight.toFixed(2),
+      tileRevision,
+      whitespaceRevision,
+    ].join("::");
+  }
+
   render(ctx, camera, renderContext) {
     this._ensureDisplayLayout();
     this._whitespaceControlRegions = [];

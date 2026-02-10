@@ -385,6 +385,20 @@ export class ReferencePopupWidget extends WidgetBase {
     return null;
   }
 
+  getRasterRevision() {
+    const imageFingerprint =
+      typeof this.imageDataUrl === "string" && this.imageDataUrl ? `${this.imageDataUrl.length}` : "0";
+    return [
+      this.collapsed ? 1 : 0,
+      this.contentType,
+      imageFingerprint,
+      this.textContent?.length ?? 0,
+      this.sourceLabel ?? "",
+      this.citation?.url ?? "",
+      this._aspectRatio.toFixed(4),
+    ].join("::");
+  }
+
   setImageData(dataUrl) {
     this.imageDataUrl = dataUrl;
     this.contentType = "image";

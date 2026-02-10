@@ -18,6 +18,7 @@ import { createOnboardingStateService } from "./features/onboarding/onboarding-s
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 import { createWidgetCreationController } from "./features/widget-system/widget-creation-controller.js";
 import { createWidgetInteractionManager } from "./features/widget-system/widget-interaction-manager.js";
+import { createWidgetRasterManager } from "./features/widget-system/widget-raster-manager.js";
 import { createNotebookSectionsStore } from "./features/sections/notebook-sections-store.js";
 import { createNotebookLibraryStore } from "./features/notebooks/notebook-library-store.js";
 import { createNotebookDocumentLibraryStore } from "./features/notebooks/notebook-document-library-store.js";
@@ -132,6 +133,7 @@ let searchPanelController = null;
 let penGestureController = null;
 let widgetInteractionManager = null;
 let widgetCreationController = null;
+let widgetRasterManager = null;
 let detachDocumentFocusSync = null;
 let detachWidgetRemovalSuggestionSync = null;
 let toolsPanelOpen = false;
@@ -622,6 +624,31 @@ const runtime = new CanvasRuntime({
     renderSectionMinimap();
   },
 });
+
+widgetRasterManager = createWidgetRasterManager({
+  runtime,
+  isWidgetActive: (widget) => {
+    if (!inkFeature || typeof inkFeature.isWidgetInkActive !== "function") {
+      return false;
+    }
+    return inkFeature.isWidgetInkActive(widget?.id);
+  },
+  getWidgetRuntimeRevision: (widget) => {
+    if (!inkFeature || typeof inkFeature.getWidgetInkRevision !== "function") {
+      return 0;
+    }
+    return inkFeature.getWidgetInkRevision(widget?.id);
+  },
+  drawContributors: [
+    ({ ctx, camera, widget }) => {
+      if (!inkFeature || typeof inkFeature.renderWidgetInkForRaster !== "function") {
+        return;
+      }
+      inkFeature.renderWidgetInkForRaster(ctx, camera, widget.id);
+    },
+  ],
+});
+runtime.setWidgetRasterManager(widgetRasterManager);
 
 const workerClient = new BackgroundWorkerClient(
   new URL("./core/workers/analysis-worker.js", import.meta.url),
@@ -3337,6 +3364,8 @@ function scheduleWorkspacePersist() {
 }
 
 function updateWidgetUi() {
+  runtime.bumpWidgetRasterEpoch();
+
   if (widgetCountOutput) {
     widgetCountOutput.textContent = String(runtime.getWidgetCount());
   }
@@ -3747,6 +3776,7 @@ async function ensureInkFeature() {
     getActiveContextId: () => workspaceScopeId(),
     onStateChange: (state) => updateInkUi(state),
   });
+  runtime.bumpWidgetRasterEpoch();
 
   updateInkUi({
     activeTool: currentInkTool(),

@@ -79,6 +79,7 @@ export class PdfTileCache {
     this.pending = new Map();
     this.queue = [];
     this.processing = false;
+    this.revision = 0;
   }
 
   requestVisibleTiles({ camera, widgetBounds, canvasSize, scaleBucket }) {
@@ -278,6 +279,7 @@ export class PdfTileCache {
       try {
         const tile = await this._renderTile(next);
         this.tiles.set(next.key, tile);
+        this.revision += 1;
         if (this.tiles.size > MAX_TILE_CACHE_ENTRIES) {
           const oldestKey = this.tiles.keys().next().value;
           this.tiles.delete(oldestKey);

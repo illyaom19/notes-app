@@ -51,6 +51,9 @@ export class InkEngine {
     this.activeTool = "pen";
     this._completedLayerCache = new Map();
     this._completedLayerCacheRevision = this.store.revision;
+    this._widgetInkRevisionCache = new Map();
+    this._widgetInkRevisionCacheRevision = this.store.revision;
+    this._widgetInkRevisionCacheContextId = this._activeContextId();
     this._detachInput = null;
     this._detachGlobalLayer = null;
     this._detachAttachedLayer = null;
@@ -308,6 +311,60 @@ export class InkEngine {
     return completed;
   }
 
+  _getWidgetInkRevisionMap() {
+    const revision = this.store.revision;
+    const contextId = this._activeContextId();
+    if (
+      revision !== this._widgetInkRevisionCacheRevision ||
+      contextId !== this._widgetInkRevisionCacheContextId
+    ) {
+      this._widgetInkRevisionCacheRevision = revision;
+      this._widgetInkRevisionCacheContextId = contextId;
+      this._widgetInkRevisionCache.clear();
+      for (const stroke of this.store.getCompletedStrokes()) {
+        if (!this._strokeMatchesActiveContext(stroke)) {
+          continue;
+        }
+        if (stroke.layer !== "pdf" && stroke.layer !== "widget") {
+          continue;
+        }
+        const widgetId = typeof stroke.sourceWidgetId === "string" ? stroke.sourceWidgetId.trim() : "";
+        if (!widgetId) {
+          continue;
+        }
+        const existing = this._widgetInkRevisionCache.get(widgetId) ?? 0;
+        const points = Array.isArray(stroke.points) ? stroke.points.length : 0;
+        this._widgetInkRevisionCache.set(widgetId, (existing + 1 + points) >>> 0);
+      }
+    }
+    return this._widgetInkRevisionCache;
+  }
+
+  getWidgetInkRevision(widgetId) {
+    const key = typeof widgetId === "string" ? widgetId.trim() : "";
+    if (!key) {
+      return 0;
+    }
+    const map = this._getWidgetInkRevisionMap();
+    return map.get(key) ?? 0;
+  }
+
+  isWidgetInkActive(widgetId) {
+    const key = typeof widgetId === "string" ? widgetId.trim() : "";
+    if (!key) {
+      return false;
+    }
+    if (this.activeErasers.size > 0) {
+      return true;
+    }
+    for (const stroke of this.activeStrokes.values()) {
+      if (stroke?.sourceWidgetId === key) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   _buildOcclusionState(camera) {
     const widgets = this.runtime.listWidgets();
     const entries = [];
@@ -430,6 +487,13 @@ export class InkEngine {
     const occlusionState = layer === "global" ? null : this._buildOcclusionState(camera);
 
     for (const stroke of completed) {
+      if (
+        stroke.sourceWidgetId &&
+        typeof this.runtime.isWidgetRasterizedInFrame === "function" &&
+        this.runtime.isWidgetRasterizedInFrame(stroke.sourceWidgetId)
+      ) {
+        continue;
+      }
       if (
         stroke.sourceWidgetId &&
         !this._widgetIntersectsVisibleWorld(stroke.sourceWidgetId, camera, visibleWorld, visibleByWidgetId)
@@ -589,6 +653,31 @@ export class InkEngine {
   renderAttached(ctx, camera) {
     this._drawLayer(ctx, camera, "pdf");
     this._drawLayer(ctx, camera, "widget");
+  }
+
+  renderWidgetInkForRaster(ctx, camera, widgetId) {
+    if (!ctx || !camera || typeof widgetId !== "string" || !widgetId.trim()) {
+      return 0;
+    }
+    let drawCount = 0;
+    for (const stroke of this.store.getCompletedStrokes()) {
+      if (!this._strokeMatchesActiveContext(stroke)) {
+        continue;
+      }
+      if (stroke.sourceWidgetId !== widgetId) {
+        continue;
+      }
+      if (stroke.layer !== "pdf" && stroke.layer !== "widget") {
+        continue;
+      }
+      const renderable = this._toRenderableStroke(stroke);
+      if (!renderable || !Array.isArray(renderable.points) || renderable.points.length < 1) {
+        continue;
+      }
+      drawStroke(ctx, camera, renderable);
+      drawCount += 1;
+    }
+    return drawCount;
   }
 
   _finishStroke(event, camera) {
