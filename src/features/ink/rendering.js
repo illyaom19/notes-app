@@ -18,6 +18,13 @@ function drawPointDot(ctx, camera, point, color, baseWidth) {
   ctx.fill();
 }
 
+function midpoint(from, to) {
+  return {
+    x: (from.x + to.x) * 0.5,
+    y: (from.y + to.y) * 0.5,
+  };
+}
+
 export function drawStroke(ctx, camera, stroke) {
   const points = stroke.points;
   if (!points.length) {
@@ -29,21 +36,55 @@ export function drawStroke(ctx, camera, stroke) {
     return;
   }
 
+  const projected = points.map((point) => {
+    const screen = camera.worldToScreen(point.x, point.y);
+    return {
+      x: screen.x,
+      y: screen.y,
+      p: point.p,
+    };
+  });
+
   ctx.strokeStyle = stroke.color;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
-  for (let index = 1; index < points.length; index += 1) {
-    const prev = points[index - 1];
-    const current = points[index];
-    const from = camera.worldToScreen(prev.x, prev.y);
-    const to = camera.worldToScreen(current.x, current.y);
-    const width = strokeWidthOnScreen(camera, stroke.baseWidth, current.p);
-
+  if (projected.length === 2) {
+    const width = strokeWidthOnScreen(camera, stroke.baseWidth, projected[1].p);
     ctx.lineWidth = width;
     ctx.beginPath();
-    ctx.moveTo(from.x, from.y);
-    ctx.lineTo(to.x, to.y);
+    ctx.moveTo(projected[0].x, projected[0].y);
+    ctx.lineTo(projected[1].x, projected[1].y);
+    ctx.stroke();
+    return;
+  }
+
+  const firstMid = midpoint(projected[0], projected[1]);
+  ctx.lineWidth = strokeWidthOnScreen(camera, stroke.baseWidth, projected[0].p);
+  ctx.beginPath();
+  ctx.moveTo(projected[0].x, projected[0].y);
+  ctx.lineTo(firstMid.x, firstMid.y);
+  ctx.stroke();
+
+  for (let index = 1; index < projected.length - 1; index += 1) {
+    const previous = projected[index - 1];
+    const current = projected[index];
+    const next = projected[index + 1];
+    const fromMid = midpoint(previous, current);
+    const toMid = midpoint(current, next);
+    const width = strokeWidthOnScreen(camera, stroke.baseWidth, current.p);
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(fromMid.x, fromMid.y);
+    ctx.quadraticCurveTo(current.x, current.y, toMid.x, toMid.y);
     ctx.stroke();
   }
+
+  const lastIndex = projected.length - 1;
+  const lastMid = midpoint(projected[lastIndex - 1], projected[lastIndex]);
+  ctx.lineWidth = strokeWidthOnScreen(camera, stroke.baseWidth, projected[lastIndex].p);
+  ctx.beginPath();
+  ctx.moveTo(lastMid.x, lastMid.y);
+  ctx.lineTo(projected[lastIndex].x, projected[lastIndex].y);
+  ctx.stroke();
 }

@@ -1,6 +1,10 @@
 import { InkPersistence, loadPersistedStrokes } from "./persistence.js";
 import { drawStroke } from "./rendering.js";
 import { StrokeStore } from "./stroke-store.js";
+
+const STROKE_INTERPOLATION_STEP_PX = 4;
+const STROKE_INTERPOLATION_MAX_POINTS = 10;
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -69,7 +73,7 @@ export class InkEngine {
 
   attach() {
     if (!this._detachInput) {
-      this._detachInput = this.runtime.registerInputHandler(this);
+      this._detachInput = this.runtime.registerInputHandler(this, { priority: 89 });
     }
 
     if (!this._detachGlobalLayer) {
@@ -194,32 +198,201 @@ export class InkEngine {
 
   _buildWorldPoint(event, camera) {
     const world = camera.screenToWorld(event.offsetX, event.offsetY);
+    const timestamp = Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now();
     return {
       x: world.x,
       y: world.y,
       p: event.pressure || 0.5,
-      t: performance.now(),
+      t: timestamp,
     };
   }
 
   _buildAnchoredPoint(event, camera, bounds) {
     const world = camera.screenToWorld(event.offsetX, event.offsetY);
+    const timestamp = Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now();
     return {
       u: clamp((world.x - bounds.x) / bounds.width, 0, 1),
       v: clamp((world.y - bounds.y) / bounds.height, 0, 1),
       p: event.pressure || 0.5,
-      t: performance.now(),
+      t: timestamp,
     };
   }
 
   _buildAnchoredLocalPoint(event, camera, bounds) {
     const world = camera.screenToWorld(event.offsetX, event.offsetY);
+    const timestamp = Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now();
     return {
       lx: world.x - bounds.x,
       ly: world.y - bounds.y,
       p: event.pressure || 0.5,
-      t: performance.now(),
+      t: timestamp,
     };
+  }
+
+  _sampleToEvent(sample, fallbackEvent) {
+    if (!sample || typeof sample !== "object") {
+      return fallbackEvent;
+    }
+    const canvasRect = this.runtime?.canvas?.getBoundingClientRect?.();
+    const hasCanvasRect =
+      canvasRect &&
+      Number.isFinite(canvasRect.left) &&
+      Number.isFinite(canvasRect.top);
+    const offsetX = Number.isFinite(sample.offsetX)
+      ? sample.offsetX
+      : hasCanvasRect && Number.isFinite(sample.clientX)
+        ? sample.clientX - canvasRect.left
+        : fallbackEvent.offsetX;
+    const offsetY = Number.isFinite(sample.offsetY)
+      ? sample.offsetY
+      : hasCanvasRect && Number.isFinite(sample.clientY)
+        ? sample.clientY - canvasRect.top
+        : fallbackEvent.offsetY;
+    const pressure = Number.isFinite(sample.pressure) ? sample.pressure : fallbackEvent.pressure;
+    const timeStamp = Number.isFinite(sample.timeStamp) ? sample.timeStamp : fallbackEvent.timeStamp;
+    return {
+      ...fallbackEvent,
+      offsetX,
+      offsetY,
+      pressure,
+      timeStamp,
+    };
+  }
+
+  _collectPointerSamples(event) {
+    if (event && typeof event.getCoalescedEvents === "function") {
+      const samples = event.getCoalescedEvents();
+      if (Array.isArray(samples) && samples.length > 0) {
+        return samples;
+      }
+    }
+    return [event];
+  }
+
+  _pointEquals(stroke, left, right) {
+    if (!left || !right) {
+      return false;
+    }
+    if (stroke.layer === "global") {
+      return Math.abs((left.x ?? 0) - (right.x ?? 0)) < 0.0001 && Math.abs((left.y ?? 0) - (right.y ?? 0)) < 0.0001;
+    }
+    if (stroke.anchorMode === "local") {
+      return (
+        Math.abs((left.lx ?? 0) - (right.lx ?? 0)) < 0.0001 &&
+        Math.abs((left.ly ?? 0) - (right.ly ?? 0)) < 0.0001
+      );
+    }
+    return Math.abs((left.u ?? 0) - (right.u ?? 0)) < 0.000001 && Math.abs((left.v ?? 0) - (right.v ?? 0)) < 0.000001;
+  }
+
+  _strokePointToWorld(stroke, point, camera) {
+    if (!stroke || !point) {
+      return null;
+    }
+    if (stroke.layer === "global") {
+      return {
+        x: Number(point.x),
+        y: Number(point.y),
+      };
+    }
+    const bounds = stroke.anchorBounds ?? this._resolveWidgetBounds(stroke.sourceWidgetId, camera);
+    if (!bounds) {
+      return null;
+    }
+    if (stroke.anchorMode === "local") {
+      return {
+        x: bounds.x + (Number(point.lx) || 0),
+        y: bounds.y + (Number(point.ly) || 0),
+      };
+    }
+    return {
+      x: bounds.x + bounds.width * clamp(point.u ?? 0, 0, 1),
+      y: bounds.y + bounds.height * clamp(point.v ?? 0, 0, 1),
+    };
+  }
+
+  _lerpStrokePoint(stroke, from, to, t) {
+    const pressure = (Number(from.p) || 0.5) + ((Number(to.p) || 0.5) - (Number(from.p) || 0.5)) * t;
+    const time = (Number(from.t) || 0) + ((Number(to.t) || 0) - (Number(from.t) || 0)) * t;
+    if (stroke.layer === "global") {
+      return {
+        x: (Number(from.x) || 0) + ((Number(to.x) || 0) - (Number(from.x) || 0)) * t,
+        y: (Number(from.y) || 0) + ((Number(to.y) || 0) - (Number(from.y) || 0)) * t,
+        p: pressure,
+        t: time,
+      };
+    }
+    if (stroke.anchorMode === "local") {
+      return {
+        lx: (Number(from.lx) || 0) + ((Number(to.lx) || 0) - (Number(from.lx) || 0)) * t,
+        ly: (Number(from.ly) || 0) + ((Number(to.ly) || 0) - (Number(from.ly) || 0)) * t,
+        p: pressure,
+        t: time,
+      };
+    }
+    return {
+      u: clamp((Number(from.u) || 0) + ((Number(to.u) || 0) - (Number(from.u) || 0)) * t, 0, 1),
+      v: clamp((Number(from.v) || 0) + ((Number(to.v) || 0) - (Number(from.v) || 0)) * t, 0, 1),
+      p: pressure,
+      t: time,
+    };
+  }
+
+  _appendPointWithInterpolation(stroke, point, camera) {
+    if (!stroke || !point) {
+      return;
+    }
+    const points = stroke.points;
+    const previous = points.length > 0 ? points[points.length - 1] : null;
+    if (!previous) {
+      points.push(point);
+      return;
+    }
+    if (this._pointEquals(stroke, previous, point)) {
+      return;
+    }
+
+    const previousWorld = this._strokePointToWorld(stroke, previous, camera);
+    const pointWorld = this._strokePointToWorld(stroke, point, camera);
+    if (!previousWorld || !pointWorld) {
+      points.push(point);
+      return;
+    }
+
+    const from = camera.worldToScreen(previousWorld.x, previousWorld.y);
+    const to = camera.worldToScreen(pointWorld.x, pointWorld.y);
+    const distancePx = Math.hypot(to.x - from.x, to.y - from.y);
+    const interpolationCount = clamp(
+      Math.floor(distancePx / STROKE_INTERPOLATION_STEP_PX) - 1,
+      0,
+      STROKE_INTERPOLATION_MAX_POINTS,
+    );
+
+    if (interpolationCount > 0) {
+      for (let index = 0; index < interpolationCount; index += 1) {
+        const t = (index + 1) / (interpolationCount + 1);
+        points.push(this._lerpStrokePoint(stroke, previous, point, t));
+      }
+    }
+    points.push(point);
+  }
+
+  _appendSamplesForEvent(stroke, event, camera) {
+    const samples = this._collectPointerSamples(event);
+    let appended = 0;
+    for (const sample of samples) {
+      const normalized = this._sampleToEvent(sample, event);
+      const point = this._buildPointForStroke(normalized, camera, stroke);
+      if (!point) {
+        continue;
+      }
+      const previousLength = stroke.points.length;
+      this._appendPointWithInterpolation(stroke, point, camera);
+      if (stroke.points.length > previousLength) {
+        appended += stroke.points.length - previousLength;
+      }
+    }
+    return appended;
   }
 
   _buildPointForStroke(event, camera, stroke) {
@@ -363,6 +536,10 @@ export class InkEngine {
       }
     }
     return false;
+  }
+
+  hasActiveInkPointers() {
+    return this.activeStrokes.size > 0 || this.activeErasers.size > 0;
   }
 
   _buildOcclusionState(camera) {
@@ -631,10 +808,7 @@ export class InkEngine {
     }
 
     event.preventDefault();
-    const point = this._buildPointForStroke(event, camera, stroke);
-    if (point) {
-      stroke.points.push(point);
-    }
+    this._appendSamplesForEvent(stroke, event, camera);
     return true;
   }
 
@@ -694,10 +868,7 @@ export class InkEngine {
     }
 
     event.preventDefault();
-    const point = this._buildPointForStroke(event, camera, stroke);
-    if (point) {
-      stroke.points.push(point);
-    }
+    this._appendSamplesForEvent(stroke, event, camera);
 
     if (stroke.points.length === 1) {
       stroke.points.push({ ...stroke.points[0] });

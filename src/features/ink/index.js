@@ -17,6 +17,7 @@ export function createInkFeature({ runtime, onStateChange, getActiveContextId })
     removeStrokesForWidget: (widgetId, options) => engine.removeStrokesForWidget(widgetId, options),
     getWidgetInkRevision: (widgetId) => engine.getWidgetInkRevision(widgetId),
     isWidgetInkActive: (widgetId) => engine.isWidgetInkActive(widgetId),
+    hasActiveInkPointers: () => engine.hasActiveInkPointers(),
     renderWidgetInkForRaster: (ctx, camera, widgetId) => engine.renderWidgetInkForRaster(ctx, camera, widgetId),
     dispose: () => engine.detach(),
   };

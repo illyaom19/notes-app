@@ -762,6 +762,12 @@ widgetRasterManager = createWidgetRasterManager({
     }
     return inkFeature.isWidgetInkActive(widget?.id);
   },
+  isInkActive: () => {
+    if (!inkFeature || typeof inkFeature.hasActiveInkPointers !== "function") {
+      return false;
+    }
+    return inkFeature.hasActiveInkPointers();
+  },
   getWidgetRuntimeRevision: (widget) => {
     if (!inkFeature || typeof inkFeature.getWidgetInkRevision !== "function") {
       return 0;

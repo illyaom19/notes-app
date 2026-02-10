@@ -165,6 +165,7 @@ export function createWidgetRasterManager({
   maxSnapshotDimension = DEFAULT_MAX_SNAPSHOT_DIMENSION,
   shouldRasterizeWidget = null,
   isWidgetActive = null,
+  isInkActive = null,
   getWidgetRuntimeRevision = null,
   drawContributors = [],
 } = {}) {
@@ -362,6 +363,12 @@ export function createWidgetRasterManager({
     }
     processing = true;
     while (queue.length > 0 && !disposed) {
+      if (typeof isInkActive === "function" && isInkActive() === true) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 16);
+        });
+        continue;
+      }
       const job = queue.shift();
       if (!job) {
         continue;
