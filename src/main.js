@@ -191,7 +191,6 @@ let referenceManagerUiController = null;
 let suggestionAnalysisTimer = null;
 let suggestionAnalysisInFlight = false;
 let suggestionAnalysisQueued = false;
-let linkedWidgetRefreshTimer = null;
 let libraryDropDragState = null;
 let storageUsageRefreshTimer = null;
 let storageUsageRefreshInFlight = false;
@@ -208,6 +207,7 @@ let researchCaptures = [];
 
 let restoringContext = false;
 let persistTimer = null;
+let widgetHeavySyncTimer = null;
 let hasShownWorkspaceStorageWarning = false;
 let onboardingStateService = createOnboardingStateService();
 let onboardingOverlay = null;
@@ -1552,7 +1552,7 @@ function updateInkUi(state) {
   }
 
   if (activeContextId) {
-    syncWidgetsToLibrarySnapshots();
+    scheduleWidgetHeavySync({ delayMs: 180 });
     updateReferenceManagerUi();
   }
 
@@ -3804,7 +3804,32 @@ function scheduleWorkspacePersist() {
   }, 220);
 }
 
-function updateWidgetUi() {
+function runWidgetHeavySync() {
+  pruneActiveDocuments();
+  syncPdfDocumentMetadata();
+  syncReferencePopupMetadata();
+  syncWidgetsToLibrarySnapshots();
+  syncLinkedLibraryMetadata();
+  applyPopupAutoDocking();
+  updateDocumentSwitcherUi();
+  updateReferenceManagerUi();
+  scheduleOnboardingRefresh(120);
+  scheduleSuggestionAnalysis();
+  scheduleWorkspacePersist();
+  scheduleStorageUsageRefresh();
+}
+
+function scheduleWidgetHeavySync({ delayMs = 140 } = {}) {
+  if (widgetHeavySyncTimer) {
+    window.clearTimeout(widgetHeavySyncTimer);
+  }
+  widgetHeavySyncTimer = window.setTimeout(() => {
+    widgetHeavySyncTimer = null;
+    runWidgetHeavySync();
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+function updateWidgetUi({ deferHeavy = false, coalesceHeavy = false } = {}) {
   if (widgetCountOutput) {
     widgetCountOutput.textContent = String(runtime.getWidgetCount());
   }
@@ -3814,17 +3839,8 @@ function updateWidgetUi() {
     referenceCountOutput.textContent = String(referenceCount);
   }
 
-  pruneActiveDocuments();
-  syncPdfDocumentMetadata();
-  syncReferencePopupMetadata();
-  syncWidgetsToLibrarySnapshots();
-  syncLinkedLibraryMetadata();
-  applyPopupAutoDocking();
-  updateDocumentSwitcherUi();
-
   updateWhitespaceZoneCount();
   updateContextUi();
-  updateReferenceManagerUi();
   syncReferenceManagerPlacement();
   renderSuggestionRail();
   renderSectionMinimap();
@@ -3837,10 +3853,15 @@ function updateWidgetUi() {
     syncSearchIndexUi(0);
   }
   updateOnboardingControlsUi();
-  scheduleOnboardingRefresh(120);
-  scheduleSuggestionAnalysis();
-  scheduleWorkspacePersist();
-  scheduleStorageUsageRefresh();
+
+  if (deferHeavy) {
+    return;
+  }
+  if (coalesceHeavy) {
+    scheduleWidgetHeavySync();
+  } else {
+    runWidgetHeavySync();
+  }
 }
 
 function setContextControlsBusy(nextBusy) {
@@ -6234,7 +6255,7 @@ function wireContextMenu() {
     onShowWidgetInfo: async (widget) => {
       await showNoticeDialog(formatWidgetInfo(widget), { title: "Widget Info" });
     },
-    onWidgetMutated: () => updateWidgetUi(),
+    onWidgetMutated: () => updateWidgetUi({ coalesceHeavy: true }),
   });
 }
 
@@ -6418,7 +6439,8 @@ function wireWidgetInteractionManager() {
   widgetInteractionManager = createWidgetInteractionManager({
     runtime,
     canvas,
-    onWidgetMutated: () => updateWidgetUi(),
+    onWidgetPreviewMutated: () => updateWidgetUi({ deferHeavy: true }),
+    onWidgetCommitMutated: () => updateWidgetUi({ coalesceHeavy: true }),
     onWidgetDragStateChange: (payload) => {
       handleWidgetDragStateForLibrary(payload);
     },
@@ -6913,12 +6935,6 @@ async function bootstrap() {
     };
     updateGestureUi();
   }
-  if (linkedWidgetRefreshTimer) {
-    window.clearInterval(linkedWidgetRefreshTimer);
-  }
-  linkedWidgetRefreshTimer = window.setInterval(() => {
-    refreshLinkedWidgets();
-  }, 3000);
   updateWidgetUi();
   updateOnboardingControlsUi();
   scheduleOnboardingRefresh(0);

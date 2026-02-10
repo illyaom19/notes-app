@@ -58,6 +58,8 @@ export class InkEngine {
     this._widgetInkRevisionCache = new Map();
     this._widgetInkRevisionCacheRevision = this.store.revision;
     this._widgetInkRevisionCacheContextId = this._activeContextId();
+    this._occlusionStateCache = null;
+    this._occlusionStateCacheKey = null;
     this._detachInput = null;
     this._detachGlobalLayer = null;
     this._detachAttachedLayer = null;
@@ -542,10 +544,14 @@ export class InkEngine {
     return this.activeStrokes.size > 0 || this.activeErasers.size > 0;
   }
 
-  _buildOcclusionState(camera) {
+  _buildOcclusionState(camera, visibleWorld = null) {
     const widgets = this.runtime.listWidgets();
     const entries = [];
     const byId = new Map();
+    const viewport = {
+      width: Math.max(1, this.runtime?.canvas?.clientWidth || 1),
+      height: Math.max(1, this.runtime?.canvas?.clientHeight || 1),
+    };
 
     for (let index = 0; index < widgets.length; index += 1) {
       const widget = widgets[index];
@@ -562,10 +568,28 @@ export class InkEngine {
       ) {
         continue;
       }
+      const worldMinX = widget.position.x;
+      const worldMinY = widget.position.y;
+      const worldMaxX = worldMinX + bounds.width;
+      const worldMaxY = worldMinY + bounds.height;
+      if (
+        visibleWorld &&
+        (worldMaxX < visibleWorld.minX ||
+          worldMinX > visibleWorld.maxX ||
+          worldMaxY < visibleWorld.minY ||
+          worldMinY > visibleWorld.maxY)
+      ) {
+        continue;
+      }
 
       const screen = camera.worldToScreen(widget.position.x, widget.position.y);
       const width = Math.max(1, bounds.width * camera.zoom);
       const height = Math.max(1, bounds.height * camera.zoom);
+      const maxX = screen.x + width;
+      const maxY = screen.y + height;
+      if (maxX < 0 || maxY < 0 || screen.x > viewport.width || screen.y > viewport.height) {
+        continue;
+      }
       const entry = {
         id: widget.id,
         index,
@@ -573,18 +597,68 @@ export class InkEngine {
         screenY: screen.y,
         width,
         height,
-        maxX: screen.x + width,
-        maxY: screen.y + height,
+        maxX,
+        maxY,
+        minCellX: 0,
+        maxCellX: 0,
+        minCellY: 0,
+        maxCellY: 0,
         occluders: [],
       };
       entries.push(entry);
       byId.set(widget.id, entry);
     }
 
-    // Precompute overlapping higher-z widget rectangles once per layer render.
+    const cacheKey = [
+      camera.zoom.toFixed(4),
+      entries
+        .map(
+          (entry) =>
+            `${entry.id}:${entry.index}:${entry.screenX.toFixed(2)}:${entry.screenY.toFixed(2)}:${entry.width.toFixed(2)}:${entry.height.toFixed(2)}`,
+        )
+        .join("|"),
+    ].join("::");
+    if (this._occlusionStateCacheKey === cacheKey && this._occlusionStateCache) {
+      return this._occlusionStateCache;
+    }
+
+    const cellSizePx = 220;
+    const cells = new Map();
+
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+      const entry = entries[entryIndex];
+      entry.minCellX = Math.floor(entry.screenX / cellSizePx);
+      entry.maxCellX = Math.floor(entry.maxX / cellSizePx);
+      entry.minCellY = Math.floor(entry.screenY / cellSizePx);
+      entry.maxCellY = Math.floor(entry.maxY / cellSizePx);
+      for (let cy = entry.minCellY; cy <= entry.maxCellY; cy += 1) {
+        for (let cx = entry.minCellX; cx <= entry.maxCellX; cx += 1) {
+          const key = `${cx}:${cy}`;
+          const list = cells.get(key) ?? [];
+          list.push(entryIndex);
+          cells.set(key, list);
+        }
+      }
+    }
+
     for (let sourceIndex = 0; sourceIndex < entries.length; sourceIndex += 1) {
       const source = entries[sourceIndex];
-      for (let occluderIndex = sourceIndex + 1; occluderIndex < entries.length; occluderIndex += 1) {
+      const candidateIndexes = new Set();
+      for (let cy = source.minCellY; cy <= source.maxCellY; cy += 1) {
+        for (let cx = source.minCellX; cx <= source.maxCellX; cx += 1) {
+          const bucket = cells.get(`${cx}:${cy}`);
+          if (!bucket) {
+            continue;
+          }
+          for (const candidateIndex of bucket) {
+            if (candidateIndex > sourceIndex) {
+              candidateIndexes.add(candidateIndex);
+            }
+          }
+        }
+      }
+
+      for (const occluderIndex of candidateIndexes) {
         const occluder = entries[occluderIndex];
         if (
           occluder.screenX >= source.maxX ||
@@ -598,9 +672,12 @@ export class InkEngine {
       }
     }
 
-    return {
+    const state = {
       byId,
     };
+    this._occlusionStateCacheKey = cacheKey;
+    this._occlusionStateCache = state;
+    return state;
   }
 
   _widgetIntersectsVisibleWorld(widgetId, camera, visibleWorld, visibleByWidgetId) {
@@ -661,7 +738,7 @@ export class InkEngine {
     const completed = this._getCompletedLayerStrokes(layer);
     const visibleWorld = this.runtime.getVisibleWorldBounds?.() ?? null;
     const visibleByWidgetId = new Map();
-    const occlusionState = layer === "global" ? null : this._buildOcclusionState(camera);
+    const occlusionState = layer === "global" ? null : this._buildOcclusionState(camera, visibleWorld);
 
     for (const stroke of completed) {
       if (

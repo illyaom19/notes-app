@@ -469,6 +469,9 @@ export function createWidgetRasterManager({
     totalBytes += snapshot.bytes;
     enforcePerWidgetBucketLimit(entry);
     enforceGlobalBudget();
+    if (typeof runtime.requestRender === "function") {
+      runtime.requestRender({ continuousMs: 80 });
+    }
   }
 
   function dispose() {

@@ -172,6 +172,7 @@ export function createAssetManager({
   allowLocalStoragePayloadFallback = true,
 } = {}) {
   let gcTimer = null;
+  let catalogPersistTimer = null;
   const payloadCache = new Map();
   let payloadsHydrated = false;
   let hydratePromise = null;
@@ -307,6 +308,10 @@ export function createAssetManager({
   }
 
   function persistCatalog() {
+    if (catalogPersistTimer) {
+      window.clearTimeout(catalogPersistTimer);
+      catalogPersistTimer = null;
+    }
     try {
       writeEnvelope({
         storage,
@@ -319,6 +324,16 @@ export function createAssetManager({
       console.warn("[storage] failed to persist asset catalog.", error);
       return false;
     }
+  }
+
+  function scheduleCatalogPersist({ delayMs = 200 } = {}) {
+    if (catalogPersistTimer) {
+      return;
+    }
+    catalogPersistTimer = window.setTimeout(() => {
+      catalogPersistTimer = null;
+      persistCatalog();
+    }, Math.max(0, Number(delayMs) || 0));
   }
 
   function findRecord(assetId) {
@@ -626,7 +641,7 @@ export function createAssetManager({
     }
 
     touchRecord(record);
-    persistCatalog();
+    scheduleCatalogPersist();
     return payload;
   }
 

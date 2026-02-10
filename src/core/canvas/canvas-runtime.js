@@ -36,6 +36,9 @@ export class CanvasRuntime {
     this._widgetRasterManager = null;
     this._widgetRasterEpoch = 0;
     this._rasterizedWidgetIds = new Set();
+    this._frameScheduled = false;
+    this._renderRequested = false;
+    this._continuousRenderUntil = 0;
 
     if (!this.ctx) {
       throw new Error("Canvas 2D context unavailable.");
@@ -43,7 +46,7 @@ export class CanvasRuntime {
 
     this._bindEvents();
     this.resizeToViewport();
-    requestAnimationFrame((now) => this._frame(now));
+    this.requestRender({ continuousMs: 120 });
   }
 
   resizeToViewport() {
@@ -54,10 +57,11 @@ export class CanvasRuntime {
   addWidget(widget) {
     widget.mount({
       requestRender: () => {
-        // Render loop stays active for camera and widget interaction responsiveness.
+        this.requestRender({ continuousMs: 100 });
       },
     });
     this.widgets.push(widget);
+    this.requestRender({ continuousMs: 120 });
   }
 
   removeWidgetById(widgetId, { reason = null } = {}) {
@@ -91,6 +95,7 @@ export class CanvasRuntime {
         console.error("Widget removal listener failed.", error);
       }
     }
+    this.requestRender({ continuousMs: 100 });
     return true;
   }
 
@@ -110,6 +115,7 @@ export class CanvasRuntime {
 
     const [target] = this.widgets.splice(targetIndex, 1);
     this.widgets.push(target);
+    this.requestRender({ continuousMs: 100 });
     return true;
   }
 
@@ -193,21 +199,26 @@ export class CanvasRuntime {
   registerRenderLayer(layer, { phase = "after-widgets" } = {}) {
     const target = phase === "before-widgets" ? this._renderLayersBeforeWidgets : this._renderLayersAfterWidgets;
     target.push(layer);
+    this.requestRender();
     return () => {
       this._renderLayersBeforeWidgets = this._renderLayersBeforeWidgets.filter((entry) => entry !== layer);
       this._renderLayersAfterWidgets = this._renderLayersAfterWidgets.filter((entry) => entry !== layer);
+      this.requestRender();
     };
   }
 
   registerOverlayLayer(layer) {
     this._overlayLayers.push(layer);
+    this.requestRender();
     return () => {
       this._overlayLayers = this._overlayLayers.filter((entry) => entry !== layer);
+      this.requestRender();
     };
   }
 
   setWidgetRasterManager(manager) {
     this._widgetRasterManager = manager ?? null;
+    this.requestRender();
   }
 
   getWidgetRasterEpoch() {
@@ -216,6 +227,7 @@ export class CanvasRuntime {
 
   bumpWidgetRasterEpoch() {
     this._widgetRasterEpoch += 1;
+    this.requestRender();
     return this._widgetRasterEpoch;
   }
 
@@ -265,6 +277,7 @@ export class CanvasRuntime {
     }
     this._selectedWidgetId = nextSelectedId;
     this._emitSelectionChange();
+    this.requestRender({ continuousMs: 100 });
   }
 
   getSelectedWidgetId() {
@@ -278,6 +291,7 @@ export class CanvasRuntime {
     }
     this._focusedWidgetId = nextFocusedId;
     this._emitSelectionChange();
+    this.requestRender({ continuousMs: 100 });
   }
 
   getFocusedWidgetId() {
@@ -322,6 +336,7 @@ export class CanvasRuntime {
       });
     }
     this._emitCamera();
+    this.requestRender({ continuousMs: 120 });
     return this._viewMode;
   }
 
@@ -332,12 +347,31 @@ export class CanvasRuntime {
       normalizedWidgetId && (mode === "move" || mode === "resize") ? mode : null;
     if (!normalizedWidgetId || !normalizedMode) {
       this._widgetTransformState = null;
+      this.requestRender({ continuousMs: 80 });
       return;
     }
     this._widgetTransformState = {
       widgetId: normalizedWidgetId,
       mode: normalizedMode,
     };
+    this.requestRender({ continuousMs: 120 });
+  }
+
+  requestRender({ continuousMs = 0 } = {}) {
+    const now =
+      typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+    const duration = Math.max(0, Number(continuousMs) || 0);
+    if (duration > 0) {
+      this._continuousRenderUntil = Math.max(this._continuousRenderUntil, now + duration);
+    }
+    this._renderRequested = true;
+    if (this._frameScheduled) {
+      return;
+    }
+    this._frameScheduled = true;
+    requestAnimationFrame((nextNow) => this._frame(nextNow));
   }
 
   getWidgetTransformState() {
@@ -474,6 +508,7 @@ export class CanvasRuntime {
           this._touchInteractionPointers.add(event.pointerId);
           this._reconcileTouchControllerOwner();
           this.canvas.setPointerCapture(event.pointerId);
+          this.requestRender({ continuousMs: 140 });
           return;
         }
 
@@ -482,6 +517,7 @@ export class CanvasRuntime {
           this._touchIgnoredPointers.add(event.pointerId);
           this._reconcileTouchControllerOwner();
           this.canvas.setPointerCapture(event.pointerId);
+          this.requestRender({ continuousMs: 120 });
           return;
         }
 
@@ -492,11 +528,13 @@ export class CanvasRuntime {
         if (this._touchPointers.size >= 2) {
           this._touchGesture = this._computeTouchMetrics();
         }
+        this.requestRender({ continuousMs: 140 });
         return;
       }
 
       if (this._dispatchPointer("onPointerDown", event)) {
         this.canvas.setPointerCapture(event.pointerId);
+        this.requestRender({ continuousMs: 140 });
         return;
       }
 
@@ -510,6 +548,7 @@ export class CanvasRuntime {
       this._dragging = true;
       this._lastPointer = { x: event.clientX, y: event.clientY };
       this.canvas.setPointerCapture(event.pointerId);
+      this.requestRender({ continuousMs: 160 });
     });
 
     this.canvas.addEventListener("pointermove", (event) => {
@@ -518,11 +557,13 @@ export class CanvasRuntime {
       if (event.pointerType === "touch" && this._touchInteractionPointers.has(event.pointerId)) {
         event.preventDefault();
         this._dispatchPointer("onPointerMove", event);
+        this.requestRender({ continuousMs: 140 });
         return;
       }
 
       if (event.pointerType === "touch" && this._touchIgnoredPointers.has(event.pointerId)) {
         event.preventDefault();
+        this.requestRender({ continuousMs: 90 });
         return;
       }
 
@@ -547,6 +588,7 @@ export class CanvasRuntime {
             this._emitCamera();
           }
           this._touchGesture = metrics;
+          this.requestRender({ continuousMs: 160 });
           return;
         }
 
@@ -555,13 +597,19 @@ export class CanvasRuntime {
           this.camera.panBy(event.clientX - previous.x, event.clientY - previous.y);
           this._emitCamera();
         }
+        this.requestRender({ continuousMs: 140 });
         return;
       }
 
       const hoveredWidget = this.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
-      this._hoverWidgetId = hoveredWidget?.id ?? null;
+      const nextHovered = hoveredWidget?.id ?? null;
+      if (nextHovered !== this._hoverWidgetId) {
+        this._hoverWidgetId = nextHovered;
+        this.requestRender({ continuousMs: 100 });
+      }
 
       if (this._dispatchPointer("onPointerMove", event)) {
+        this.requestRender({ continuousMs: 140 });
         return;
       }
 
@@ -574,10 +622,14 @@ export class CanvasRuntime {
       this._lastPointer = { x: event.clientX, y: event.clientY };
       this.camera.panBy(dx, dy);
       this._emitCamera();
+      this.requestRender({ continuousMs: 160 });
     });
 
     this.canvas.addEventListener("pointerleave", () => {
-      this._hoverWidgetId = null;
+      if (this._hoverWidgetId !== null) {
+        this._hoverWidgetId = null;
+        this.requestRender({ continuousMs: 90 });
+      }
     });
 
     const stopDragging = (event) => {
@@ -590,6 +642,7 @@ export class CanvasRuntime {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
+        this.requestRender({ continuousMs: 120 });
         return;
       }
 
@@ -599,6 +652,7 @@ export class CanvasRuntime {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
+        this.requestRender({ continuousMs: 90 });
         return;
       }
 
@@ -612,6 +666,7 @@ export class CanvasRuntime {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
+        this.requestRender({ continuousMs: 120 });
         return;
       }
 
@@ -619,6 +674,7 @@ export class CanvasRuntime {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
+        this.requestRender({ continuousMs: 120 });
         return;
       }
 
@@ -629,6 +685,7 @@ export class CanvasRuntime {
       if (this.canvas.hasPointerCapture(event.pointerId)) {
         this.canvas.releasePointerCapture(event.pointerId);
       }
+      this.requestRender({ continuousMs: 120 });
     };
 
     this.canvas.addEventListener("pointerup", stopDragging);
@@ -642,6 +699,7 @@ export class CanvasRuntime {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
+        this.requestRender({ continuousMs: 120 });
         return;
       }
 
@@ -651,6 +709,7 @@ export class CanvasRuntime {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
+        this.requestRender({ continuousMs: 90 });
         return;
       }
 
@@ -664,6 +723,7 @@ export class CanvasRuntime {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
+        this.requestRender({ continuousMs: 120 });
         return;
       }
 
@@ -671,6 +731,7 @@ export class CanvasRuntime {
         if (this.canvas.hasPointerCapture(event.pointerId)) {
           this.canvas.releasePointerCapture(event.pointerId);
         }
+        this.requestRender({ continuousMs: 110 });
         return;
       }
       stopDragging(event);
@@ -684,6 +745,7 @@ export class CanvasRuntime {
         const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08;
         this.camera.zoomAt(event.offsetX, event.offsetY, zoomFactor);
         this._emitCamera();
+        this.requestRender({ continuousMs: 140 });
       },
       { passive: false },
     );
@@ -703,9 +765,11 @@ export class CanvasRuntime {
       this.camera.setCenteredViewport(width, height);
       this._emitCamera();
     }
+    this.requestRender({ continuousMs: 140 });
   }
 
   _emitCamera() {
+    this.requestRender({ continuousMs: 120 });
     if (typeof this.onCameraChange === "function") {
       const worldAtCenter = this.camera.screenToWorld(
         this.canvas.clientWidth / 2,
@@ -764,11 +828,22 @@ export class CanvasRuntime {
   }
 
   _frame(now) {
+    this._frameScheduled = false;
     const dt = now - this._lastFrameAt;
     this._lastFrameAt = now;
+    this._renderRequested = false;
 
     this._render(dt);
-    requestAnimationFrame((nextNow) => this._frame(nextNow));
+    const stillInteracting =
+      this._dragging ||
+      this._touchPointers.size > 0 ||
+      this._touchInteractionPointers.size > 0 ||
+      this._touchIgnoredPointers.size > 0 ||
+      this._touchControllerOwner !== null ||
+      this._widgetTransformState !== null;
+    if (this._renderRequested || stillInteracting || now < this._continuousRenderUntil) {
+      this.requestRender();
+    }
   }
 
   _render(dt) {

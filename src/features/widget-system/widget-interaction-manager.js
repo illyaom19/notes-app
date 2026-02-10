@@ -191,7 +191,8 @@ function isTypingTarget(target) {
 export function createWidgetInteractionManager({
   runtime,
   canvas,
-  onWidgetMutated,
+  onWidgetPreviewMutated,
+  onWidgetCommitMutated,
   onWidgetTap,
   onWidgetDragStateChange,
 }) {
@@ -320,7 +321,9 @@ export function createWidgetInteractionManager({
         runtime.setFocusedWidgetId(widget.id);
         runtime.setSelectedWidgetId(widget.id);
         widget.setCollapsed(!widget.collapsed);
-        onWidgetMutated(widget);
+        if (typeof onWidgetCommitMutated === "function") {
+          onWidgetCommitMutated(widget);
+        }
         return true;
       }
 
@@ -414,7 +417,9 @@ export function createWidgetInteractionManager({
       }
 
       emitWidgetDragState("move", event, widget.id, dragState.mode);
-      onWidgetMutated(widget);
+      if (typeof onWidgetPreviewMutated === "function") {
+        onWidgetPreviewMutated(widget);
+      }
       return true;
     },
 
@@ -426,8 +431,12 @@ export function createWidgetInteractionManager({
       if (dragState.pointerId === event.pointerId) {
         const draggedWidgetId = dragState.widgetId;
         const draggedMode = dragState.mode;
+        const draggedWidget = draggedWidgetId ? runtime.getWidgetById(draggedWidgetId) : null;
         clearDragState();
         emitWidgetDragState("end", event, draggedWidgetId, draggedMode);
+        if (draggedWidget && typeof onWidgetCommitMutated === "function") {
+          onWidgetCommitMutated(draggedWidget);
+        }
         clearTapState();
         return true;
       }
@@ -463,8 +472,12 @@ export function createWidgetInteractionManager({
       if (dragState.pointerId === event.pointerId) {
         const draggedWidgetId = dragState.widgetId;
         const draggedMode = dragState.mode;
+        const draggedWidget = draggedWidgetId ? runtime.getWidgetById(draggedWidgetId) : null;
         clearDragState();
         emitWidgetDragState("end", event, draggedWidgetId, draggedMode);
+        if (draggedWidget && typeof onWidgetCommitMutated === "function") {
+          onWidgetCommitMutated(draggedWidget);
+        }
       }
       if (tapState.pointerId === event.pointerId) {
         clearTapState();
@@ -619,30 +632,36 @@ export function createWidgetInteractionManager({
       return;
     }
 
-    if (key === "delete" || key === "backspace") {
-      event.preventDefault();
-      runtime.removeWidgetById(selected.id, { reason: "user-delete" });
-      runtime.setSelectedWidgetId(null);
-      runtime.setFocusedWidgetId(null);
-      onWidgetMutated();
-      return;
-    }
-
-    if (key === "c") {
-      event.preventDefault();
-      if (interactionFlags(selected).collapsible) {
-        selected.setCollapsed(!selected.collapsed);
-        onWidgetMutated(selected);
+      if (key === "delete" || key === "backspace") {
+        event.preventDefault();
+        runtime.removeWidgetById(selected.id, { reason: "user-delete" });
+        runtime.setSelectedWidgetId(null);
+        runtime.setFocusedWidgetId(null);
+        if (typeof onWidgetCommitMutated === "function") {
+          onWidgetCommitMutated();
+        }
+        return;
       }
-      return;
-    }
+
+      if (key === "c") {
+        event.preventDefault();
+        if (interactionFlags(selected).collapsible) {
+          selected.setCollapsed(!selected.collapsed);
+          if (typeof onWidgetCommitMutated === "function") {
+            onWidgetCommitMutated(selected);
+          }
+        }
+        return;
+      }
 
     if (key === "]") {
       event.preventDefault();
       runtime.bringWidgetToFront(selected.id);
       runtime.setFocusedWidgetId(selected.id);
       runtime.setSelectedWidgetId(selected.id);
-      onWidgetMutated(selected);
+      if (typeof onWidgetCommitMutated === "function") {
+        onWidgetCommitMutated(selected);
+      }
     }
   };
 
