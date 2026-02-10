@@ -6240,7 +6240,7 @@ function wireReferenceManagerUi() {
     documentsCountElement: referenceManagerDocumentCount,
     previewLayerElement: referencePreviewLayer,
     onImportReference: async (entry, { screenPoint = null } = {}) => {
-      await createReferencePopupFromLibraryEntry(entry, {
+      const widget = await createReferencePopupFromLibraryEntry(entry, {
         linkStatus: "linked",
         intent: createCreationIntent({
           type: "reference-popup",
@@ -6249,10 +6249,14 @@ function wireReferenceManagerUi() {
           createdFrom: "manual",
         }),
       });
+      if (!widget) {
+        return false;
+      }
       updateWidgetUi();
+      return true;
     },
     onImportDocument: async (entry, { screenPoint = null } = {}) => {
-      await createPdfWidgetFromLibraryEntry(entry, {
+      const widget = await createPdfWidgetFromLibraryEntry(entry, {
         linkStatus: "linked",
         intent: createCreationIntent({
           type: "pdf-document",
@@ -6261,16 +6265,27 @@ function wireReferenceManagerUi() {
           createdFrom: "manual",
         }),
       });
+      if (!widget) {
+        return false;
+      }
       updateWidgetUi();
+      return true;
     },
     onImportNote: async (entry, { screenPoint = null } = {}) => {
-      await createNoteWidgetFromLibraryEntry(entry, createCreationIntent({
-        type: "expanded-area",
-        anchor: screenPoint ? anchorFromScreenPoint(screenPoint) : viewportCenterAnchor(),
-        sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
-        createdFrom: "manual",
-      }));
+      const widget = await createNoteWidgetFromLibraryEntry(
+        entry,
+        createCreationIntent({
+          type: "expanded-area",
+          anchor: screenPoint ? anchorFromScreenPoint(screenPoint) : viewportCenterAnchor(),
+          sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+          createdFrom: "manual",
+        }),
+      );
+      if (!widget) {
+        return false;
+      }
       updateWidgetUi();
+      return true;
     },
     onRenameReference: async (entry) => {
       await renameNotebookReferenceFromManager(entry);

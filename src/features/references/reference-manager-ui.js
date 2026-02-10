@@ -4,7 +4,7 @@ const LONG_PRESS_MS = 430;
 const PREVIEW_WIDTH = 220;
 const PREVIEW_HEIGHT = 152;
 const PREVIEW_MARGIN = 12;
-const PREVIEW_HIDE_DELAY_MS = 420;
+const PREVIEW_HIDE_DELAY_MS = 760;
 const DRAG_THRESHOLD_PX = 7;
 const MAX_VISIBLE_CHIPS = 6;
 const MAX_RECENT = 3;
@@ -793,21 +793,43 @@ export function createReferenceManagerUi({
       droppedInsideCanvas: true,
     };
     if (item.kind === "document") {
-      await onImportDocument?.(item.raw, { screenPoint, canvasPoint, dropMeta, linkStatus: "linked" });
+      const imported = await onImportDocument?.(item.raw, {
+        screenPoint,
+        canvasPoint,
+        dropMeta,
+        linkStatus: "linked",
+      });
+      if (!imported) {
+        triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
+        return false;
+      }
       await onTouchDocument?.(item.raw);
       return true;
     }
     if (item.kind === "note") {
-      await onImportNote?.(item.raw, { screenPoint, canvasPoint, dropMeta });
+      const imported = await onImportNote?.(item.raw, { screenPoint, canvasPoint, dropMeta });
+      if (!imported) {
+        triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
+        return false;
+      }
       await onTouchNote?.(item.raw);
       return true;
     }
-    await onImportReference?.(item.raw, { screenPoint, canvasPoint, dropMeta, linkStatus: "linked" });
+    const imported = await onImportReference?.(item.raw, {
+      screenPoint,
+      canvasPoint,
+      dropMeta,
+      linkStatus: "linked",
+    });
+    if (!imported) {
+      triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
+      return false;
+    }
     await onTouchReference?.(item.raw);
     return true;
   }
 
-  function beginDrag(item, event) {
+  function beginDrag(item, event, captureTarget = previewElement) {
     cancelPendingHide();
     draggingState = {
       item,
@@ -815,9 +837,10 @@ export function createReferenceManagerUi({
       startX: event.clientX,
       startY: event.clientY,
       active: false,
+      captureTarget: captureTarget instanceof HTMLElement ? captureTarget : previewElement,
     };
     try {
-      previewElement.setPointerCapture?.(event.pointerId);
+      draggingState.captureTarget?.setPointerCapture?.(event.pointerId);
     } catch (_error) {
       // Ignore unsupported pointer capture paths.
     }
@@ -838,7 +861,7 @@ export function createReferenceManagerUi({
       return;
     }
     try {
-      previewElement.releasePointerCapture?.(draggingState.pointerId);
+      draggingState.captureTarget?.releasePointerCapture?.(draggingState.pointerId);
     } catch (_error) {
       // Ignore unsupported pointer capture paths.
     }
@@ -858,7 +881,7 @@ export function createReferenceManagerUi({
       return;
     }
     cancelPendingHide();
-    beginDrag(item, event);
+    beginDrag(item, event, previewElement);
     event.preventDefault();
     event.stopPropagation();
   }
@@ -904,6 +927,9 @@ export function createReferenceManagerUi({
         hidePreviewNow();
         setActiveRowKey(null);
         setMenuRowKey(null);
+      }).catch((error) => {
+        console.error("Library drag import failed:", error);
+        triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
       });
     }
     event.preventDefault();
@@ -956,9 +982,18 @@ export function createReferenceManagerUi({
         void showPreviewForKey(itemKey, row);
       }, LONG_PRESS_MS),
     };
+    const item = findItem(itemKey);
+    if (item) {
+      beginDrag(item, event, row);
+    }
   }
 
   function onListPointerMove(event) {
+    onPreviewPointerMove(event);
+    if (draggingState && draggingState.pointerId === event.pointerId && draggingState.active) {
+      clearLongPress();
+      return;
+    }
     if (!longPressState || longPressState.pointerId !== event.pointerId) {
       return;
     }
@@ -970,6 +1005,14 @@ export function createReferenceManagerUi({
   }
 
   function onListPointerUp(event) {
+    if (draggingState && draggingState.pointerId === event.pointerId) {
+      if (draggingState.active) {
+        onPreviewPointerUp(event);
+        clearLongPress();
+        return;
+      }
+      stopDrag(event.pointerId);
+    }
     if (!longPressState || longPressState.pointerId !== event.pointerId) {
       return;
     }
@@ -978,6 +1021,15 @@ export function createReferenceManagerUi({
     if (opened) {
       event.preventDefault();
       event.stopPropagation();
+    }
+  }
+
+  function onListPointerCancel(event) {
+    if (draggingState && draggingState.pointerId === event.pointerId) {
+      stopDrag(event.pointerId);
+    }
+    if (longPressState && longPressState.pointerId === event.pointerId) {
+      clearLongPress();
     }
   }
 
@@ -1026,6 +1078,17 @@ function onListPointerLeave(event) {
     const rect = launcherButton.getBoundingClientRect();
     dropFeedback.style.left = `${Math.round(rect.left - 8)}px`;
     dropFeedback.style.top = `${Math.round(rect.top - 34)}px`;
+  }
+
+  function syncFloatingArtifacts() {
+    syncFloatingPlacement();
+    if (previewKey) {
+      const row = rowMap.get(previewKey) ?? rowMap.get(`recent:${previewKey}`);
+      if (row instanceof HTMLElement) {
+        positionPreviewForRow(row);
+      }
+    }
+    updateDropFeedbackPosition();
   }
 
   function applyDropTargetState({ active = false, over = false } = {}) {
@@ -1169,7 +1232,7 @@ function onListPointerLeave(event) {
     bind(allListElement, "pointerdown", onListPointerDown);
     bind(allListElement, "pointermove", onListPointerMove);
     bind(allListElement, "pointerup", onListPointerUp);
-    bind(allListElement, "pointercancel", onListPointerUp);
+    bind(allListElement, "pointercancel", onListPointerCancel);
     bind(allListElement, "pointerover", onListPointerEnter);
     bind(allListElement, "pointerout", onListPointerLeave);
     bind(allListElement, "click", onListClick);
@@ -1178,7 +1241,7 @@ function onListPointerLeave(event) {
     bind(recentListElement, "pointerdown", onListPointerDown);
     bind(recentListElement, "pointermove", onListPointerMove);
     bind(recentListElement, "pointerup", onListPointerUp);
-    bind(recentListElement, "pointercancel", onListPointerUp);
+    bind(recentListElement, "pointercancel", onListPointerCancel);
     bind(recentListElement, "pointerover", onListPointerEnter);
     bind(recentListElement, "pointerout", onListPointerLeave);
     bind(recentListElement, "click", onListClick);
@@ -1186,18 +1249,22 @@ function onListPointerLeave(event) {
 
     bind(window, "pointerdown", onWindowPointerDown, true);
     bind(window, "keydown", onWindowKeyDown);
-    bind(window, "resize", () => {
-      syncFloatingPlacement();
-      if (!previewKey) {
-        updateDropFeedbackPosition();
-      } else {
-        const row = rowMap.get(previewKey) ?? rowMap.get(`recent:${previewKey}`);
-        if (row instanceof HTMLElement) {
-          positionPreviewForRow(row);
-        }
-      }
-      updateDropFeedbackPosition();
-    }, { passive: true });
+    bind(
+      window,
+      "resize",
+      () => {
+        syncFloatingArtifacts();
+      },
+      { passive: true },
+    );
+    bind(
+      window,
+      "scroll",
+      () => {
+        syncFloatingArtifacts();
+      },
+      { passive: true, capture: true },
+    );
   }
 
   wireEvents();
@@ -1233,14 +1300,7 @@ function onListPointerLeave(event) {
     },
 
     syncPlacement() {
-      syncFloatingPlacement();
-      if (previewKey) {
-        const row = rowMap.get(previewKey) ?? rowMap.get(`recent:${previewKey}`);
-        if (row instanceof HTMLElement) {
-          positionPreviewForRow(row);
-        }
-      }
-      updateDropFeedbackPosition();
+      syncFloatingArtifacts();
     },
 
     isOpen() {
