@@ -8,6 +8,7 @@ const PREVIEW_HIDE_DELAY_MS = 760;
 const DRAG_THRESHOLD_PX = 7;
 const MAX_VISIBLE_CHIPS = 6;
 const MAX_RECENT = 3;
+const MAX_PDF_PREVIEW_CACHE = 12;
 const LAUNCHER_SIZE = 48;
 const FLOATING_INSET = 10;
 const OVERLAY_GAP = 10;
@@ -260,6 +261,9 @@ export function createReferenceManagerUi({
   let feedbackTimer = null;
   let bodyTouchActionBeforeDrag = null;
   let htmlTouchActionBeforeDrag = null;
+  const pdfPreviewCache = new Map();
+  const pdfPreviewPending = new Map();
+  let pdfPreviewQueue = Promise.resolve();
 
   const eventDisposers = [];
   const allListElement = referencesListElement instanceof HTMLElement ? referencesListElement : null;
@@ -591,6 +595,107 @@ export function createReferenceManagerUi({
     return canvas;
   }
 
+  function cachePdfPreview(itemKey, version, canvas) {
+    if (!(canvas instanceof HTMLCanvasElement) || !itemKey) {
+      return;
+    }
+    if (pdfPreviewCache.has(itemKey)) {
+      pdfPreviewCache.delete(itemKey);
+    }
+    pdfPreviewCache.set(itemKey, {
+      version,
+      canvas,
+      lastUsedAt: Date.now(),
+    });
+    while (pdfPreviewCache.size > MAX_PDF_PREVIEW_CACHE) {
+      const oldestKey = pdfPreviewCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      pdfPreviewCache.delete(oldestKey);
+    }
+  }
+
+  function getCachedPdfPreview(item) {
+    if (!item?.key) {
+      return null;
+    }
+    const cached = pdfPreviewCache.get(item.key);
+    if (!cached) {
+      return null;
+    }
+    if (cached.version !== item.updatedAt || !(cached.canvas instanceof HTMLCanvasElement)) {
+      pdfPreviewCache.delete(item.key);
+      return null;
+    }
+    cached.lastUsedAt = Date.now();
+    return cached.canvas;
+  }
+
+  async function buildPdfPreviewCanvas(item) {
+    if (typeof onLoadDocumentBytes !== "function") {
+      return null;
+    }
+    const bytes = onLoadDocumentBytes(item.raw);
+    if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
+      return null;
+    }
+
+    const pdfjs = await loadPdfJs();
+    const doc = await pdfjs.getDocument({ data: bytes }).promise;
+    const page = await doc.getPage(1);
+    const previewCanvas = makeThumbCanvas(196, 118);
+    const base = page.getViewport({ scale: 1 });
+    const scale = previewCanvas.width / Math.max(1, base.width);
+    const viewport = page.getViewport({ scale });
+    previewCanvas.width = Math.max(1, Math.floor(viewport.width));
+    previewCanvas.height = Math.max(1, Math.floor(Math.min(viewport.height, 220)));
+    const ctx = previewCanvas.getContext("2d", { alpha: false });
+    if (!ctx) {
+      return null;
+    }
+    await page.render({
+      canvasContext: ctx,
+      viewport,
+      intent: "display",
+      background: "white",
+    }).promise;
+    return previewCanvas;
+  }
+
+  function queuePdfPreviewBuild(item) {
+    if (!item?.key) {
+      return Promise.resolve(null);
+    }
+
+    const pending = pdfPreviewPending.get(item.key);
+    if (pending && pending.version === item.updatedAt) {
+      return pending.promise;
+    }
+
+    const buildPromise = (pdfPreviewQueue = pdfPreviewQueue
+      .catch(() => null)
+      .then(async () => {
+        const nextCanvas = await buildPdfPreviewCanvas(item);
+        if (nextCanvas) {
+          cachePdfPreview(item.key, item.updatedAt, nextCanvas);
+        }
+        return nextCanvas;
+      }));
+
+    pdfPreviewPending.set(item.key, {
+      version: item.updatedAt,
+      promise: buildPromise,
+    });
+
+    return buildPromise.finally(() => {
+      const latest = pdfPreviewPending.get(item.key);
+      if (latest?.promise === buildPromise) {
+        pdfPreviewPending.delete(item.key);
+      }
+    });
+  }
+
   function renderNoteThumbnail(container, item) {
     const previewWrap = document.createElement("div");
     previewWrap.className = "library-thumbnail library-thumbnail--note";
@@ -653,40 +758,31 @@ export function createReferenceManagerUi({
       return;
     }
 
-    const bytes = onLoadDocumentBytes(item.raw);
-    if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
-      wrap.textContent = `Missing PDF. Reupload "${item.title}".`;
-      container.append(wrap);
-      return;
-    }
-
     const pageCanvas = makeThumbCanvas(196, 118);
     wrap.append(pageCanvas);
     container.append(wrap);
 
     try {
-      const pdfjs = await loadPdfJs();
       if (signal.aborted) {
         return;
       }
-      const doc = await pdfjs.getDocument({ data: bytes }).promise;
+      let sourceCanvas = getCachedPdfPreview(item);
+      if (!(sourceCanvas instanceof HTMLCanvasElement)) {
+        sourceCanvas = await queuePdfPreviewBuild(item);
+      }
       if (signal.aborted) {
         return;
       }
-      const page = await doc.getPage(1);
-      const base = page.getViewport({ scale: 1 });
-      const scale = pageCanvas.width / Math.max(1, base.width);
-      const viewport = page.getViewport({ scale });
-      pageCanvas.width = Math.max(1, Math.floor(viewport.width));
-      pageCanvas.height = Math.max(1, Math.floor(Math.min(viewport.height, 220)));
+      if (!(sourceCanvas instanceof HTMLCanvasElement)) {
+        wrap.textContent = `Missing PDF. Reupload "${item.title}".`;
+        return;
+      }
+      pageCanvas.width = Math.max(1, sourceCanvas.width);
+      pageCanvas.height = Math.max(1, sourceCanvas.height);
       const ctx = pageCanvas.getContext("2d", { alpha: false });
       if (ctx) {
-        await page.render({
-          canvasContext: ctx,
-          viewport,
-          intent: "display",
-          background: "white",
-        }).promise;
+        ctx.clearRect(0, 0, pageCanvas.width, pageCanvas.height);
+        ctx.drawImage(sourceCanvas, 0, 0, pageCanvas.width, pageCanvas.height);
       }
     } catch (_error) {
       wrap.textContent = `Unable to render "${item.title}"`;
@@ -1360,6 +1456,8 @@ function onListPointerLeave(event) {
         window.clearTimeout(feedbackTimer);
         feedbackTimer = null;
       }
+      pdfPreviewCache.clear();
+      pdfPreviewPending.clear();
       for (const disposeEvent of eventDisposers.splice(0, eventDisposers.length)) {
         disposeEvent();
       }
