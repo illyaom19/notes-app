@@ -1,4 +1,8 @@
-const CACHE_NAME = "notes-app-pwa-v1";
+const CACHE_NAME = "notes-app-pwa-v2";
+const RUNTIME_CACHE_NAME = "notes-app-runtime-v1";
+const PDFJS_PROXY_PREFIX = "/pdfjs/";
+const PDFJS_PRIMARY_BASE = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/";
+const PDFJS_FALLBACK_BASE = "https://unpkg.com/pdfjs-dist@4.6.82/build/";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -15,6 +19,32 @@ function shouldHandle(requestUrl) {
   return requestUrl.origin === self.location.origin;
 }
 
+function isPdfJsProxyRequest(url) {
+  return url.origin === self.location.origin && url.pathname.startsWith(PDFJS_PROXY_PREFIX);
+}
+
+function resolvePdfJsRemoteUrls(url) {
+  const suffix = url.pathname.slice(PDFJS_PROXY_PREFIX.length);
+  if (!suffix || suffix.includes("..")) {
+    return [];
+  }
+  return [`${PDFJS_PRIMARY_BASE}${suffix}`, `${PDFJS_FALLBACK_BASE}${suffix}`];
+}
+
+async function tryFetchWithFallback(urls) {
+  for (const candidate of urls) {
+    try {
+      const response = await fetch(candidate, { mode: "cors", credentials: "omit", cache: "no-store" });
+      if (response.ok) {
+        return response;
+      }
+    } catch (_error) {
+      // Try next source.
+    }
+  }
+  return null;
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => {}),
@@ -23,11 +53,12 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
+  const keep = new Set([CACHE_NAME, RUNTIME_CACHE_NAME]);
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) {
+          if (!keep.has(key)) {
             return caches.delete(key);
           }
           return Promise.resolve(true);
@@ -45,6 +76,27 @@ self.addEventListener("fetch", (event) => {
   }
 
   const url = new URL(request.url);
+  if (isPdfJsProxyRequest(url)) {
+    event.respondWith(
+      caches.open(RUNTIME_CACHE_NAME).then(async (cache) => {
+        const cached = await cache.match(request);
+        const networkResponse = await tryFetchWithFallback(resolvePdfJsRemoteUrls(url));
+        if (networkResponse) {
+          cache.put(request, networkResponse.clone()).catch(() => {});
+          return networkResponse;
+        }
+        if (cached) {
+          return cached;
+        }
+        return new Response("PDF.js module unavailable.", {
+          status: 503,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      }),
+    );
+    return;
+  }
+
   if (!shouldHandle(url)) {
     return;
   }

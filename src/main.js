@@ -46,6 +46,7 @@ const toggleInkToolButton = document.querySelector("#toggle-ink-tool");
 const undoInkButton = document.querySelector("#undo-ink");
 const redoInkButton = document.querySelector("#redo-ink");
 const startWorkerButton = document.querySelector("#start-worker");
+const runStressBenchmarkButton = document.querySelector("#run-stress-benchmark");
 const loadedModulesOutput = document.querySelector("#loaded-modules");
 const widgetCountOutput = document.querySelector("#widget-count");
 const referenceCountOutput = document.querySelector("#reference-count");
@@ -69,6 +70,14 @@ const workerStateOutput = document.querySelector("#worker-state");
 const storageUsageProgress = document.querySelector("#storage-usage-progress");
 const storageUsageLabel = document.querySelector("#storage-usage-label");
 const storageUsageMeter = document.querySelector("#storage-usage-meter");
+const perfFpsOutput = document.querySelector("#perf-fps");
+const perfFrameMsOutput = document.querySelector("#perf-frame-ms");
+const perfRenderedWidgetsOutput = document.querySelector("#perf-rendered-widgets");
+const perfRasterizedWidgetsOutput = document.querySelector("#perf-rasterized-widgets");
+const perfRasterCacheOutput = document.querySelector("#perf-raster-cache");
+const perfRasterQueueOutput = document.querySelector("#perf-raster-queue");
+const perfMemoryOutput = document.querySelector("#perf-memory");
+const perfBenchmarkOutput = document.querySelector("#perf-benchmark");
 const canvas = document.querySelector("#workspace-canvas");
 const widgetContextMenu = document.querySelector("#widget-context-menu");
 const creationCommandMenu = document.querySelector("#creation-command-menu");
@@ -196,6 +205,10 @@ let storageUsageRefreshTimer = null;
 let storageUsageRefreshInFlight = false;
 let storageUsageRefreshQueued = false;
 let canvasViewportSyncFrame = null;
+let perfHudRefreshTimer = null;
+let perfFrameHistory = [];
+let perfBenchmarkRunning = false;
+let lastStorageEstimate = null;
 
 let activeContextId = null;
 let activeSectionId = null;
@@ -275,6 +288,104 @@ function formatMegabytes(bytes) {
   return `${mb.toFixed(1)} MB`;
 }
 
+function formatPercent(value) {
+  if (!Number.isFinite(value)) {
+    return "0.0%";
+  }
+  return `${Math.max(0, Math.min(100, value)).toFixed(1)}%`;
+}
+
+async function readStorageEstimateSnapshot() {
+  if (
+    typeof navigator === "undefined" ||
+    !navigator.storage ||
+    typeof navigator.storage.estimate !== "function"
+  ) {
+    return null;
+  }
+
+  try {
+    const estimate = await navigator.storage.estimate();
+    const usage = Math.max(0, Number(estimate?.usage) || 0);
+    const quota = Math.max(0, Number(estimate?.quota) || 0);
+    const hasQuota = quota > 0;
+    const usageRatio = hasQuota ? usage / quota : 0;
+    const snapshot = {
+      usage,
+      quota,
+      hasQuota,
+      usageRatio,
+      remaining: hasQuota ? Math.max(0, quota - usage) : Number.POSITIVE_INFINITY,
+      timestamp: Date.now(),
+    };
+    lastStorageEstimate = snapshot;
+    return snapshot;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function requestStorageCleanupNow() {
+  if (
+    contextWorkspaceStore &&
+    typeof contextWorkspaceStore.requestStorageCleanup === "function"
+  ) {
+    contextWorkspaceStore.requestStorageCleanup({ enforceBudget: false, delayMs: 0 });
+  }
+  if (
+    notebookDocumentLibraryStore &&
+    typeof notebookDocumentLibraryStore.requestStorageCleanup === "function"
+  ) {
+    notebookDocumentLibraryStore.requestStorageCleanup({ enforceBudget: false, delayMs: 0 });
+  }
+  scheduleStorageUsageRefresh({ delayMs: 40 });
+}
+
+async function ensureStorageHeadroomForPdfImport(file) {
+  const incomingBytes =
+    file && typeof file.size === "number" && Number.isFinite(file.size)
+      ? Math.max(0, Math.floor(file.size))
+      : 0;
+  if (incomingBytes < 1) {
+    return true;
+  }
+
+  const before = await readStorageEstimateSnapshot();
+  if (!before || !before.hasQuota) {
+    return true;
+  }
+
+  const reserveTarget = Math.max(24 * 1024 * 1024, Math.ceil(incomingBytes * 1.25));
+  if (before.remaining >= reserveTarget && before.usageRatio < 0.9) {
+    return true;
+  }
+
+  requestStorageCleanupNow();
+  await new Promise((resolve) => {
+    window.setTimeout(resolve, 80);
+  });
+
+  const after = (await readStorageEstimateSnapshot()) ?? before;
+  if (after.remaining >= reserveTarget && after.usageRatio < 0.92) {
+    return true;
+  }
+
+  const continueImport = await showConfirmDialog({
+    title: "Low Storage Space",
+    message: [
+      `Importing "${file.name}" may exceed available storage.`,
+      `Used: ${formatMegabytes(after.usage)} / ${formatMegabytes(after.quota)} (${formatPercent(after.usageRatio * 100)})`,
+      `Needed for safe import: ${formatMegabytes(reserveTarget)} free.`,
+      "",
+      "Continue anyway?",
+    ].join("\n"),
+    confirmLabel: "Import Anyway",
+    cancelLabel: "Cancel",
+    danger: true,
+  });
+  return continueImport;
+}
+
 async function refreshStorageUsageUi() {
   if (
     !(storageUsageProgress instanceof HTMLProgressElement) ||
@@ -290,27 +401,18 @@ async function refreshStorageUsageUi() {
 
   storageUsageRefreshInFlight = true;
   try {
-    if (
-      typeof navigator === "undefined" ||
-      !navigator.storage ||
-      typeof navigator.storage.estimate !== "function"
-    ) {
+    const snapshot = await readStorageEstimateSnapshot();
+    if (!snapshot) {
       storageUsageProgress.max = 1;
       storageUsageProgress.value = 0;
       storageUsageLabel.textContent = "Unavailable";
       return;
     }
-
-    const estimate = await navigator.storage.estimate();
-    const usage = Math.max(0, Number(estimate?.usage) || 0);
-    const quota = Math.max(0, Number(estimate?.quota) || 0);
-    const hasQuota = quota > 0;
-
-    storageUsageProgress.max = hasQuota ? quota : 1;
-    storageUsageProgress.value = hasQuota ? Math.min(usage, quota) : 0;
-    storageUsageLabel.textContent = hasQuota
-      ? `${formatMegabytes(usage)} / ${formatMegabytes(quota)}`
-      : `${formatMegabytes(usage)} / Unknown`;
+    storageUsageProgress.max = snapshot.hasQuota ? snapshot.quota : 1;
+    storageUsageProgress.value = snapshot.hasQuota ? Math.min(snapshot.usage, snapshot.quota) : 0;
+    storageUsageLabel.textContent = snapshot.hasQuota
+      ? `${formatMegabytes(snapshot.usage)} / ${formatMegabytes(snapshot.quota)}`
+      : `${formatMegabytes(snapshot.usage)} / Unknown`;
   } catch (_error) {
     storageUsageProgress.max = 1;
     storageUsageProgress.value = 0;
@@ -334,6 +436,150 @@ function scheduleStorageUsageRefresh({ delayMs = 220 } = {}) {
     storageUsageRefreshTimer = null;
     void refreshStorageUsageUi();
   }, Math.max(0, Number(delayMs) || 0));
+}
+
+function formatFrameMs(value) {
+  if (!Number.isFinite(value) || value < 0) {
+    return "0.0 ms";
+  }
+  return `${value.toFixed(1)} ms`;
+}
+
+function samplePercentile(sortedValues, percentile) {
+  if (!Array.isArray(sortedValues) || sortedValues.length < 1) {
+    return 0;
+  }
+  const ratio = Math.max(0, Math.min(1, percentile));
+  const index = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.floor(ratio * sortedValues.length)),
+  );
+  return Number(sortedValues[index]) || 0;
+}
+
+function refreshPerfHud() {
+  if (
+    !(perfFpsOutput instanceof HTMLOutputElement) ||
+    !(perfFrameMsOutput instanceof HTMLOutputElement) ||
+    !(perfRenderedWidgetsOutput instanceof HTMLOutputElement) ||
+    !(perfRasterizedWidgetsOutput instanceof HTMLOutputElement) ||
+    !(perfRasterCacheOutput instanceof HTMLOutputElement) ||
+    !(perfRasterQueueOutput instanceof HTMLOutputElement) ||
+    !(perfMemoryOutput instanceof HTMLOutputElement)
+  ) {
+    return;
+  }
+
+  if (perfFrameHistory.length > 180) {
+    perfFrameHistory = perfFrameHistory.slice(-180);
+  }
+
+  const frameSamples = perfFrameHistory.filter((value) => Number.isFinite(value) && value > 0);
+  const avgFrameMs =
+    frameSamples.length > 0
+      ? frameSamples.reduce((sum, value) => sum + value, 0) / frameSamples.length
+      : 0;
+  const fps = avgFrameMs > 0 ? 1000 / avgFrameMs : 0;
+  perfFpsOutput.textContent = fps.toFixed(1);
+  perfFrameMsOutput.textContent = formatFrameMs(avgFrameMs);
+  const renderStats =
+    runtime && typeof runtime.getRenderStats === "function"
+      ? runtime.getRenderStats()
+      : null;
+  perfRenderedWidgetsOutput.textContent = String(Number(renderStats?.renderedWidgetCount ?? 0));
+  perfRasterizedWidgetsOutput.textContent = String(Number(renderStats?.rasterizedWidgetCount ?? 0));
+
+  const rasterStats =
+    widgetRasterManager && typeof widgetRasterManager.getStats === "function"
+      ? widgetRasterManager.getStats()
+      : null;
+  perfRasterCacheOutput.textContent = formatMegabytes(rasterStats?.totalBytes ?? 0);
+  perfRasterQueueOutput.textContent = String(Number(rasterStats?.queueSize ?? 0));
+
+  const memory =
+    typeof performance !== "undefined" && performance && performance.memory
+      ? performance.memory
+      : null;
+  if (memory && Number.isFinite(memory.usedJSHeapSize) && Number.isFinite(memory.jsHeapSizeLimit)) {
+    perfMemoryOutput.textContent = `${formatMegabytes(memory.usedJSHeapSize)} / ${formatMegabytes(memory.jsHeapSizeLimit)}`;
+  } else {
+    perfMemoryOutput.textContent = "n/a";
+  }
+}
+
+function schedulePerfHudRefresh({ delayMs = 300 } = {}) {
+  if (perfHudRefreshTimer) {
+    window.clearTimeout(perfHudRefreshTimer);
+    perfHudRefreshTimer = null;
+  }
+  perfHudRefreshTimer = window.setTimeout(() => {
+    perfHudRefreshTimer = null;
+    refreshPerfHud();
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+async function runStressBenchmark() {
+  if (perfBenchmarkRunning) {
+    return;
+  }
+  perfBenchmarkRunning = true;
+  if (runStressBenchmarkButton instanceof HTMLButtonElement) {
+    runStressBenchmarkButton.disabled = true;
+    runStressBenchmarkButton.textContent = "Benchmarking...";
+  }
+  if (perfBenchmarkOutput instanceof HTMLOutputElement) {
+    perfBenchmarkOutput.textContent = "running";
+  }
+
+  const samples = [];
+  const detachFrame =
+    runtime && typeof runtime.registerFrameListener === "function"
+      ? runtime.registerFrameListener((stats) => {
+          if (Number.isFinite(stats?.frameDtMs) && stats.frameDtMs > 0) {
+            samples.push(stats.frameDtMs);
+          }
+        })
+      : () => {};
+
+  try {
+    const durationMs = 4200;
+    runtime.requestRender({ continuousMs: durationMs + 80 });
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, durationMs);
+    });
+
+    const sorted = samples
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((left, right) => left - right);
+    const avgFrameMs =
+      sorted.length > 0 ? sorted.reduce((sum, value) => sum + value, 0) / sorted.length : 0;
+    const p95Ms = samplePercentile(sorted, 0.95);
+    const fps = avgFrameMs > 0 ? 1000 / avgFrameMs : 0;
+
+    const result = sorted.length > 0
+      ? `${fps.toFixed(1)} fps avg, ${avgFrameMs.toFixed(1)}ms avg, ${p95Ms.toFixed(1)}ms p95`
+      : "insufficient samples";
+    if (perfBenchmarkOutput instanceof HTMLOutputElement) {
+      perfBenchmarkOutput.textContent = result;
+    }
+    await showNoticeDialog(
+      [
+        "Stress benchmark complete.",
+        `Samples: ${sorted.length}`,
+        `Average FPS: ${fps.toFixed(1)}`,
+        `Average frame: ${avgFrameMs.toFixed(1)} ms`,
+        `P95 frame: ${p95Ms.toFixed(1)} ms`,
+      ].join("\n"),
+      { title: "Performance Benchmark" },
+    );
+  } finally {
+    detachFrame();
+    perfBenchmarkRunning = false;
+    if (runStressBenchmarkButton instanceof HTMLButtonElement) {
+      runStressBenchmarkButton.disabled = false;
+      runStressBenchmarkButton.textContent = "Run Stress Benchmark";
+    }
+  }
 }
 
 function registerPwaServiceWorker() {
@@ -708,6 +954,19 @@ const runtime = new CanvasRuntime({
     renderSectionMinimap();
   },
 });
+if (typeof runtime.registerFrameListener === "function") {
+  runtime.registerFrameListener((stats) => {
+    if (Number.isFinite(stats?.frameDtMs) && stats.frameDtMs > 0) {
+      perfFrameHistory.push(stats.frameDtMs);
+      if (perfFrameHistory.length > 240) {
+        perfFrameHistory.shift();
+      }
+    }
+    if (debugModeEnabled) {
+      schedulePerfHudRefresh({ delayMs: 140 });
+    }
+  });
+}
 
 function resolveViewportBottomPx() {
   const visualViewport = window.visualViewport;
@@ -935,6 +1194,9 @@ function setUiMode(nextMode, { persist = true } = {}) {
   syncDocumentSettingsUi();
   updateOnboardingControlsUi();
   scheduleCanvasViewportSync();
+  if (debugModeEnabled) {
+    schedulePerfHudRefresh({ delayMs: 0 });
+  }
 }
 
 function updateCameraOutputFromState() {
@@ -3774,9 +4036,17 @@ function persistActiveWorkspace() {
 
   if (!hasShownWorkspaceStorageWarning) {
     hasShownWorkspaceStorageWarning = true;
-    void showNoticeDialog("Storage is full. Recent PDF/widget changes may not persist until space is freed.", {
+    requestStorageCleanupNow();
+    const usageLabel =
+      lastStorageEstimate && lastStorageEstimate.hasQuota
+        ? `${formatMegabytes(lastStorageEstimate.usage)} / ${formatMegabytes(lastStorageEstimate.quota)}`
+        : "Unknown";
+    void showNoticeDialog(
+      `Storage is full. Recent PDF/widget changes may not persist until space is freed.\nCurrent usage: ${usageLabel}\nTip: delete unused library PDFs/snips, then retry.`,
+      {
       title: "Storage",
-    });
+      },
+    );
   }
   return false;
 }
@@ -3817,6 +4087,9 @@ function runWidgetHeavySync() {
   scheduleSuggestionAnalysis();
   scheduleWorkspacePersist();
   scheduleStorageUsageRefresh();
+  if (debugModeEnabled) {
+    schedulePerfHudRefresh({ delayMs: 160 });
+  }
 }
 
 function scheduleWidgetHeavySync({ delayMs = 140 } = {}) {
@@ -4671,7 +4944,13 @@ async function createPdfWidgetFromFile(
     }
     sourceDocument = notebookDocumentLibraryStore.upsertDocument(activeContextId, candidate);
     if (!sourceDocument) {
-      throw new Error("Storage is full. Unable to store this PDF in the notebook library.");
+      requestStorageCleanupNow();
+      const snapshot = await readStorageEstimateSnapshot();
+      const usageLabel =
+        snapshot && snapshot.hasQuota
+          ? `${formatMegabytes(snapshot.usage)} / ${formatMegabytes(snapshot.quota)}`
+          : "Unknown";
+      throw new Error(`Storage is full. Unable to store this PDF in the notebook library. Current usage: ${usageLabel}.`);
     }
   }
 
@@ -5990,6 +6269,13 @@ function wireBaseEventHandlers() {
     }
 
     try {
+      const canImport = await ensureStorageHeadroomForPdfImport(file);
+      if (!canImport) {
+        pendingPdfImportIntent = null;
+        event.target.value = "";
+        return;
+      }
+
       const pending = pendingPdfImportIntent;
       if (pending?.targetWidgetId) {
         await reimportMissingPdfForWidget(pending.targetWidgetId, file);
@@ -6046,6 +6332,15 @@ function wireBaseEventHandlers() {
       startWorkerButton.disabled = false;
       startWorkerButton.textContent = "Start Worker";
     }
+  });
+
+  runStressBenchmarkButton?.addEventListener("click", () => {
+    void runStressBenchmark().catch((error) => {
+      console.error(error);
+      if (perfBenchmarkOutput instanceof HTMLOutputElement) {
+        perfBenchmarkOutput.textContent = "failed";
+      }
+    });
   });
 
   enableInkButton?.addEventListener("click", async () => {
@@ -6902,6 +7197,7 @@ async function bootstrap() {
   syncToolsUi();
   syncUiModeControls();
   scheduleStorageUsageRefresh({ delayMs: 0 });
+  schedulePerfHudRefresh({ delayMs: 0 });
   renderSectionMinimap();
   updateInkUi({
     completedStrokes: 0,

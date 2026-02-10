@@ -1061,6 +1061,20 @@ export function createContextWorkspaceStore({
       }
     },
 
+    getAssetSnapshot() {
+      return typeof assetManager.snapshot === "function" ? assetManager.snapshot() : null;
+    },
+
+    requestStorageCleanup({ enforceBudget = false, delayMs = 0 } = {}) {
+      if (typeof assetManager.scheduleGarbageCollection === "function") {
+        assetManager.scheduleGarbageCollection({
+          delayMs: Math.max(0, Number(delayMs) || 0),
+          enforceBudget: enforceBudget !== false,
+        });
+      }
+      return typeof assetManager.snapshot === "function" ? assetManager.snapshot() : null;
+    },
+
     loadWorkspace(contextId) {
       const key = keyForContext(contextId);
       let workspace = defaultWorkspace(contextId);

@@ -38,6 +38,7 @@
           <button id="toggle-ink-tool" type="button" disabled>Ink Tool: Pen</button>
           <button id="import-context-widget" type="button">Import Widgets</button>
           <button id="start-worker" type="button" data-production-hidden="true">Start Worker</button>
+          <button id="run-stress-benchmark" type="button" data-debug-only="true">Run Stress Benchmark</button>
           <label class="toggle-control" for="gesture-enabled">
             <input id="gesture-enabled" type="checkbox" checked />
             <span>Gestures Enabled</span>
@@ -97,6 +98,14 @@
           <progress id="storage-usage-progress" max="100" value="0"></progress>
           <output id="storage-usage-label">0.0 MB / 0.0 MB</output>
         </span>
+        <span data-debug-only="true"><strong>FPS:</strong> <output id="perf-fps">0</output></span>
+        <span data-debug-only="true"><strong>Frame:</strong> <output id="perf-frame-ms">0.0 ms</output></span>
+        <span data-debug-only="true"><strong>Rendered Widgets:</strong> <output id="perf-rendered-widgets">0</output></span>
+        <span data-debug-only="true"><strong>Rasterized Widgets:</strong> <output id="perf-rasterized-widgets">0</output></span>
+        <span data-debug-only="true"><strong>Raster Cache:</strong> <output id="perf-raster-cache">0.0 MB</output></span>
+        <span data-debug-only="true"><strong>Raster Queue:</strong> <output id="perf-raster-queue">0</output></span>
+        <span data-debug-only="true"><strong>JS Heap:</strong> <output id="perf-memory">n/a</output></span>
+        <span data-debug-only="true"><strong>Benchmark:</strong> <output id="perf-benchmark">idle</output></span>
       </section>
 
       <aside id="search-panel" class="search-panel" aria-label="Search Panel" hidden>

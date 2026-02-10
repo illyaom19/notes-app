@@ -36,6 +36,13 @@ export class CanvasRuntime {
     this._widgetRasterManager = null;
     this._widgetRasterEpoch = 0;
     this._rasterizedWidgetIds = new Set();
+    this._frameListeners = new Set();
+    this._lastRenderStats = {
+      timestamp: 0,
+      frameDtMs: 0,
+      renderedWidgetCount: 0,
+      rasterizedWidgetCount: 0,
+    };
     this._frameScheduled = false;
     this._renderRequested = false;
     this._continuousRenderUntil = 0;
@@ -236,6 +243,20 @@ export class CanvasRuntime {
       return false;
     }
     return this._rasterizedWidgetIds.has(widgetId);
+  }
+
+  getRenderStats() {
+    return { ...this._lastRenderStats };
+  }
+
+  registerFrameListener(listener) {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+    this._frameListeners.add(listener);
+    return () => {
+      this._frameListeners.delete(listener);
+    };
   }
 
   registerWidgetRemovedListener(listener) {
@@ -834,6 +855,21 @@ export class CanvasRuntime {
     this._renderRequested = false;
 
     this._render(dt);
+    const stats = {
+      ...this._lastRenderStats,
+      timestamp: now,
+      frameDtMs: dt,
+    };
+    this._lastRenderStats = stats;
+    if (this._frameListeners.size > 0) {
+      for (const listener of this._frameListeners) {
+        try {
+          listener(stats);
+        } catch (_error) {
+          // Frame listener failures should not break rendering.
+        }
+      }
+    }
     const stillInteracting =
       this._dragging ||
       this._touchPointers.size > 0 ||
@@ -873,6 +909,7 @@ export class CanvasRuntime {
     };
     const visibleWorld = this._visibleWorldBounds(width, height);
     this._rasterizedWidgetIds.clear();
+    let renderedWidgetCount = 0;
 
     this.ctx.clearRect(0, 0, width, height);
     this._drawGrid(width, height, visibleWorld);
@@ -891,6 +928,7 @@ export class CanvasRuntime {
         continue;
       }
 
+      renderedWidgetCount += 1;
       widget.update(dt);
       const drawWidgetVector = (targetCtx, targetCamera, targetRenderContext) => {
         if (widget.collapsed && typeof widget.renderSnapshot === "function") {
@@ -935,6 +973,16 @@ export class CanvasRuntime {
         layer.render(this.ctx, this.camera, renderContext);
       }
     }
+
+    this._lastRenderStats = {
+      timestamp:
+        typeof performance !== "undefined" && typeof performance.now === "function"
+          ? performance.now()
+          : Date.now(),
+      frameDtMs: this._lastRenderStats.frameDtMs,
+      renderedWidgetCount,
+      rasterizedWidgetCount: this._rasterizedWidgetIds.size,
+    };
   }
 
   _drawGrid(width, height, visibleWorld = null) {
