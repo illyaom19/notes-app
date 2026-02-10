@@ -3,9 +3,14 @@ function strokeWidth(baseWidth, pressure) {
   return Math.max(0.6, baseWidth * (0.35 + normalized * 0.95));
 }
 
+function strokeWidthOnScreen(camera, baseWidth, pressure) {
+  const zoom = Math.max(0.05, Number(camera?.zoom) || 1);
+  return strokeWidth(baseWidth, pressure) * zoom;
+}
+
 function drawPointDot(ctx, camera, point, color, baseWidth) {
   const screen = camera.worldToScreen(point.x, point.y);
-  const radius = strokeWidth(baseWidth, point.p) * 0.5;
+  const radius = strokeWidthOnScreen(camera, baseWidth, point.p) * 0.5;
 
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -33,7 +38,7 @@ export function drawStroke(ctx, camera, stroke) {
     const current = points[index];
     const from = camera.worldToScreen(prev.x, prev.y);
     const to = camera.worldToScreen(current.x, current.y);
-    const width = strokeWidth(stroke.baseWidth, current.p);
+    const width = strokeWidthOnScreen(camera, stroke.baseWidth, current.p);
 
     ctx.lineWidth = width;
     ctx.beginPath();
