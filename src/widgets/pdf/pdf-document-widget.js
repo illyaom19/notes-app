@@ -66,6 +66,7 @@ export class PdfDocumentWidget extends WidgetBase {
     this.whitespaceZones = [];
     this._whitespaceControlRegions = [];
     this._hoveredWhitespaceControl = null;
+    this._zonesByPage = new Map();
     this._zoneWorldRects = new Map();
     this._pageLayout = new Map();
     this._pageSegments = new Map();
@@ -74,6 +75,13 @@ export class PdfDocumentWidget extends WidgetBase {
       gutterWidth: GUTTER_MIN_WORLD,
       pageX: this.position.x + GUTTER_MIN_WORLD,
       pageWidth: Math.max(120, this.size.width - GUTTER_MIN_WORLD - CONTENT_EDGE_PAD_WORLD),
+    };
+    this._layoutDirty = true;
+    this._layoutAnchor = {
+      x: this.position.x,
+      y: this.position.y,
+      width: this.size.width,
+      height: this.size.height,
     };
   }
 
@@ -141,7 +149,8 @@ export class PdfDocumentWidget extends WidgetBase {
     this._refreshPageBaseLayoutForWidth(metrics.pageWidth);
     const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + this.documentWorldHeight);
     this.size.height = requiredHeight;
-    this._computeDisplayLayout();
+    this._markLayoutDirty();
+    this._ensureDisplayLayout();
   }
 
   _resolveLayoutMetrics() {
@@ -219,9 +228,50 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   _zonesForPage(pageNumber) {
-    return this.whitespaceZones
-      .filter((zone) => zone.pageNumber === pageNumber)
-      .sort((a, b) => a.normalizedY - b.normalizedY);
+    return this._zonesByPage.get(pageNumber) ?? [];
+  }
+
+  _rebuildZonesByPage() {
+    this._zonesByPage.clear();
+    for (const zone of this.whitespaceZones) {
+      const existing = this._zonesByPage.get(zone.pageNumber) ?? [];
+      existing.push(zone);
+      this._zonesByPage.set(zone.pageNumber, existing);
+    }
+    for (const zones of this._zonesByPage.values()) {
+      zones.sort((a, b) => a.normalizedY - b.normalizedY);
+    }
+  }
+
+  _markLayoutDirty() {
+    this._layoutDirty = true;
+  }
+
+  _hasLayoutAnchorChanged() {
+    return (
+      this._layoutAnchor.x !== this.position.x ||
+      this._layoutAnchor.y !== this.position.y ||
+      this._layoutAnchor.width !== this.size.width ||
+      this._layoutAnchor.height !== this.size.height
+    );
+  }
+
+  _captureLayoutAnchor() {
+    this._layoutAnchor = {
+      x: this.position.x,
+      y: this.position.y,
+      width: this.size.width,
+      height: this.size.height,
+    };
+  }
+
+  _ensureDisplayLayout() {
+    if (!this._layoutDirty && !this._hasLayoutAnchorChanged()) {
+      return;
+    }
+    this._computeDisplayLayout();
+    this._layoutDirty = false;
+    this._captureLayoutAnchor();
   }
 
   _computeDisplayLayout() {
@@ -487,7 +537,8 @@ export class PdfDocumentWidget extends WidgetBase {
       collapsed: Boolean(zone.collapsed),
       linkedWidgetId: zone.linkedWidgetId ?? null,
     }));
-    this._computeDisplayLayout();
+    this._rebuildZonesByPage();
+    this._markLayoutDirty();
   }
 
   getWhitespaceZones() {
@@ -501,7 +552,7 @@ export class PdfDocumentWidget extends WidgetBase {
     }
 
     zone.collapsed = !zone.collapsed;
-    this._computeDisplayLayout();
+    this._markLayoutDirty();
     return zone;
   }
 
@@ -555,7 +606,7 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   getWhitespaceZoneWorldRect(zoneId) {
-    this._computeDisplayLayout();
+    this._ensureDisplayLayout();
     const rect = this._zoneWorldRects.get(zoneId);
     if (!rect) {
       return null;
@@ -570,7 +621,7 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   getPageWorldRect(pageNumber) {
-    this._computeDisplayLayout();
+    this._ensureDisplayLayout();
     const rect = this._pageLayout.get(pageNumber);
     if (!rect) {
       return null;
@@ -585,7 +636,7 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   render(ctx, camera, renderContext) {
-    this._computeDisplayLayout();
+    this._ensureDisplayLayout();
     this._whitespaceControlRegions = [];
     const interaction = interactionStateForWidget(this, renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
@@ -714,7 +765,7 @@ export class PdfDocumentWidget extends WidgetBase {
       }
 
       if (showPageChrome) {
-        const zones = this.whitespaceZones.filter((zone) => zone.pageNumber === pageEntry.pageNumber);
+        const zones = this._zonesForPage(pageEntry.pageNumber);
         for (const zone of zones) {
           this._drawWhitespaceZone(ctx, camera, zone, {
             showGlyph: true,
@@ -750,7 +801,7 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   renderSnapshot(ctx, camera, renderContext) {
-    this._computeDisplayLayout();
+    this._ensureDisplayLayout();
     const interaction = interactionStateForWidget(this, renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
       interaction,

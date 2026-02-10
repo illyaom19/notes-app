@@ -21,6 +21,8 @@ export class CanvasRuntime {
     this._touchControllerOwner = null;
     this._inputHandlers = [];
     this._inputHandlerSeq = 0;
+    this._sortedInputHandlers = [];
+    this._inputHandlersDirty = false;
     this._renderLayersBeforeWidgets = [];
     this._renderLayersAfterWidgets = [];
     this._overlayLayers = [];
@@ -172,8 +174,10 @@ export class CanvasRuntime {
       sequence: this._inputHandlerSeq += 1,
     };
     this._inputHandlers.push(entry);
+    this._inputHandlersDirty = true;
     return () => {
       this._inputHandlers = this._inputHandlers.filter((candidate) => candidate !== entry);
+      this._inputHandlersDirty = true;
     };
   }
 
@@ -679,14 +683,17 @@ export class CanvasRuntime {
   }
 
   _dispatchPointer(handlerName, event) {
-    const orderedHandlers = [...this._inputHandlers].sort((left, right) => {
-      if (left.priority !== right.priority) {
-        return right.priority - left.priority;
-      }
-      return right.sequence - left.sequence;
-    });
+    if (this._inputHandlersDirty) {
+      this._sortedInputHandlers = [...this._inputHandlers].sort((left, right) => {
+        if (left.priority !== right.priority) {
+          return right.priority - left.priority;
+        }
+        return right.sequence - left.sequence;
+      });
+      this._inputHandlersDirty = false;
+    }
 
-    for (const entry of orderedHandlers) {
+    for (const entry of this._sortedInputHandlers) {
       const handler = entry.handler;
       if (typeof handler[handlerName] !== "function") {
         continue;
@@ -742,7 +749,7 @@ export class CanvasRuntime {
     const visibleWorld = this._visibleWorldBounds(width, height);
 
     this.ctx.clearRect(0, 0, width, height);
-    this._drawGrid(width, height);
+    this._drawGrid(width, height, visibleWorld);
 
     for (const layer of this._renderLayersBeforeWidgets) {
       if (typeof layer.update === "function") {
@@ -785,11 +792,15 @@ export class CanvasRuntime {
     }
   }
 
-  _drawGrid(width, height) {
+  _drawGrid(width, height, visibleWorld = null) {
     const { ctx, camera } = this;
     const spacing = 80;
-    const minWorld = camera.screenToWorld(0, 0);
-    const maxWorld = camera.screenToWorld(width, height);
+    const minWorld = visibleWorld
+      ? { x: visibleWorld.minX, y: visibleWorld.minY }
+      : camera.screenToWorld(0, 0);
+    const maxWorld = visibleWorld
+      ? { x: visibleWorld.maxX, y: visibleWorld.maxY }
+      : camera.screenToWorld(width, height);
 
     const startX = Math.floor(minWorld.x / spacing) * spacing;
     const endX = Math.ceil(maxWorld.x / spacing) * spacing;

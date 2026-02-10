@@ -156,6 +156,10 @@ let inkStateSnapshot = {
   enabled: false,
 };
 let minimapVisible = false;
+let suggestionRailRenderFrame = null;
+let suggestionRailRenderQueued = false;
+let minimapRenderFrame = null;
+let minimapRenderQueued = false;
 
 let contextStore = null;
 let contextWorkspaceStore = null;
@@ -776,13 +780,35 @@ function updateCameraOutputFromState() {
   cameraOutput.textContent = `x=${worldAtCenter.x.toFixed(1)}, y=${worldAtCenter.y.toFixed(1)}, zoom=${runtime.camera.zoom.toFixed(2)}`;
 }
 
-function renderSectionMinimap() {
+function renderSectionMinimapNow() {
   const visible = sectionMinimapController?.render?.() === true;
   minimapVisible = visible;
   if (peekStateOutput) {
     peekStateOutput.textContent = `minimap:${visible ? "on" : "off"}`;
   }
   return visible;
+}
+
+function renderSectionMinimap() {
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    return renderSectionMinimapNow();
+  }
+
+  if (minimapRenderFrame !== null) {
+    minimapRenderQueued = true;
+    return minimapVisible;
+  }
+
+  minimapRenderFrame = window.requestAnimationFrame(() => {
+    minimapRenderFrame = null;
+    renderSectionMinimapNow();
+    if (minimapRenderQueued) {
+      minimapRenderQueued = false;
+      renderSectionMinimap();
+    }
+  });
+
+  return minimapVisible;
 }
 
 function normalizeGesturePrefs(candidate) {
@@ -3121,7 +3147,7 @@ function updateContextUi() {
   }
 }
 
-function renderSuggestionRail() {
+function renderSuggestionRailNow() {
   const scope = currentSuggestionScope();
   if (!scope || !suggestionUiController) {
     suggestionUiController?.render({ focusedPdfWidgetId: null, proposed: [], ghosted: [] });
@@ -3149,6 +3175,32 @@ function renderSuggestionRail() {
     focusedPdfWidgetId: focusedPdf.id,
     proposed,
     ghosted,
+  });
+}
+
+function renderSuggestionRail({ immediate = false } = {}) {
+  if (immediate || typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    if (suggestionRailRenderFrame !== null) {
+      window.cancelAnimationFrame(suggestionRailRenderFrame);
+      suggestionRailRenderFrame = null;
+      suggestionRailRenderQueued = false;
+    }
+    renderSuggestionRailNow();
+    return;
+  }
+
+  if (suggestionRailRenderFrame !== null) {
+    suggestionRailRenderQueued = true;
+    return;
+  }
+
+  suggestionRailRenderFrame = window.requestAnimationFrame(() => {
+    suggestionRailRenderFrame = null;
+    renderSuggestionRailNow();
+    if (suggestionRailRenderQueued) {
+      suggestionRailRenderQueued = false;
+      renderSuggestionRail();
+    }
   });
 }
 
