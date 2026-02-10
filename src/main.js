@@ -129,6 +129,7 @@ const onboardingHintResetButton = document.querySelector("#onboarding-hint-reset
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error("Missing #workspace-canvas element.");
 }
+const canvasViewportContainer = canvas.closest(".canvas-wrap");
 
 const loadedModules = new Set();
 let inkFeature = null;
@@ -195,6 +196,7 @@ let libraryDropDragState = null;
 let storageUsageRefreshTimer = null;
 let storageUsageRefreshInFlight = false;
 let storageUsageRefreshQueued = false;
+let canvasViewportSyncFrame = null;
 
 let activeContextId = null;
 let activeSectionId = null;
@@ -707,6 +709,47 @@ const runtime = new CanvasRuntime({
   },
 });
 
+function resolveViewportBottomPx() {
+  const visualViewport = window.visualViewport;
+  if (
+    visualViewport &&
+    Number.isFinite(visualViewport.height) &&
+    visualViewport.height > 0
+  ) {
+    const offsetTop = Number.isFinite(visualViewport.offsetTop)
+      ? visualViewport.offsetTop
+      : 0;
+    return offsetTop + visualViewport.height;
+  }
+
+  return window.innerHeight;
+}
+
+function syncCanvasViewportNow() {
+  if (canvasViewportContainer instanceof HTMLElement) {
+    const rect = canvasViewportContainer.getBoundingClientRect();
+    const viewportBottom = resolveViewportBottomPx();
+    const targetHeight = Math.max(1, Math.floor(viewportBottom - rect.top));
+    canvasViewportContainer.style.height = `${targetHeight}px`;
+    canvasViewportContainer.style.minHeight = `${targetHeight}px`;
+  }
+
+  runtime.resizeToViewport();
+  syncReferenceManagerPlacement();
+  renderSectionMinimap();
+}
+
+function scheduleCanvasViewportSync() {
+  if (canvasViewportSyncFrame !== null) {
+    return;
+  }
+
+  canvasViewportSyncFrame = window.requestAnimationFrame(() => {
+    canvasViewportSyncFrame = null;
+    syncCanvasViewportNow();
+  });
+}
+
 widgetRasterManager = createWidgetRasterManager({
   runtime,
   shouldRasterizeWidget: (widget) => {
@@ -885,6 +928,7 @@ function setUiMode(nextMode, { persist = true } = {}) {
   syncUiModeControls();
   syncDocumentSettingsUi();
   updateOnboardingControlsUi();
+  scheduleCanvasViewportSync();
 }
 
 function updateCameraOutputFromState() {
@@ -5775,7 +5819,19 @@ function wireBaseEventHandlers() {
     if (toolsPanelOpen) {
       syncToolsUi();
     }
+    scheduleCanvasViewportSync();
   });
+  window.addEventListener("orientationchange", () => {
+    scheduleCanvasViewportSync();
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", scheduleCanvasViewportSync, {
+      passive: true,
+    });
+    window.visualViewport.addEventListener("scroll", scheduleCanvasViewportSync, {
+      passive: true,
+    });
+  }
 
   toggleUiModeButton?.addEventListener("click", () => {
     const next = toggleUiMode(uiModeState);
@@ -6810,6 +6866,7 @@ async function bootstrap() {
   wireWidgetRemovalSuggestionSync();
   wireSectionMinimap();
   wireReferenceManagerUi();
+  scheduleCanvasViewportSync();
 
   updateSnipUi({ armed: false, dragging: false });
   setWhitespaceState("idle");

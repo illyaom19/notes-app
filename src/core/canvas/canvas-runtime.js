@@ -42,8 +42,13 @@ export class CanvasRuntime {
     }
 
     this._bindEvents();
-    this._resizeToViewport();
+    this.resizeToViewport();
     requestAnimationFrame((now) => this._frame(now));
+  }
+
+  resizeToViewport() {
+    this._resizeToViewport();
+    this._emitCamera();
   }
 
   addWidget(widget) {
@@ -456,7 +461,7 @@ export class CanvasRuntime {
   }
 
   _bindEvents() {
-    window.addEventListener("resize", () => this._resizeToViewport());
+    window.addEventListener("resize", () => this.resizeToViewport());
 
     this.canvas.addEventListener("pointerdown", (event) => {
       this._lastPointerType = event.pointerType || this._lastPointerType;
