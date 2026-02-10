@@ -453,7 +453,13 @@ function appendAssetRef(refsByAssetId, assetId, ownerRef) {
   refsByAssetId.set(assetId, new Set([ownerRef]));
 }
 
-function canonicalizeWidgetAssets({ widget, contextId, assetManager, refsByAssetId }) {
+function canonicalizeWidgetAssets({
+  widget,
+  contextId,
+  assetManager,
+  refsByAssetId,
+  allowInlinePdfBase64Fallback = true,
+}) {
   if (!widget || typeof widget !== "object") {
     return { widget, changed: false };
   }
@@ -499,6 +505,10 @@ function canonicalizeWidgetAssets({ widget, contextId, assetManager, refsByAsset
       ownerId: ownerRef,
     });
     if (!registered) {
+      if (!allowInlinePdfBase64Fallback && nextWidget.dataPayload.bytesBase64) {
+        nextWidget.dataPayload.bytesBase64 = null;
+        changed = true;
+      }
       return { widget: nextWidget, changed };
     }
 
@@ -559,7 +569,12 @@ function canonicalizeWidgetAssets({ widget, contextId, assetManager, refsByAsset
   return { widget: nextWidget, changed };
 }
 
-function canonicalizeWorkspaceAssets(workspace, contextId, assetManager) {
+function canonicalizeWorkspaceAssets(
+  workspace,
+  contextId,
+  assetManager,
+  { allowInlinePdfBase64Fallback = true } = {},
+) {
   const refsByAssetId = new Map();
   const nextWidgets = [];
   let changed = false;
@@ -570,6 +585,7 @@ function canonicalizeWorkspaceAssets(workspace, contextId, assetManager) {
       contextId,
       assetManager,
       refsByAssetId,
+      allowInlinePdfBase64Fallback,
     });
     if (result.changed) {
       changed = true;
@@ -873,7 +889,15 @@ function sanitizeWorkspace(candidate, contextId) {
   };
 }
 
-function serializeWidget(widget, contextId, { assetManager = null, refsByAssetId = null } = {}) {
+function serializeWidget(
+  widget,
+  contextId,
+  {
+    assetManager = null,
+    refsByAssetId = null,
+    allowInlinePdfBase64Fallback = true,
+  } = {},
+) {
   if (!widget || typeof widget !== "object") {
     return null;
   }
@@ -920,9 +944,11 @@ function serializeWidget(widget, contextId, { assetManager = null, refsByAssetId
       base.dataPayload.pdfAssetId = registeredPdfAsset.id;
       base.dataPayload.bytesBase64 = null;
       appendAssetRef(refsByAssetId, registeredPdfAsset.id, ownerRef);
-    } else {
+    } else if (allowInlinePdfBase64Fallback) {
       base.dataPayload.pdfAssetId = null;
       base.dataPayload.bytesBase64 = encodeBytes(widget.pdfBytes);
+    } else {
+      return null;
     }
 
     if (typeof widget.getWhitespaceZones === "function") {
@@ -1021,8 +1047,12 @@ function copyResearchCapture(entry, contextId) {
   };
 }
 
-export function createContextWorkspaceStore({ storage = window.localStorage } = {}) {
-  const assetManager = createAssetManager({ storage });
+export function createContextWorkspaceStore({
+  storage = window.localStorage,
+  assetManagerOptions = {},
+  allowInlinePdfBase64Fallback = true,
+} = {}) {
+  const assetManager = createAssetManager({ storage, ...assetManagerOptions });
 
   return {
     async prepare() {
@@ -1066,7 +1096,9 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         // Ignore legacy migration errors and continue with sanitized workspace.
       }
 
-      const canonicalized = canonicalizeWorkspaceAssets(workspace, contextId, assetManager);
+      const canonicalized = canonicalizeWorkspaceAssets(workspace, contextId, assetManager, {
+        allowInlinePdfBase64Fallback,
+      });
       workspace = sanitizeWorkspace(canonicalized.workspace, contextId);
       assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
       if (canonicalized.changed || hasUnsupportedWidgetTypes) {
@@ -1114,7 +1146,9 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
         contextId,
       );
 
-      const canonicalized = canonicalizeWorkspaceAssets(normalized, contextId, assetManager);
+      const canonicalized = canonicalizeWorkspaceAssets(normalized, contextId, assetManager, {
+        allowInlinePdfBase64Fallback,
+      });
       const workspace = sanitizeWorkspace(canonicalized.workspace, contextId);
 
       try {
@@ -1144,10 +1178,20 @@ export function createContextWorkspaceStore({ storage = window.localStorage } = 
       lastPdfWidgetId = null,
       lastReferenceWidgetId = null,
     }) {
-      const serializedWidgets = runtime
-        .listWidgets()
-        .map((widget) => serializeWidget(widget, contextId, { assetManager }))
-        .filter((entry) => entry !== null);
+      const serializedWidgets = [];
+      for (const widget of runtime.listWidgets()) {
+        const serialized = serializeWidget(widget, contextId, {
+          assetManager,
+          allowInlinePdfBase64Fallback,
+        });
+        if (!serialized) {
+          if (widget?.type === "pdf-document") {
+            return false;
+          }
+          continue;
+        }
+        serializedWidgets.push(serialized);
+      }
 
       const saved = this.saveWorkspace({
         contextId,

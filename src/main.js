@@ -169,7 +169,11 @@ let contextUiController = null;
 let sectionUiController = null;
 let sectionsStore = createNotebookSectionsStore();
 const notebookLibraryStore = createNotebookLibraryStore();
-const notebookDocumentLibraryStore = createNotebookDocumentLibraryStore();
+const notebookDocumentLibraryStore = createNotebookDocumentLibraryStore({
+  assetManagerOptions: {
+    allowLocalStoragePayloadFallback: false,
+  },
+});
 const suggestionStore = createSuggestionStore();
 const suggestionEngine = createSuggestionEngine();
 let suggestionUiController = null;
@@ -6009,7 +6013,12 @@ async function setupContextFeatures() {
   ]);
 
   contextStore = contextStoreModule.createContextStore();
-  contextWorkspaceStore = contextWorkspaceModule.createContextWorkspaceStore();
+  contextWorkspaceStore = contextWorkspaceModule.createContextWorkspaceStore({
+    assetManagerOptions: {
+      allowLocalStoragePayloadFallback: false,
+    },
+    allowInlinePdfBase64Fallback: false,
+  });
   if (typeof contextWorkspaceStore.prepare === "function") {
     await contextWorkspaceStore.prepare();
   }

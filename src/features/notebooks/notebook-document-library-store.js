@@ -159,9 +159,12 @@ function loadState(storage) {
   }
 }
 
-export function createNotebookDocumentLibraryStore({ storage = window.localStorage } = {}) {
+export function createNotebookDocumentLibraryStore({
+  storage = window.localStorage,
+  assetManagerOptions = {},
+} = {}) {
   let state = loadState(storage);
-  const assetManager = createAssetManager({ storage });
+  const assetManager = createAssetManager({ storage, ...assetManagerOptions });
 
   function notebookScopeId(notebookId) {
     return `${DOCUMENT_SCOPE_PREFIX}/${notebookId}`;

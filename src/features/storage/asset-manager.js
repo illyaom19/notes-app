@@ -169,6 +169,7 @@ export function createAssetManager({
   storage = window.localStorage,
   maxBytes = DEFAULT_MAX_BYTES,
   chunkSize = 24,
+  allowLocalStoragePayloadFallback = true,
 } = {}) {
   let gcTimer = null;
   const payloadCache = new Map();
@@ -356,7 +357,9 @@ export function createAssetManager({
     const kept = [];
 
     for (const entry of catalog.records) {
-      const payload = payloadCache.get(entry.id) ?? storage.getItem(dataKey(entry.id));
+      const payload =
+        payloadCache.get(entry.id) ??
+        (allowLocalStoragePayloadFallback ? storage.getItem(dataKey(entry.id)) : null);
       if (typeof payload !== "string" || payload.length < 1) {
         changed = true;
         continue;
@@ -421,7 +424,9 @@ export function createAssetManager({
         for (; index < end; index += 1) {
           const entry = toProcess[index];
           if (shouldValidatePayloads) {
-            const payload = payloadCache.get(entry.id) ?? storage.getItem(dataKey(entry.id));
+            const payload =
+              payloadCache.get(entry.id) ??
+              (allowLocalStoragePayloadFallback ? storage.getItem(dataKey(entry.id)) : null);
             if (typeof payload !== "string" || payload.length < 1) {
               if (removeRecord(entry.id)) {
                 changed = true;
@@ -487,7 +492,9 @@ export function createAssetManager({
         continue;
       }
 
-      const current = payloadCache.get(entry.id) ?? storage.getItem(dataKey(entry.id));
+      const current =
+        payloadCache.get(entry.id) ??
+        (allowLocalStoragePayloadFallback ? storage.getItem(dataKey(entry.id)) : null);
       if (current !== payload) {
         continue;
       }
@@ -519,6 +526,10 @@ export function createAssetManager({
       void putPayloadToDb(id, payload);
       storage.removeItem(dataKey(id));
     } else {
+      if (!allowLocalStoragePayloadFallback) {
+        payloadCache.delete(id);
+        return null;
+      }
       try {
         storage.setItem(dataKey(id), payload);
       } catch (error) {
@@ -596,7 +607,7 @@ export function createAssetManager({
 
     let payload = payloadCache.get(assetId) ?? null;
     if (typeof payload !== "string" || payload.length < 1) {
-      payload = storage.getItem(dataKey(assetId));
+      payload = allowLocalStoragePayloadFallback ? storage.getItem(dataKey(assetId)) : null;
       if (typeof payload === "string" && payload.length > 0) {
         payloadCache.set(assetId, payload);
         if (indexedDbUsable) {
@@ -707,6 +718,7 @@ export function createAssetManager({
       payloadsHydrated,
       usesIndexedDb: supportsIndexedDb(),
       indexedDbUsable,
+      allowLocalStoragePayloadFallback,
     };
   }
 
@@ -728,7 +740,9 @@ export function createAssetManager({
       for (const record of [...catalog.records]) {
         let payload = dbPayloads.get(record.id) ?? null;
         if (typeof payload !== "string" || payload.length < 1) {
-          const legacyPayload = storage.getItem(dataKey(record.id));
+          const legacyPayload = allowLocalStoragePayloadFallback
+            ? storage.getItem(dataKey(record.id))
+            : null;
           if (typeof legacyPayload === "string" && legacyPayload.length > 0) {
             payload = legacyPayload;
             if (indexedDbUsable) {
