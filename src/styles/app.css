@@ -274,6 +274,17 @@ body[data-ui-mode="production"] .topbar h1 {
   background: var(--surface);
 }
 
+.storage-usage-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.storage-usage-meter progress {
+  width: 128px;
+  height: 0.55rem;
+}
+
 .section-strip {
   display: flex;
   align-items: center;

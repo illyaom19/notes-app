@@ -61,6 +61,9 @@ const gestureStateOutput = document.querySelector("#gesture-state");
 const searchIndexCountOutput = document.querySelector("#search-index-count");
 const cameraOutput = document.querySelector("#camera-state");
 const workerStateOutput = document.querySelector("#worker-state");
+const storageUsageProgress = document.querySelector("#storage-usage-progress");
+const storageUsageLabel = document.querySelector("#storage-usage-label");
+const storageUsageMeter = document.querySelector("#storage-usage-meter");
 const canvas = document.querySelector("#workspace-canvas");
 const widgetContextMenu = document.querySelector("#widget-context-menu");
 const creationCommandMenu = document.querySelector("#creation-command-menu");
@@ -183,6 +186,9 @@ let suggestionAnalysisTimer = null;
 let suggestionAnalysisInFlight = false;
 let suggestionAnalysisQueued = false;
 let linkedWidgetRefreshTimer = null;
+let storageUsageRefreshTimer = null;
+let storageUsageRefreshInFlight = false;
+let storageUsageRefreshQueued = false;
 
 let activeContextId = null;
 let activeSectionId = null;
@@ -254,6 +260,72 @@ async function prepareStorageBackends() {
       console.warn("[storage] failed to prepare notebook document storage.", error);
     }
   }
+}
+
+function formatMegabytes(bytes) {
+  const mb = Math.max(0, Number(bytes) || 0) / (1024 * 1024);
+  return `${mb.toFixed(1)} MB`;
+}
+
+async function refreshStorageUsageUi() {
+  if (
+    !(storageUsageProgress instanceof HTMLProgressElement) ||
+    !(storageUsageLabel instanceof HTMLOutputElement)
+  ) {
+    return;
+  }
+
+  if (storageUsageRefreshInFlight) {
+    storageUsageRefreshQueued = true;
+    return;
+  }
+
+  storageUsageRefreshInFlight = true;
+  try {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.storage ||
+      typeof navigator.storage.estimate !== "function"
+    ) {
+      storageUsageProgress.max = 1;
+      storageUsageProgress.value = 0;
+      storageUsageLabel.textContent = "Unavailable";
+      return;
+    }
+
+    const estimate = await navigator.storage.estimate();
+    const usage = Math.max(0, Number(estimate?.usage) || 0);
+    const quota = Math.max(0, Number(estimate?.quota) || 0);
+    const hasQuota = quota > 0;
+
+    storageUsageProgress.max = hasQuota ? quota : 1;
+    storageUsageProgress.value = hasQuota ? Math.min(usage, quota) : 0;
+    storageUsageLabel.textContent = hasQuota
+      ? `${formatMegabytes(usage)} / ${formatMegabytes(quota)}`
+      : `${formatMegabytes(usage)} / Unknown`;
+  } catch (_error) {
+    storageUsageProgress.max = 1;
+    storageUsageProgress.value = 0;
+    storageUsageLabel.textContent = "Unavailable";
+  } finally {
+    storageUsageRefreshInFlight = false;
+    if (storageUsageRefreshQueued) {
+      storageUsageRefreshQueued = false;
+      void refreshStorageUsageUi();
+    }
+  }
+}
+
+function scheduleStorageUsageRefresh({ delayMs = 220 } = {}) {
+  if (storageUsageRefreshTimer) {
+    window.clearTimeout(storageUsageRefreshTimer);
+    storageUsageRefreshTimer = null;
+  }
+
+  storageUsageRefreshTimer = window.setTimeout(() => {
+    storageUsageRefreshTimer = null;
+    void refreshStorageUsageUi();
+  }, Math.max(0, Number(delayMs) || 0));
 }
 
 function registerPwaServiceWorker() {
@@ -772,6 +844,9 @@ function syncUiModeControls() {
 
   if (statusPanel instanceof HTMLElement) {
     statusPanel.hidden = productionMode;
+  }
+  if (storageUsageMeter instanceof HTMLElement) {
+    storageUsageMeter.hidden = productionMode;
   }
 
   for (const control of productionHiddenControls) {
@@ -3460,6 +3535,7 @@ function updateWidgetUi() {
   scheduleOnboardingRefresh(120);
   scheduleSuggestionAnalysis();
   scheduleWorkspacePersist();
+  scheduleStorageUsageRefresh();
 }
 
 function setContextControlsBusy(nextBusy) {
@@ -6466,6 +6542,7 @@ async function bootstrap() {
   toolsPanelOpen = safeLocalStorageGetItem("notes-app.tools-panel.open") === "1";
   syncToolsUi();
   syncUiModeControls();
+  scheduleStorageUsageRefresh({ delayMs: 0 });
   renderSectionMinimap();
   updateInkUi({
     completedStrokes: 0,

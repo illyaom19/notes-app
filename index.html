@@ -92,6 +92,11 @@
         <span><strong>Search Index:</strong> <output id="search-index-count">0</output></span>
         <span><strong>Worker:</strong> <output id="worker-state">idle</output></span>
         <span><strong>Camera:</strong> <output id="camera-state">x=0, y=0, zoom=1.00</output></span>
+        <span id="storage-usage-meter" class="storage-usage-meter">
+          <strong>Storage:</strong>
+          <progress id="storage-usage-progress" max="100" value="0"></progress>
+          <output id="storage-usage-label">0.0 MB / 0.0 MB</output>
+        </span>
       </section>
 
       <aside id="search-panel" class="search-panel" aria-label="Search Panel" hidden>
