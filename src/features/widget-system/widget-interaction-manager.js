@@ -5,6 +5,7 @@ const HEADER_HEIGHT_PX = 34;
 const CONTROL_SIZE_PX = 24;
 const RESIZE_HANDLE_PX = 24;
 const CONTROL_PADDING_PX = 6;
+const COLLAPSE_BUTTON_Y_OFFSET_PX = 3;
 const TAP_MOVE_THRESHOLD_PX = 8;
 const UNAVAILABLE_DOT_PX = 8;
 const MIN_COLLAPSE_ACTION_PX = 10;
@@ -97,6 +98,8 @@ function controlRects(widget, camera) {
     ),
   );
   const handleSize = worldSizeForPixels(camera, RESIZE_HANDLE_PX);
+  const collapseYOffset = worldSizeForPixels(camera, COLLAPSE_BUTTON_Y_OFFSET_PX);
+  const collapseMaxY = bounds.y + Math.max(pad, headerHeight - controlSize - pad);
 
   return {
     bounds,
@@ -108,7 +111,7 @@ function controlRects(widget, camera) {
     },
     collapse: {
       x: bounds.x + bounds.width - controlSize - pad,
-      y: bounds.y + pad,
+      y: Math.min(collapseMaxY, bounds.y + pad + collapseYOffset),
       width: controlSize,
       height: controlSize,
     },

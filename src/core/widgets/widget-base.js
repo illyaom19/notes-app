@@ -3,8 +3,8 @@ export const RENDER_MODE = Object.freeze({
   SNAPSHOT: "snapshot",
 });
 
-const COLLAPSED_WIDTH_WORLD = 40;
-const COLLAPSED_MIN_HEIGHT_WORLD = 40;
+const COLLAPSED_WIDTH_WORLD = 80;
+const COLLAPSED_MIN_HEIGHT_WORLD = 60;
 
 function normalizeInteractionFlags(candidate) {
   const source = candidate && typeof candidate === "object" ? candidate : {};
