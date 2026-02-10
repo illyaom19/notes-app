@@ -3627,6 +3627,13 @@ function updateReferenceManagerUi() {
   });
 }
 
+function syncReferenceManagerPlacement() {
+  if (!referenceManagerUiController || typeof referenceManagerUiController.syncPlacement !== "function") {
+    return;
+  }
+  referenceManagerUiController.syncPlacement();
+}
+
 async function runSuggestionAnalysis() {
   const scope = currentSuggestionScope();
   if (!scope || restoringContext) {
@@ -3768,6 +3775,7 @@ function updateWidgetUi() {
   updateWhitespaceZoneCount();
   updateContextUi();
   updateReferenceManagerUi();
+  syncReferenceManagerPlacement();
   renderSuggestionRail();
   renderSectionMinimap();
   if (searchIndex && workspaceScopeId()) {
@@ -6322,6 +6330,7 @@ function wireReferenceManagerUi() {
   });
 
   updateReferenceManagerUi();
+  syncReferenceManagerPlacement();
 }
 
 function wireWidgetInteractionManager() {

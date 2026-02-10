@@ -992,8 +992,6 @@ body[data-ui-mode="production"] .topbar h1 {
 
 .reference-manager-launcher {
   position: fixed;
-  right: 0.9rem;
-  bottom: 0.9rem;
   z-index: 64;
   width: 48px;
   height: 48px;
@@ -1022,8 +1020,6 @@ body[data-ui-mode="production"] .topbar h1 {
 
 .reference-manager-overlay {
   position: fixed;
-  right: 0.9rem;
-  bottom: 4.15rem;
   z-index: 63;
   width: min(276px, calc(100vw - 1.8rem));
   pointer-events: none;
@@ -1822,11 +1818,6 @@ body[data-ui-mode="production"] .topbar h1 {
     left: 0.6rem;
     bottom: 4.2rem;
     width: auto;
-  }
-
-  .reference-manager-launcher {
-    right: 0.6rem;
-    bottom: 0.6rem;
   }
 
   .reference-manager-panel {

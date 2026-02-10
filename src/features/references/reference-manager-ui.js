@@ -8,6 +8,9 @@ const PREVIEW_HIDE_DELAY_MS = 420;
 const DRAG_THRESHOLD_PX = 7;
 const MAX_VISIBLE_CHIPS = 6;
 const MAX_RECENT = 3;
+const LAUNCHER_SIZE = 48;
+const FLOATING_INSET = 10;
+const OVERLAY_GAP = 10;
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -210,6 +213,7 @@ export function createReferenceManagerUi({
   launcherButton,
   overlayElement,
   panelElement,
+  canvasElement,
   referencesListElement,
   notesListElement,
   documentsListElement,
@@ -251,6 +255,7 @@ export function createReferenceManagerUi({
   let longPressState = null;
   let draggingState = null;
   let previewHovered = false;
+  let listHovered = false;
   let previewAbortController = null;
   let feedbackTimer = null;
 
@@ -306,6 +311,91 @@ export function createReferenceManagerUi({
     }
   }
 
+  function hasPreviewOwner() {
+    return Boolean(menuRowKey) || Boolean(previewHovered) || Boolean(listHovered) || Boolean(draggingState);
+  }
+
+  function resolveViewportRect() {
+    if (canvasElement instanceof HTMLElement) {
+      const rect = canvasElement.getBoundingClientRect();
+      if (rect && rect.width > 1 && rect.height > 1) {
+        return rect;
+      }
+    }
+
+    return {
+      left: 0,
+      top: 0,
+      right: window.innerWidth,
+      bottom: window.innerHeight,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+  }
+
+  function pointInRect(clientX, clientY, rect) {
+    if (!rect) {
+      return false;
+    }
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+      return false;
+    }
+    return (
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom
+    );
+  }
+
+  function syncFloatingPlacement() {
+    const viewportRect = resolveViewportRect();
+    if (!viewportRect) {
+      return;
+    }
+
+    const minLauncherLeft = viewportRect.left + FLOATING_INSET;
+    const minLauncherTop = viewportRect.top + FLOATING_INSET;
+    const maxLauncherLeft = Math.max(minLauncherLeft, viewportRect.right - FLOATING_INSET - LAUNCHER_SIZE);
+    const maxLauncherTop = Math.max(minLauncherTop, viewportRect.bottom - FLOATING_INSET - LAUNCHER_SIZE);
+    const launcherLeft = clamp(maxLauncherLeft, minLauncherLeft, maxLauncherLeft);
+    const launcherTop = clamp(maxLauncherTop, minLauncherTop, maxLauncherTop);
+
+    launcherButton.style.right = "auto";
+    launcherButton.style.bottom = "auto";
+    launcherButton.style.left = `${Math.round(launcherLeft)}px`;
+    launcherButton.style.top = `${Math.round(launcherTop)}px`;
+
+    if (!(shellElement instanceof HTMLElement)) {
+      return;
+    }
+
+    const overlayWidth = Math.max(200, Math.min(276, viewportRect.width - FLOATING_INSET * 2));
+    shellElement.style.right = "auto";
+    shellElement.style.bottom = "auto";
+    shellElement.style.width = `${Math.round(overlayWidth)}px`;
+
+    const preferredLeft = launcherLeft + LAUNCHER_SIZE - overlayWidth;
+    const minLeft = viewportRect.left + FLOATING_INSET;
+    const maxLeft = Math.max(minLeft, viewportRect.right - FLOATING_INSET - overlayWidth);
+    const overlayLeft = clamp(preferredLeft, minLeft, maxLeft);
+
+    const panelHeightEstimate = panelRoot instanceof HTMLElement
+      ? Math.max(180, panelRoot.getBoundingClientRect().height || panelRoot.scrollHeight || 0)
+      : 320;
+    const preferredTop = launcherTop - OVERLAY_GAP - panelHeightEstimate;
+    const minTop = viewportRect.top + FLOATING_INSET;
+    const maxTop = Math.max(minTop, viewportRect.bottom - FLOATING_INSET - panelHeightEstimate);
+    const overlayTop = clamp(preferredTop, minTop, maxTop);
+
+    shellElement.style.left = `${Math.round(overlayLeft)}px`;
+    shellElement.style.top = `${Math.round(overlayTop)}px`;
+
+    if (panelRoot instanceof HTMLElement) {
+      panelRoot.style.maxHeight = `${Math.max(180, Math.floor(viewportRect.height - FLOATING_INSET * 2))}px`;
+    }
+  }
+
   function setOpen(nextOpen) {
     open = Boolean(nextOpen);
     launcherButton.dataset.open = open ? "true" : "false";
@@ -319,6 +409,11 @@ export function createReferenceManagerUi({
       hidePreviewNow();
       setMenuRowKey(null);
       setActiveRowKey(null);
+    } else {
+      syncFloatingPlacement();
+      window.requestAnimationFrame(() => {
+        syncFloatingPlacement();
+      });
     }
   }
 
@@ -353,6 +448,7 @@ export function createReferenceManagerUi({
 
   function renderLists() {
     rowMap = new Map();
+    listHovered = false;
     clearList(allListElement);
     clearList(recentListElement);
     clearList(documentsListElement);
@@ -454,6 +550,7 @@ export function createReferenceManagerUi({
     }
     previewKey = null;
     previewHovered = false;
+    listHovered = false;
     previewElement.hidden = true;
     clearPreviewBody();
     if (previewAbortController) {
@@ -463,7 +560,7 @@ export function createReferenceManagerUi({
   }
 
   function hidePreviewLater() {
-    if (draggingState || previewHovered) {
+    if (hasPreviewOwner()) {
       return;
     }
     if (previewHideTimer) {
@@ -471,7 +568,7 @@ export function createReferenceManagerUi({
     }
     previewHideTimer = window.setTimeout(() => {
       previewHideTimer = null;
-      if (!menuRowKey && !draggingState && !previewHovered) {
+      if (!hasPreviewOwner()) {
         hidePreviewNow();
         setActiveRowKey(null);
       }
@@ -676,21 +773,38 @@ export function createReferenceManagerUi({
 
   async function importAtPointer(item, clientX, clientY) {
     if (!item) {
-      return;
+      return false;
     }
+
+    const viewportRect = resolveViewportRect();
+    if (!pointInRect(clientX, clientY, viewportRect)) {
+      triggerDropFeedback({ kind: "deny", message: "Drop on canvas to add" });
+      return false;
+    }
+
     const screenPoint = { x: clientX, y: clientY };
+    const canvasPoint = {
+      x: clientX - viewportRect.left,
+      y: clientY - viewportRect.top,
+    };
+    const dropMeta = {
+      screenPoint,
+      canvasPoint,
+      droppedInsideCanvas: true,
+    };
     if (item.kind === "document") {
-      await onImportDocument?.(item.raw, { screenPoint, linkStatus: "linked" });
+      await onImportDocument?.(item.raw, { screenPoint, canvasPoint, dropMeta, linkStatus: "linked" });
       await onTouchDocument?.(item.raw);
-      return;
+      return true;
     }
     if (item.kind === "note") {
-      await onImportNote?.(item.raw, { screenPoint });
+      await onImportNote?.(item.raw, { screenPoint, canvasPoint, dropMeta });
       await onTouchNote?.(item.raw);
-      return;
+      return true;
     }
-    await onImportReference?.(item.raw, { screenPoint, linkStatus: "linked" });
+    await onImportReference?.(item.raw, { screenPoint, canvasPoint, dropMeta, linkStatus: "linked" });
     await onTouchReference?.(item.raw);
+    return true;
   }
 
   function beginDrag(item, event) {
@@ -702,7 +816,11 @@ export function createReferenceManagerUi({
       startY: event.clientY,
       active: false,
     };
-    previewElement.setPointerCapture?.(event.pointerId);
+    try {
+      previewElement.setPointerCapture?.(event.pointerId);
+    } catch (_error) {
+      // Ignore unsupported pointer capture paths.
+    }
   }
 
   function updateDragGhostPosition(clientX, clientY) {
@@ -719,7 +837,11 @@ export function createReferenceManagerUi({
     if (pointerId !== null && draggingState.pointerId !== pointerId) {
       return;
     }
-    previewElement.releasePointerCapture?.(draggingState.pointerId);
+    try {
+      previewElement.releasePointerCapture?.(draggingState.pointerId);
+    } catch (_error) {
+      // Ignore unsupported pointer capture paths.
+    }
     draggingState = null;
     dragGhost.hidden = true;
     if (!previewHovered && !menuRowKey) {
@@ -772,14 +894,17 @@ export function createReferenceManagerUi({
     const item = draggingState.item;
     stopDrag(event.pointerId);
     if (committed) {
-      void importAtPointer(item, event.clientX, event.clientY).then(() => {
+      void importAtPointer(item, event.clientX, event.clientY).then((imported) => {
+        if (!imported) {
+          return;
+        }
         if (typeof nowIso === "function") {
           item.lastUsedAt = timestamp(nowIso());
         }
+        hidePreviewNow();
+        setActiveRowKey(null);
+        setMenuRowKey(null);
       });
-      hidePreviewNow();
-      setActiveRowKey(null);
-      setMenuRowKey(null);
     }
     event.preventDefault();
     event.stopPropagation();
@@ -869,6 +994,7 @@ export function createReferenceManagerUi({
     if (!rowKey) {
       return;
     }
+    listHovered = true;
     const itemKey = rowKey.startsWith("recent:") ? rowKey.slice("recent:".length) : rowKey;
     void showPreviewForKey(itemKey, row);
   }
@@ -883,7 +1009,11 @@ function onListPointerLeave(event) {
     return;
   }
   const nextTarget = event.relatedTarget;
-  if (nextTarget instanceof Node && (row.contains(nextTarget) || previewElement.contains(nextTarget))) {
+  if (nextTarget instanceof Node && row.contains(nextTarget)) {
+    return;
+  }
+  listHovered = false;
+  if (nextTarget instanceof Node && previewElement.contains(nextTarget)) {
     return;
   }
   hidePreviewLater();
@@ -1057,6 +1187,7 @@ function onListPointerLeave(event) {
     bind(window, "pointerdown", onWindowPointerDown, true);
     bind(window, "keydown", onWindowKeyDown);
     bind(window, "resize", () => {
+      syncFloatingPlacement();
       if (!previewKey) {
         updateDropFeedbackPosition();
       } else {
@@ -1072,6 +1203,7 @@ function onListPointerLeave(event) {
   wireEvents();
   applyDropTargetState({ active: false, over: false });
   launcherButton.dataset.dropFeedback = "none";
+  syncFloatingPlacement();
   setOpen(false);
 
   return {
@@ -1098,6 +1230,17 @@ function onListPointerLeave(event) {
 
     showDropFeedback({ kind = "deny", message = "" } = {}) {
       triggerDropFeedback({ kind, message });
+    },
+
+    syncPlacement() {
+      syncFloatingPlacement();
+      if (previewKey) {
+        const row = rowMap.get(previewKey) ?? rowMap.get(`recent:${previewKey}`);
+        if (row instanceof HTMLElement) {
+          positionPreviewForRow(row);
+        }
+      }
+      updateDropFeedbackPosition();
     },
 
     isOpen() {
