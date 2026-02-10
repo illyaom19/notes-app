@@ -1116,6 +1116,7 @@ body[data-ui-mode="production"] .topbar h1 {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
+  touch-action: none;
 }
 
 .library-chip-empty {
@@ -1129,6 +1130,7 @@ body[data-ui-mode="production"] .topbar h1 {
   position: relative;
   display: grid;
   gap: 0.16rem;
+  touch-action: none;
 }
 
 .library-chip {
@@ -1143,6 +1145,7 @@ body[data-ui-mode="production"] .topbar h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
+  touch-action: none;
 }
 
 .library-chip-row[data-active="true"] .library-chip {

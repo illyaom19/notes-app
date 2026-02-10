@@ -258,6 +258,8 @@ export function createReferenceManagerUi({
   let listHovered = false;
   let previewAbortController = null;
   let feedbackTimer = null;
+  let bodyTouchActionBeforeDrag = null;
+  let htmlTouchActionBeforeDrag = null;
 
   const eventDisposers = [];
   const allListElement = referencesListElement instanceof HTMLElement ? referencesListElement : null;
@@ -829,7 +831,37 @@ export function createReferenceManagerUi({
     return true;
   }
 
+  function setDragTouchGuard(enabled) {
+    const root = document.documentElement;
+    const body = document.body;
+    if (!(root instanceof HTMLElement) || !(body instanceof HTMLElement)) {
+      return;
+    }
+    if (enabled) {
+      if (htmlTouchActionBeforeDrag === null) {
+        htmlTouchActionBeforeDrag = root.style.touchAction ?? "";
+      }
+      if (bodyTouchActionBeforeDrag === null) {
+        bodyTouchActionBeforeDrag = body.style.touchAction ?? "";
+      }
+      root.style.touchAction = "none";
+      body.style.touchAction = "none";
+      return;
+    }
+    if (htmlTouchActionBeforeDrag !== null) {
+      root.style.touchAction = htmlTouchActionBeforeDrag;
+      htmlTouchActionBeforeDrag = null;
+    }
+    if (bodyTouchActionBeforeDrag !== null) {
+      body.style.touchAction = bodyTouchActionBeforeDrag;
+      bodyTouchActionBeforeDrag = null;
+    }
+  }
+
   function beginDrag(item, event, captureTarget = previewElement) {
+    if (draggingState && draggingState.pointerId !== event.pointerId) {
+      stopDrag();
+    }
     cancelPendingHide();
     draggingState = {
       item,
@@ -844,6 +876,7 @@ export function createReferenceManagerUi({
     } catch (_error) {
       // Ignore unsupported pointer capture paths.
     }
+    setDragTouchGuard(true);
   }
 
   function updateDragGhostPosition(clientX, clientY) {
@@ -866,6 +899,7 @@ export function createReferenceManagerUi({
       // Ignore unsupported pointer capture paths.
     }
     draggingState = null;
+    setDragTouchGuard(false);
     dragGhost.hidden = true;
     if (!previewHovered && !menuRowKey) {
       hidePreviewLater();
@@ -932,6 +966,16 @@ export function createReferenceManagerUi({
         triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
       });
     }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function onPreviewPointerCancel(event) {
+    if (!draggingState || draggingState.pointerId !== event.pointerId) {
+      return;
+    }
+    stopDrag(event.pointerId);
+    clearLongPress();
     event.preventDefault();
     event.stopPropagation();
   }
@@ -1224,10 +1268,10 @@ function onListPointerLeave(event) {
     bind(previewElement, "pointerdown", onPreviewPointerDown);
     bind(previewElement, "pointermove", onPreviewPointerMove);
     bind(previewElement, "pointerup", onPreviewPointerUp);
-    bind(previewElement, "pointercancel", onPreviewPointerUp);
+    bind(previewElement, "pointercancel", onPreviewPointerCancel);
     bind(window, "pointermove", onPreviewPointerMove, true);
     bind(window, "pointerup", onPreviewPointerUp, true);
-    bind(window, "pointercancel", onPreviewPointerUp, true);
+    bind(window, "pointercancel", onPreviewPointerCancel, true);
 
     bind(allListElement, "pointerdown", onListPointerDown);
     bind(allListElement, "pointermove", onListPointerMove);
