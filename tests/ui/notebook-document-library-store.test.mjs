@@ -161,3 +161,32 @@ test("notebook document library can rename and hard-delete source entries", () =
     restore();
   }
 });
+
+test("notebook document library tracks and preserves last-used timestamps", () => {
+  const { store, restore } = createStore();
+  try {
+    const created = store.upsertDocument("nb-a", {
+      title: "Week 2",
+      sourceType: "pdf",
+      fileName: "week-2.pdf",
+      bytesBase64: "Yw==",
+    });
+    assert.ok(created);
+    assert.equal(created.lastUsedAt, null);
+
+    const touched = store.touchDocument("nb-a", created.id);
+    assert.ok(typeof touched?.lastUsedAt === "string");
+
+    const updated = store.upsertDocument("nb-a", {
+      id: created.id,
+      title: "Week 2 Updated",
+      sourceType: "pdf",
+      fileName: "week-2-updated.pdf",
+      bytesBase64: "Yw==",
+    });
+    assert.ok(updated);
+    assert.equal(updated.lastUsedAt, touched.lastUsedAt);
+  } finally {
+    restore();
+  }
+});

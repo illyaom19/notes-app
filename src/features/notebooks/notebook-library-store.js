@@ -87,6 +87,8 @@ function normalizeReference(candidate) {
     inkStrokes: normalizeInkSnapshot(candidate.inkStrokes),
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : nowIso(),
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
+    lastUsedAt:
+      typeof candidate.lastUsedAt === "string" && candidate.lastUsedAt.trim() ? candidate.lastUsedAt : null,
   };
 }
 
@@ -125,6 +127,8 @@ function normalizeNote(candidate) {
     inkStrokes: normalizeInkSnapshot(candidate.inkStrokes),
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : nowIso(),
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
+    lastUsedAt:
+      typeof candidate.lastUsedAt === "string" && candidate.lastUsedAt.trim() ? candidate.lastUsedAt : null,
   };
 }
 
@@ -211,6 +215,7 @@ function cloneReference(entry) {
     inkStrokes: normalizeInkSnapshot(entry.inkStrokes),
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
+    lastUsedAt: entry.lastUsedAt ?? null,
   };
 }
 
@@ -227,6 +232,7 @@ function cloneNote(entry) {
     inkStrokes: normalizeInkSnapshot(entry.inkStrokes),
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
+    lastUsedAt: entry.lastUsedAt ?? null,
   };
 }
 
@@ -331,6 +337,7 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
         nextReferences = [...notebook.references];
         const current = nextReferences[existingIndex];
         updated.createdAt = current.createdAt;
+        updated.lastUsedAt = normalized.lastUsedAt ?? current.lastUsedAt ?? null;
         nextReferences[existingIndex] = updated;
       }
 
@@ -450,6 +457,7 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
         nextNotes = [...notebook.notes];
         const current = nextNotes[existingIndex];
         updated.createdAt = current.createdAt;
+        updated.lastUsedAt = normalized.lastUsedAt ?? current.lastUsedAt ?? null;
         nextNotes[existingIndex] = updated;
       }
 
@@ -543,6 +551,74 @@ export function createNotebookLibraryStore({ storage = window.localStorage } = {
       }
       state = nextState;
       return true;
+    },
+
+    touchReference(notebookId, referenceId) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof referenceId !== "string" || !referenceId.trim()) {
+        return null;
+      }
+      const index = notebook.references.findIndex((entry) => entry.id === referenceId);
+      if (index < 0) {
+        return null;
+      }
+
+      const nextReferences = [...notebook.references];
+      const updated = {
+        ...nextReferences[index],
+        lastUsedAt: nowIso(),
+      };
+      nextReferences[index] = updated;
+
+      const nextState = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            references: nextReferences,
+          },
+        },
+      };
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
+      return cloneReference(updated);
+    },
+
+    touchNote(notebookId, noteId) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof noteId !== "string" || !noteId.trim()) {
+        return null;
+      }
+      const index = notebook.notes.findIndex((entry) => entry.id === noteId);
+      if (index < 0) {
+        return null;
+      }
+
+      const nextNotes = [...notebook.notes];
+      const updated = {
+        ...nextNotes[index],
+        lastUsedAt: nowIso(),
+      };
+      nextNotes[index] = updated;
+
+      const nextState = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            notes: nextNotes,
+          },
+        },
+      };
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
+      return cloneNote(updated);
     },
 
     deleteNotebook(notebookId) {

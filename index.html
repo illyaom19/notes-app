@@ -127,35 +127,30 @@
       </section>
 
       <button id="reference-manager-launcher" class="reference-manager-launcher" type="button" aria-label="Open Library">
-        Library
+        <span class="library-fab-icon" aria-hidden="true">
+          <span class="library-fab-book library-fab-book--left"></span>
+          <span class="library-fab-book library-fab-book--middle"></span>
+          <span class="library-fab-book library-fab-book--right"></span>
+        </span>
       </button>
 
       <section id="reference-manager-overlay" class="reference-manager-overlay" hidden aria-hidden="true">
-        <div
-          id="reference-manager-panel"
-          class="reference-manager-panel"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="reference-manager-title"
-          tabindex="-1"
-        >
-          <header class="reference-manager-header">
-            <h2 id="reference-manager-title">Notebook Library</h2>
+        <div id="reference-manager-panel" class="reference-manager-panel" role="dialog" aria-label="Notebook library">
+          <p class="library-chip-section-title">All Library Items:</p>
+          <div id="reference-manager-reference-list" class="library-chip-stack" aria-label="All library entries"></div>
+          <div class="library-chip-divider" aria-hidden="true"></div>
+          <p class="library-chip-section-title">Recently used</p>
+          <div id="reference-manager-note-list" class="library-chip-stack" aria-label="Recently used entries"></div>
+          <div id="reference-manager-document-list" hidden></div>
+          <div hidden>
             <button id="reference-manager-close" type="button">Close</button>
-          </header>
-          <div class="reference-manager-tabs">
-            <button id="reference-manager-tab-references" type="button" data-active="true">References</button>
+            <button id="reference-manager-tab-references" type="button">References</button>
             <button id="reference-manager-tab-notes" type="button">Notes</button>
             <button id="reference-manager-tab-documents" type="button">Documents</button>
-          </div>
-          <p class="reference-manager-counts">
             <output id="reference-manager-reference-count">0 references</output>
             <output id="reference-manager-note-count">0 notes</output>
             <output id="reference-manager-document-count">0 documents</output>
-          </p>
-          <div id="reference-manager-reference-list" class="reference-manager-list" aria-label="Reference entries"></div>
-          <div id="reference-manager-note-list" class="reference-manager-list" aria-label="Note entries" hidden></div>
-          <div id="reference-manager-document-list" class="reference-manager-list" aria-label="Document entries" hidden></div>
+          </div>
         </div>
       </section>
 

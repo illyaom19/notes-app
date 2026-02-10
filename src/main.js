@@ -983,6 +983,17 @@ function viewportCenterAnchor() {
   return runtime.camera.screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
 }
 
+function anchorFromScreenPoint(screenPoint) {
+  if (!screenPoint || !isFiniteNumber(screenPoint.x) || !isFiniteNumber(screenPoint.y)) {
+    return viewportCenterAnchor();
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const localX = screenPoint.x - rect.left;
+  const localY = screenPoint.y - rect.top;
+  return runtime.camera.screenToWorld(localX, localY);
+}
+
 function uniqueTags(values) {
   if (!Array.isArray(values)) {
     return [];
@@ -2953,6 +2964,49 @@ async function deleteNotebookDocumentFromManager(entry) {
   syncLinkedNotebookDocumentInstances({ sourceDocumentId: entry.id });
   updateWidgetUi();
   return true;
+}
+
+async function showNotebookReferenceInfo(entry) {
+  if (!entry) {
+    return;
+  }
+  const lines = [
+    `Type: ${entry.contentType === "image" ? "Snip" : "Reference"}`,
+    `Title: ${entry.title ?? "Reference"}`,
+    `Source: ${entry.sourceLabel ?? "Notebook Reference"}`,
+    `Updated: ${entry.updatedAt ?? "unknown"}`,
+    `Created: ${entry.createdAt ?? "unknown"}`,
+  ];
+  await showNoticeDialog(lines.join("\n"), { title: "Library Info" });
+}
+
+async function showNotebookNoteInfo(entry) {
+  if (!entry) {
+    return;
+  }
+  const lines = [
+    "Type: Notes",
+    `Title: ${entry.title ?? "Notes"}`,
+    `Size: ${Math.round(Number(entry.size?.width) || 0)} x ${Math.round(Number(entry.size?.height) || 0)}`,
+    `Updated: ${entry.updatedAt ?? "unknown"}`,
+    `Created: ${entry.createdAt ?? "unknown"}`,
+  ];
+  await showNoticeDialog(lines.join("\n"), { title: "Library Info" });
+}
+
+async function showNotebookDocumentInfo(entry) {
+  if (!entry) {
+    return;
+  }
+  const lines = [
+    "Type: PDF",
+    `Title: ${entry.title ?? "Document"}`,
+    `File: ${entry.fileName ?? "document.pdf"}`,
+    `Status: ${entry.status ?? "active"}`,
+    `Updated: ${entry.updatedAt ?? "unknown"}`,
+    `Created: ${entry.createdAt ?? "unknown"}`,
+  ];
+  await showNoticeDialog(lines.join("\n"), { title: "Library Info" });
 }
 
 async function createReferencePopupFromNotebookLibrary(intent) {
@@ -5854,34 +5908,34 @@ function wireReferenceManagerUi() {
     notesCountElement: referenceManagerNoteCount,
     documentsCountElement: referenceManagerDocumentCount,
     previewLayerElement: referencePreviewLayer,
-    onImportReference: async (entry) => {
+    onImportReference: async (entry, { screenPoint = null } = {}) => {
       await createReferencePopupFromLibraryEntry(entry, {
         linkStatus: "linked",
         intent: createCreationIntent({
           type: "reference-popup",
-          anchor: viewportCenterAnchor(),
+          anchor: screenPoint ? anchorFromScreenPoint(screenPoint) : viewportCenterAnchor(),
           sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
           createdFrom: "manual",
         }),
       });
       updateWidgetUi();
     },
-    onImportDocument: async (entry) => {
+    onImportDocument: async (entry, { screenPoint = null } = {}) => {
       await createPdfWidgetFromLibraryEntry(entry, {
         linkStatus: "linked",
         intent: createCreationIntent({
           type: "pdf-document",
-          anchor: viewportCenterAnchor(),
+          anchor: screenPoint ? anchorFromScreenPoint(screenPoint) : viewportCenterAnchor(),
           sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
           createdFrom: "manual",
         }),
       });
       updateWidgetUi();
     },
-    onImportNote: async (entry) => {
+    onImportNote: async (entry, { screenPoint = null } = {}) => {
       await createNoteWidgetFromLibraryEntry(entry, createCreationIntent({
         type: "expanded-area",
-        anchor: viewportCenterAnchor(),
+        anchor: screenPoint ? anchorFromScreenPoint(screenPoint) : viewportCenterAnchor(),
         sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
         createdFrom: "manual",
       }));
@@ -5904,6 +5958,36 @@ function wireReferenceManagerUi() {
     },
     onDeleteDocument: async (entry) => {
       await deleteNotebookDocumentFromManager(entry);
+    },
+    onShowReferenceInfo: async (entry) => {
+      await showNotebookReferenceInfo(entry);
+    },
+    onShowNoteInfo: async (entry) => {
+      await showNotebookNoteInfo(entry);
+    },
+    onShowDocumentInfo: async (entry) => {
+      await showNotebookDocumentInfo(entry);
+    },
+    onTouchReference: async (entry) => {
+      if (!activeContextId || !entry) {
+        return;
+      }
+      notebookLibraryStore.touchReference(activeContextId, entry.id);
+      updateReferenceManagerUi();
+    },
+    onTouchNote: async (entry) => {
+      if (!activeContextId || !entry) {
+        return;
+      }
+      notebookLibraryStore.touchNote(activeContextId, entry.id);
+      updateReferenceManagerUi();
+    },
+    onTouchDocument: async (entry) => {
+      if (!activeContextId || !entry) {
+        return;
+      }
+      notebookDocumentLibraryStore.touchDocument(activeContextId, entry.id);
+      updateReferenceManagerUi();
     },
     onLoadDocumentBytes: (entry) => {
       if (!activeContextId || !entry || typeof entry.id !== "string") {

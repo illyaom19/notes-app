@@ -115,3 +115,28 @@ test("library store persists reference content payload for snips", () => {
   assert.equal(fetched.imageDataUrl, "data:image/png;base64,abc123");
   assert.equal(fetched.contentType, "image");
 });
+
+test("library store tracks and preserves last-used timestamps for references and notes", () => {
+  const storage = createMemoryStorage();
+  const store = createNotebookLibraryStore({ storage });
+
+  const savedRef = store.upsertReference("nb-a", { title: "Ref A" });
+  assert.ok(savedRef);
+  assert.equal(savedRef.lastUsedAt, null);
+  const touchedRef = store.touchReference("nb-a", savedRef.id);
+  assert.ok(typeof touchedRef?.lastUsedAt === "string");
+
+  const updatedRef = store.upsertReference("nb-a", { id: savedRef.id, title: "Ref A Updated" });
+  assert.ok(updatedRef);
+  assert.equal(updatedRef.lastUsedAt, touchedRef.lastUsedAt);
+
+  const savedNote = store.upsertNote("nb-a", { title: "Note A" });
+  assert.ok(savedNote);
+  assert.equal(savedNote.lastUsedAt, null);
+  const touchedNote = store.touchNote("nb-a", savedNote.id);
+  assert.ok(typeof touchedNote?.lastUsedAt === "string");
+
+  const updatedNote = store.upsertNote("nb-a", { id: savedNote.id, title: "Note A Updated" });
+  assert.ok(updatedNote);
+  assert.equal(updatedNote.lastUsedAt, touchedNote.lastUsedAt);
+});

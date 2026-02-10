@@ -1,20 +1,13 @@
-import {
-  renderNotePreview,
-  renderPdfPreview,
-  renderReferencePreview,
-} from "./reference-preview-renderer.js";
+import { loadPdfJs } from "../../widgets/pdf/pdfjs-loader.js";
 
-const PREVIEW_BASE_X = 28;
-const PREVIEW_BASE_Y = 84;
-const PREVIEW_STACK_OFFSET = 28;
-const PREVIEW_MIN_WIDTH = 240;
-const PREVIEW_MIN_HEIGHT = 152;
-const PREVIEW_EDGE_PADDING = 8;
-const PREVIEW_SNAP_THRESHOLD = 22;
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
+const LONG_PRESS_MS = 430;
+const PREVIEW_WIDTH = 220;
+const PREVIEW_HEIGHT = 152;
+const PREVIEW_MARGIN = 12;
+const PREVIEW_HIDE_DELAY_MS = 140;
+const DRAG_THRESHOLD_PX = 7;
+const MAX_VISIBLE_CHIPS = 6;
+const MAX_RECENT = 3;
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -27,70 +20,199 @@ function text(value, fallback = "") {
   return fallback;
 }
 
-function safeCountLabel(count, singular, plural) {
-  return `${count} ${count === 1 ? singular : plural}`;
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+function timestamp(candidate) {
+  if (typeof candidate !== "string" || !candidate.trim()) {
+    return 0;
+  }
+  const parsed = Date.parse(candidate);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function rowTemplate({ kind, id, title, subtitle, linkedDefaultLabel }) {
-  const showFrozen = kind !== "note";
-  return `
-    <article class="reference-manager-row" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">
-      <button type="button" class="reference-manager-row-main" data-action="open-preview" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">
-        <span class="reference-manager-row-title">${escapeHtml(title)}</span>
-        <span class="reference-manager-row-subtitle">${escapeHtml(subtitle)}</span>
-      </button>
-      <div class="reference-manager-row-actions">
-        <button type="button" data-action="import-linked" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">${escapeHtml(linkedDefaultLabel)}</button>
-        ${
-          showFrozen
-            ? `<button type="button" data-action="import-frozen" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">Frozen</button>`
-            : ""
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function strokeWidth(baseWidth, pressure) {
+  const normalized = Math.max(0.05, Math.min(1, pressure || 0.5));
+  return Math.max(0.6, baseWidth * (0.35 + normalized * 0.95));
+}
+
+function drawInkStrokes(canvas, strokes, { width, height } = {}) {
+  if (!(canvas instanceof HTMLCanvasElement) || !Array.isArray(strokes) || strokes.length < 1) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+
+  const targetWidth = Math.max(1, Number(width) || canvas.width);
+  const targetHeight = Math.max(1, Number(height) || canvas.height);
+
+  for (const stroke of strokes) {
+    if (!stroke || !Array.isArray(stroke.points) || stroke.points.length < 1) {
+      continue;
+    }
+
+    const color = typeof stroke.color === "string" && stroke.color.trim() ? stroke.color : "#103f78";
+    const baseWidth = Number.isFinite(stroke.baseWidth) ? stroke.baseWidth : 3;
+    const anchorWidth = Math.max(1, Number(stroke.anchorBounds?.width) || targetWidth);
+    const anchorHeight = Math.max(1, Number(stroke.anchorBounds?.height) || targetHeight);
+
+    const mapped = stroke.points
+      .map((point) => {
+        if (stroke.anchorMode === "local") {
+          const lx = Number(point?.lx);
+          const ly = Number(point?.ly);
+          if (!Number.isFinite(lx) || !Number.isFinite(ly)) {
+            return null;
+          }
+          return {
+            x: (lx / anchorWidth) * targetWidth,
+            y: (ly / anchorHeight) * targetHeight,
+            p: point?.p,
+          };
         }
-        <button type="button" data-action="rename-entry" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">Rename</button>
-        <button type="button" data-action="delete-entry" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(id)}">Delete</button>
-      </div>
-    </article>
-  `;
+
+        if (Number.isFinite(point?.u) && Number.isFinite(point?.v)) {
+          return {
+            x: clamp(point.u, 0, 1) * targetWidth,
+            y: clamp(point.v, 0, 1) * targetHeight,
+            p: point?.p,
+          };
+        }
+
+        return null;
+      })
+      .filter(Boolean);
+
+    if (mapped.length < 1) {
+      continue;
+    }
+
+    if (mapped.length === 1) {
+      const dot = mapped[0];
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(dot.x, dot.y, strokeWidth(baseWidth, dot.p) * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      continue;
+    }
+
+    ctx.strokeStyle = color;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    for (let index = 1; index < mapped.length; index += 1) {
+      const prev = mapped[index - 1];
+      const current = mapped[index];
+      ctx.lineWidth = strokeWidth(baseWidth, current.p);
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(current.x, current.y);
+      ctx.stroke();
+    }
+  }
 }
 
-function previewTitle(entry, kind) {
-  if (kind === "document") {
-    return text(entry.title, "Notebook Document");
+function kindLabel(item) {
+  if (item.kind === "document") {
+    return "PDF";
   }
-  if (kind === "note") {
-    return text(entry.title, "Notebook Note");
+  if (item.kind === "note") {
+    return "Notes";
   }
-  return text(entry.title, "Notebook Reference");
+  if (item.contentType === "image") {
+    return "Snip";
+  }
+  return "Reference";
 }
 
-function makePreviewId(prefix) {
-  return globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+function toShelfItems({ references = [], notes = [], documents = [] } = {}) {
+  const merged = [];
+
+  for (const entry of asArray(documents)) {
+    merged.push({
+      key: `document:${entry.id}`,
+      id: entry.id,
+      kind: "document",
+      title: text(entry.title, "Document"),
+      fileName: text(entry.fileName, "document.pdf"),
+      updatedAt: timestamp(entry.updatedAt || entry.createdAt),
+      lastUsedAt: timestamp(entry.lastUsedAt),
+      contentType: "pdf",
+      raw: entry,
+    });
+  }
+
+  for (const entry of asArray(notes)) {
+    merged.push({
+      key: `note:${entry.id}`,
+      id: entry.id,
+      kind: "note",
+      title: text(entry.title, "Notes"),
+      updatedAt: timestamp(entry.updatedAt || entry.createdAt),
+      lastUsedAt: timestamp(entry.lastUsedAt),
+      contentType: "note",
+      raw: entry,
+    });
+  }
+
+  for (const entry of asArray(references)) {
+    merged.push({
+      key: `reference:${entry.id}`,
+      id: entry.id,
+      kind: "reference",
+      title: text(entry.title, "Reference"),
+      updatedAt: timestamp(entry.updatedAt || entry.createdAt),
+      lastUsedAt: timestamp(entry.lastUsedAt),
+      contentType: entry.contentType === "image" ? "image" : "text",
+      raw: entry,
+    });
+  }
+
+  merged.sort((a, b) => {
+    const diff = b.updatedAt - a.updatedAt;
+    if (Math.abs(diff) > 0) {
+      return diff;
+    }
+    return a.key.localeCompare(b.key);
+  });
+  return merged;
+}
+
+function listRecent(items) {
+  return items
+    .filter((entry) => entry.lastUsedAt > 0)
+    .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
+    .slice(0, MAX_RECENT);
+}
+
+function setMenuOpen(row, open) {
+  if (!(row instanceof HTMLElement)) {
+    return;
+  }
+  row.dataset.menuOpen = open ? "true" : "false";
+}
+
+function setActiveRow(row, active) {
+  if (!(row instanceof HTMLElement)) {
+    return;
+  }
+  row.dataset.active = active ? "true" : "false";
 }
 
 export function createReferenceManagerUi({
   launcherButton,
   overlayElement,
   panelElement,
-  closeButton,
-  referencesTabButton,
-  notesTabButton,
-  documentsTabButton,
   referencesListElement,
   notesListElement,
   documentsListElement,
-  referencesCountElement,
-  notesCountElement,
-  documentsCountElement,
-  previewLayerElement,
   onImportReference,
   onImportNote,
   onImportDocument,
@@ -100,8 +222,13 @@ export function createReferenceManagerUi({
   onDeleteNote,
   onRenameDocument,
   onDeleteDocument,
+  onShowReferenceInfo,
+  onShowNoteInfo,
+  onShowDocumentInfo,
+  onTouchReference,
+  onTouchNote,
+  onTouchDocument,
   onLoadDocumentBytes,
-  canvasElement,
 }) {
   if (!(launcherButton instanceof HTMLButtonElement)) {
     return {
@@ -114,766 +241,810 @@ export function createReferenceManagerUi({
     };
   }
 
-  let overlayOpen = false;
-  let activeTab = "references";
-  let references = [];
-  let notes = [];
-  let documents = [];
-  const previewCards = new Map();
-  const previewState = new Map();
-  let dragState = null;
-  let lastFocusedBeforeOverlay = null;
+  let open = false;
+  let shelfItems = [];
+  let rowMap = new Map();
+  let activeRowKey = null;
+  let menuRowKey = null;
+  let previewKey = null;
+  let previewHideTimer = null;
+  let longPressState = null;
+  let draggingState = null;
+  let previewAbortController = null;
+
   const eventDisposers = [];
+  const allListElement = referencesListElement instanceof HTMLElement ? referencesListElement : null;
+  const recentListElement = notesListElement instanceof HTMLElement ? notesListElement : null;
+  const shellElement = overlayElement instanceof HTMLElement ? overlayElement : panelElement instanceof HTMLElement ? panelElement : null;
+  const panelRoot = panelElement instanceof HTMLElement ? panelElement : shellElement;
+
+  const previewElement = document.createElement("aside");
+  previewElement.className = "library-chip-preview";
+  previewElement.hidden = true;
+  previewElement.innerHTML = `
+    <header class="library-chip-preview-header">
+      <strong data-role="preview-title"></strong>
+      <span data-role="preview-kind"></span>
+    </header>
+    <div class="library-chip-preview-body" data-role="preview-body"></div>
+  `;
+
+  const dragGhost = document.createElement("article");
+  dragGhost.className = "library-widget-drag-ghost";
+  dragGhost.hidden = true;
+  dragGhost.innerHTML = `
+    <header>Library Widget</header>
+    <div class="library-widget-drag-ghost-body"></div>
+  `;
 
   function bind(target, type, handler, options) {
     if (!target || typeof target.addEventListener !== "function") {
       return;
     }
     target.addEventListener(type, handler, options);
-    eventDisposers.push(() => {
-      target.removeEventListener(type, handler, options);
-    });
+    eventDisposers.push(() => target.removeEventListener(type, handler, options));
   }
 
-  function setTab(nextTab) {
-    activeTab = nextTab === "documents" || nextTab === "notes" ? nextTab : "references";
-
-    if (referencesTabButton instanceof HTMLButtonElement) {
-      referencesTabButton.dataset.active = activeTab === "references" ? "true" : "false";
-    }
-    if (notesTabButton instanceof HTMLButtonElement) {
-      notesTabButton.dataset.active = activeTab === "notes" ? "true" : "false";
-    }
-    if (documentsTabButton instanceof HTMLButtonElement) {
-      documentsTabButton.dataset.active = activeTab === "documents" ? "true" : "false";
-    }
-    if (referencesListElement instanceof HTMLElement) {
-      referencesListElement.hidden = activeTab !== "references";
-    }
-    if (notesListElement instanceof HTMLElement) {
-      notesListElement.hidden = activeTab !== "notes";
-    }
-    if (documentsListElement instanceof HTMLElement) {
-      documentsListElement.hidden = activeTab !== "documents";
-    }
-  }
-
-  function setOverlayOpen(nextOpen) {
-    const wasOpen = overlayOpen;
-    overlayOpen = Boolean(nextOpen);
-    if (overlayElement instanceof HTMLElement) {
-      overlayElement.hidden = !overlayOpen;
-      overlayElement.dataset.open = overlayOpen ? "true" : "false";
-      overlayElement.setAttribute("aria-hidden", overlayOpen ? "false" : "true");
-    }
-    launcherButton.dataset.open = overlayOpen ? "true" : "false";
-    launcherButton.setAttribute("aria-expanded", overlayOpen ? "true" : "false");
-
-    if (overlayOpen) {
-      const active = document.activeElement;
-      lastFocusedBeforeOverlay = active instanceof HTMLElement ? active : null;
-      queueMicrotask(() => {
-        const focusables = getOverlayFocusables();
-        const initialTarget = focusables[0] ?? panelElement;
-        if (initialTarget instanceof HTMLElement) {
-          initialTarget.focus();
-        }
-      });
+  function appendFloatingElements() {
+    if (!(shellElement instanceof HTMLElement)) {
       return;
     }
-
-    if (wasOpen) {
-      const restoreTarget =
-        lastFocusedBeforeOverlay instanceof HTMLElement &&
-        document.contains(lastFocusedBeforeOverlay)
-          ? lastFocusedBeforeOverlay
-          : launcherButton;
-      queueMicrotask(() => {
-        restoreTarget.focus();
-      });
+    if (!previewElement.isConnected) {
+      shellElement.append(previewElement);
     }
-    lastFocusedBeforeOverlay = null;
-  }
-
-  function getOverlayFocusables() {
-    if (!(panelElement instanceof HTMLElement)) {
-      return [];
-    }
-    return Array.from(
-      panelElement.querySelectorAll(
-        "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
-      ),
-    ).filter((entry) => entry instanceof HTMLElement && !entry.hasAttribute("hidden"));
-  }
-
-  function findEntry(kind, entryId) {
-    if (kind === "document") {
-      return documents.find((entry) => entry.id === entryId) ?? null;
-    }
-    if (kind === "note") {
-      return notes.find((entry) => entry.id === entryId) ?? null;
-    }
-    return references.find((entry) => entry.id === entryId) ?? null;
-  }
-
-  function canvasViewportBounds() {
-    const rect =
-      previewLayerElement instanceof HTMLElement
-        ? previewLayerElement.getBoundingClientRect()
-        : canvasElement instanceof HTMLElement
-          ? canvasElement.getBoundingClientRect()
-          : {
-              left: 0,
-              top: 0,
-              right: window.innerWidth,
-              bottom: window.innerHeight,
-            };
-    return {
-      minX: PREVIEW_EDGE_PADDING,
-      maxX: Math.max(PREVIEW_EDGE_PADDING, rect.width - PREVIEW_EDGE_PADDING),
-      minY: PREVIEW_EDGE_PADDING,
-      maxY: Math.max(PREVIEW_EDGE_PADDING, rect.height - PREVIEW_EDGE_PADDING),
-    };
-  }
-
-  function pointerToLayerPoint(event) {
-    const rect =
-      previewLayerElement instanceof HTMLElement
-        ? previewLayerElement.getBoundingClientRect()
-        : {
-            left: 0,
-            top: 0,
-          };
-    return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
-  }
-
-  function clampCardPosition(card, left, top) {
-    const viewport = canvasViewportBounds();
-    return {
-      left: clamp(left, viewport.minX, Math.max(viewport.minX, viewport.maxX - card.offsetWidth)),
-      top: clamp(top, viewport.minY, Math.max(viewport.minY, viewport.maxY - card.offsetHeight)),
-    };
-  }
-
-  function snapCardToCanvasEdges(card) {
-    const viewport = canvasViewportBounds();
-    const minLeft = viewport.minX;
-    const maxLeft = Math.max(viewport.minX, viewport.maxX - card.offsetWidth);
-    const minTop = viewport.minY;
-    const maxTop = Math.max(viewport.minY, viewport.maxY - card.offsetHeight);
-
-    let left = card.offsetLeft;
-    let top = card.offsetTop;
-    const edgeDistances = [
-      { edge: "left", distance: Math.abs(left - minLeft) },
-      { edge: "right", distance: Math.abs(left - maxLeft) },
-      { edge: "top", distance: Math.abs(top - minTop) },
-      { edge: "bottom", distance: Math.abs(top - maxTop) },
-    ];
-    edgeDistances.sort((a, b) => a.distance - b.distance);
-    const nearest = edgeDistances[0] ?? null;
-    if (nearest && nearest.distance <= PREVIEW_SNAP_THRESHOLD) {
-      if (nearest.edge === "left") {
-        left = minLeft;
-      } else if (nearest.edge === "right") {
-        left = maxLeft;
-      } else if (nearest.edge === "top") {
-        top = minTop;
-      } else if (nearest.edge === "bottom") {
-        top = maxTop;
-      }
-    }
-
-    card.style.left = `${left}px`;
-    card.style.top = `${top}px`;
-  }
-
-  function clampAllPreviewCards() {
-    for (const card of previewCards.values()) {
-      if (!(card instanceof HTMLElement)) {
-        continue;
-      }
-      const next = clampCardPosition(card, card.offsetLeft, card.offsetTop);
-      card.style.left = `${next.left}px`;
-      card.style.top = `${next.top}px`;
+    if (!dragGhost.isConnected) {
+      shellElement.append(dragGhost);
     }
   }
 
-  function closePreview(previewId) {
-    const state = previewState.get(previewId);
-    if (state?.abortController) {
-      state.abortController.abort();
+  function setOpen(nextOpen) {
+    open = Boolean(nextOpen);
+    launcherButton.dataset.open = open ? "true" : "false";
+    launcherButton.setAttribute("aria-expanded", open ? "true" : "false");
+    if (shellElement) {
+      shellElement.hidden = !open;
+      shellElement.dataset.open = open ? "true" : "false";
+      shellElement.setAttribute("aria-hidden", open ? "false" : "true");
     }
-    previewState.delete(previewId);
+    if (!open) {
+      hidePreviewNow();
+      setMenuRowKey(null);
+      setActiveRowKey(null);
+    }
+  }
 
-    const card = previewCards.get(previewId);
-    if (!card) {
+  function findItem(key) {
+    if (!key) {
+      return null;
+    }
+    return shelfItems.find((entry) => entry.key === key) ?? null;
+  }
+
+  function clearList(container) {
+    if (!(container instanceof HTMLElement)) {
       return;
     }
-
-    previewCards.delete(previewId);
-    card.remove();
+    container.replaceChildren();
   }
 
-  async function renderPreviewContent(previewId, kind, entry) {
-    const card = previewCards.get(previewId);
-    if (!(card instanceof HTMLElement)) {
+  function renderSubtitle(row, item) {
+    const subtitle = row.querySelector('[data-role="chip-subtitle"]');
+    if (!(subtitle instanceof HTMLElement)) {
       return;
     }
-
-    const content = card.querySelector(".reference-preview-content");
-    if (!(content instanceof HTMLElement)) {
-      return;
-    }
-
-    const current = previewState.get(previewId) ?? {
-      collapsed: false,
-      abortController: null,
-    };
-    if (current.collapsed) {
-      return;
-    }
-    if (current.abortController) {
-      current.abortController.abort();
-    }
-
-    const abortController = new AbortController();
-    previewState.set(previewId, {
-      collapsed: false,
-      abortController,
-    });
-
-    if (kind === "note") {
-      renderNotePreview(content, entry);
-      return;
-    }
-
-    if (kind === "document") {
-      await renderPdfPreview(content, entry, {
-        loadDocumentBytes: onLoadDocumentBytes,
-        signal: abortController.signal,
-      });
-      return;
-    }
-
-    renderReferencePreview(content, entry);
+    subtitle.textContent = kindLabel(item);
   }
 
-  function renderPreviewCard(kind, entry) {
-    if (!(previewLayerElement instanceof HTMLElement)) {
-      return;
-    }
-
-    const previewId = makePreviewId("preview");
-    const card = document.createElement("article");
-    card.className = "reference-preview-card";
-    card.dataset.previewId = previewId;
-    card.dataset.kind = kind;
-    card.dataset.entryId = entry.id;
-
-    const stackDepth = previewCards.size;
-    const viewport = canvasViewportBounds();
-    const initialLeft = clamp(
-      viewport.minX + PREVIEW_BASE_X + stackDepth * PREVIEW_STACK_OFFSET,
-      viewport.minX,
-      Math.max(viewport.minX, viewport.maxX - PREVIEW_MIN_WIDTH),
-    );
-    const initialTop = clamp(
-      viewport.minY + PREVIEW_BASE_Y + stackDepth * PREVIEW_STACK_OFFSET,
-      viewport.minY,
-      Math.max(viewport.minY, viewport.maxY - PREVIEW_MIN_HEIGHT),
-    );
-    card.style.left = `${initialLeft}px`;
-    card.style.top = `${initialTop}px`;
-
-    card.innerHTML = `
-      <header class="reference-preview-card-header" data-drag-handle="true">
-        <strong>${escapeHtml(previewTitle(entry, kind))}</strong>
-        <div class="reference-preview-card-header-actions">
-          <button type="button" data-action="preview-add" data-kind="${escapeHtml(kind)}" data-entry-id="${escapeHtml(entry.id)}">Add</button>
-          <button type="button" data-action="toggle-preview-collapse" data-preview-id="${previewId}" aria-label="Collapse preview">-</button>
-          <button type="button" data-action="close-preview" data-preview-id="${previewId}" aria-label="Close preview">X</button>
-        </div>
-      </header>
-      <div class="reference-preview-card-body" data-preview-body="true">
-        <div class="reference-preview-content"></div>
+  function makeChipRow(item) {
+    const row = document.createElement("article");
+    row.className = "library-chip-row";
+    row.dataset.key = item.key;
+    row.innerHTML = `
+      <button type="button" class="library-chip" data-action="focus-chip">${item.title}</button>
+      <p class="library-chip-subtitle" data-role="chip-subtitle"></p>
+      <div class="library-chip-menu" data-role="chip-menu">
+        <button type="button" data-action="chip-info">Info</button>
+        <button type="button" data-action="chip-rename">Rename</button>
+        <button type="button" data-action="chip-delete">Delete</button>
       </div>
     `;
+    renderSubtitle(row, item);
+    return row;
+  }
 
-    previewLayerElement.append(card);
-    previewCards.set(previewId, card);
-    previewState.set(previewId, {
-      collapsed: false,
-      abortController: null,
+  function renderLists() {
+    rowMap = new Map();
+    clearList(allListElement);
+    clearList(recentListElement);
+    clearList(documentsListElement);
+
+    if (!(allListElement instanceof HTMLElement)) {
+      return;
+    }
+
+    if (shelfItems.length < 1) {
+      const empty = document.createElement("p");
+      empty.className = "library-chip-empty";
+      empty.textContent = "No library items yet.";
+      allListElement.append(empty);
+    } else {
+      for (const item of shelfItems) {
+        const row = makeChipRow(item);
+        rowMap.set(item.key, row);
+        allListElement.append(row);
+      }
+    }
+
+    const recentItems = listRecent(shelfItems);
+    if (recentListElement instanceof HTMLElement) {
+      if (recentItems.length < 1) {
+        const empty = document.createElement("p");
+        empty.className = "library-chip-empty";
+        empty.textContent = "No recent imports.";
+        recentListElement.append(empty);
+      } else {
+        for (const item of recentItems) {
+          const row = makeChipRow(item);
+          rowMap.set(`recent:${item.key}`, row);
+          recentListElement.append(row);
+        }
+      }
+    }
+
+    const chipHeight = 38;
+    const chipGap = 6;
+    const stackHeight = MAX_VISIBLE_CHIPS * chipHeight + (MAX_VISIBLE_CHIPS - 1) * chipGap;
+    allListElement.style.maxHeight = `${stackHeight}px`;
+    if (recentListElement instanceof HTMLElement) {
+      recentListElement.style.maxHeight = `${Math.min(stackHeight, MAX_RECENT * chipHeight + 2 * chipGap)}px`;
+    }
+
+    setActiveRowKey(activeRowKey);
+    setMenuRowKey(menuRowKey);
+  }
+
+  function setActiveRowKey(nextKey) {
+    activeRowKey = nextKey;
+    for (const [key, row] of rowMap.entries()) {
+      setActiveRow(row, key === activeRowKey);
+    }
+  }
+
+  function setMenuRowKey(nextKey) {
+    menuRowKey = nextKey;
+    for (const [key, row] of rowMap.entries()) {
+      setMenuOpen(row, key === menuRowKey);
+    }
+  }
+
+  function positionPreviewForRow(row) {
+    if (!(row instanceof HTMLElement)) {
+      return;
+    }
+    const rect = row.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    let left = rect.left - PREVIEW_WIDTH - PREVIEW_MARGIN;
+    if (left < PREVIEW_MARGIN) {
+      left = rect.right + PREVIEW_MARGIN;
+    }
+    left = clamp(left, PREVIEW_MARGIN, Math.max(PREVIEW_MARGIN, viewportWidth - PREVIEW_WIDTH - PREVIEW_MARGIN));
+
+    const top = clamp(
+      rect.top - 6,
+      PREVIEW_MARGIN,
+      Math.max(PREVIEW_MARGIN, viewportHeight - PREVIEW_HEIGHT - PREVIEW_MARGIN),
+    );
+
+    previewElement.style.left = `${Math.round(left)}px`;
+    previewElement.style.top = `${Math.round(top)}px`;
+  }
+
+  function clearPreviewBody() {
+    const body = previewElement.querySelector('[data-role="preview-body"]');
+    if (body instanceof HTMLElement) {
+      body.replaceChildren();
+    }
+  }
+
+  function hidePreviewNow() {
+    if (previewHideTimer) {
+      window.clearTimeout(previewHideTimer);
+      previewHideTimer = null;
+    }
+    previewKey = null;
+    previewElement.hidden = true;
+    clearPreviewBody();
+    if (previewAbortController) {
+      previewAbortController.abort();
+      previewAbortController = null;
+    }
+  }
+
+  function hidePreviewLater() {
+    if (previewHideTimer) {
+      window.clearTimeout(previewHideTimer);
+    }
+    previewHideTimer = window.setTimeout(() => {
+      previewHideTimer = null;
+      if (!menuRowKey) {
+        hidePreviewNow();
+        setActiveRowKey(null);
+      }
+    }, PREVIEW_HIDE_DELAY_MS);
+  }
+
+  function cancelPendingHide() {
+    if (previewHideTimer) {
+      window.clearTimeout(previewHideTimer);
+      previewHideTimer = null;
+    }
+  }
+
+  function makeThumbCanvas(width, height) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.floor(width));
+    canvas.height = Math.max(1, Math.floor(height));
+    return canvas;
+  }
+
+  function renderNoteThumbnail(container, item) {
+    const previewWrap = document.createElement("div");
+    previewWrap.className = "library-thumbnail library-thumbnail--note";
+    const width = 196;
+    const height = 118;
+    const page = makeThumbCanvas(width, height);
+    const ctx = page.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+    }
+    drawInkStrokes(page, item.raw?.inkStrokes ?? [], {
+      width: item.raw?.size?.width ?? width,
+      height: item.raw?.size?.height ?? height,
     });
-    void renderPreviewContent(previewId, kind, entry);
+    previewWrap.append(page);
+    container.append(previewWrap);
   }
 
-  async function importEntry(kind, entry) {
-    if (!entry) {
-      return;
+  function renderReferenceThumbnail(container, item) {
+    const width = 196;
+    const height = 118;
+    const wrap = document.createElement("div");
+    wrap.className = "library-thumbnail library-thumbnail--snip";
+
+    const imageDataUrl =
+      typeof item.raw?.imageDataUrl === "string" && item.raw.imageDataUrl.trim() ? item.raw.imageDataUrl : null;
+    if (imageDataUrl) {
+      const image = document.createElement("img");
+      image.src = imageDataUrl;
+      image.alt = "Reference preview";
+      image.loading = "eager";
+      wrap.append(image);
+    } else {
+      const textPreview = document.createElement("p");
+      textPreview.className = "library-thumbnail-text";
+      textPreview.textContent = text(item.raw?.textContent, "No snip image");
+      wrap.append(textPreview);
     }
 
-    if (kind === "document") {
-      await onImportDocument?.(entry);
-      return;
-    }
-    if (kind === "note") {
-      await onImportNote?.(entry);
-      return;
-    }
-
-    await onImportReference?.(entry);
+    const inkLayer = makeThumbCanvas(width, height);
+    inkLayer.className = "library-thumbnail-ink";
+    const rawSnipWidth = Number(item.raw?.popupMetadata?.snipDimensions?.widthPx ?? item.raw?.snipDimensions?.widthPx);
+    const rawSnipHeight = Number(item.raw?.popupMetadata?.snipDimensions?.heightPx ?? item.raw?.snipDimensions?.heightPx);
+    drawInkStrokes(inkLayer, item.raw?.inkStrokes ?? [], {
+      width: Number.isFinite(rawSnipWidth) && rawSnipWidth > 0 ? rawSnipWidth : width,
+      height: Number.isFinite(rawSnipHeight) && rawSnipHeight > 0 ? rawSnipHeight : height,
+    });
+    wrap.append(inkLayer);
+    container.append(wrap);
   }
 
-  function togglePreviewCollapsed(previewId) {
-    const card = previewCards.get(previewId);
-    if (!(card instanceof HTMLElement)) {
+  async function renderPdfThumbnail(container, item, signal) {
+    const wrap = document.createElement("div");
+    wrap.className = "library-thumbnail library-thumbnail--pdf";
+
+    if (typeof onLoadDocumentBytes !== "function") {
+      wrap.textContent = "PDF preview unavailable";
+      container.append(wrap);
       return;
     }
 
-    const body = card.querySelector('[data-preview-body="true"]');
-    if (!(body instanceof HTMLElement)) {
+    const bytes = onLoadDocumentBytes(item.raw);
+    if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
+      wrap.textContent = `Missing PDF. Reupload "${item.title}".`;
+      container.append(wrap);
       return;
     }
 
-    const state = previewState.get(previewId) ?? {
-      collapsed: false,
-      abortController: null,
+    const pageCanvas = makeThumbCanvas(196, 118);
+    wrap.append(pageCanvas);
+    container.append(wrap);
+
+    try {
+      const pdfjs = await loadPdfJs();
+      if (signal.aborted) {
+        return;
+      }
+      const doc = await pdfjs.getDocument({ data: bytes }).promise;
+      if (signal.aborted) {
+        return;
+      }
+      const page = await doc.getPage(1);
+      const base = page.getViewport({ scale: 1 });
+      const scale = pageCanvas.width / Math.max(1, base.width);
+      const viewport = page.getViewport({ scale });
+      pageCanvas.width = Math.max(1, Math.floor(viewport.width));
+      pageCanvas.height = Math.max(1, Math.floor(Math.min(viewport.height, 220)));
+      const ctx = pageCanvas.getContext("2d", { alpha: false });
+      if (ctx) {
+        await page.render({
+          canvasContext: ctx,
+          viewport,
+          intent: "display",
+          background: "white",
+        }).promise;
+      }
+    } catch (_error) {
+      wrap.textContent = `Unable to render "${item.title}"`;
+    }
+  }
+
+  async function renderPreviewForItem(item) {
+    const titleElement = previewElement.querySelector('[data-role="preview-title"]');
+    const kindElement = previewElement.querySelector('[data-role="preview-kind"]');
+    const body = previewElement.querySelector('[data-role="preview-body"]');
+    if (!(titleElement instanceof HTMLElement) || !(kindElement instanceof HTMLElement) || !(body instanceof HTMLElement)) {
+      return;
+    }
+
+    titleElement.textContent = item.title;
+    kindElement.textContent = kindLabel(item);
+    body.replaceChildren();
+
+    if (previewAbortController) {
+      previewAbortController.abort();
+    }
+    previewAbortController = new AbortController();
+    const signal = previewAbortController.signal;
+
+    if (item.kind === "note") {
+      renderNoteThumbnail(body, item);
+      return;
+    }
+    if (item.kind === "reference") {
+      renderReferenceThumbnail(body, item);
+      return;
+    }
+    await renderPdfThumbnail(body, item, signal);
+  }
+
+  async function showPreviewForKey(itemKey, row) {
+    cancelPendingHide();
+    const item = findItem(itemKey);
+    if (!item || !(row instanceof HTMLElement)) {
+      return;
+    }
+    setActiveRowKey(row.dataset.key ?? null);
+    previewKey = itemKey;
+    positionPreviewForRow(row);
+    previewElement.hidden = false;
+    await renderPreviewForItem(item);
+  }
+
+  async function runChipAction(item, action) {
+    if (!item || typeof action !== "string") {
+      return;
+    }
+
+    if (action === "chip-info") {
+      if (item.kind === "document") {
+        await onShowDocumentInfo?.(item.raw);
+      } else if (item.kind === "note") {
+        await onShowNoteInfo?.(item.raw);
+      } else {
+        await onShowReferenceInfo?.(item.raw);
+      }
+      return;
+    }
+
+    if (action === "chip-rename") {
+      if (item.kind === "document") {
+        await onRenameDocument?.(item.raw);
+      } else if (item.kind === "note") {
+        await onRenameNote?.(item.raw);
+      } else {
+        await onRenameReference?.(item.raw);
+      }
+      return;
+    }
+
+    if (action === "chip-delete") {
+      if (item.kind === "document") {
+        await onDeleteDocument?.(item.raw);
+      } else if (item.kind === "note") {
+        await onDeleteNote?.(item.raw);
+      } else {
+        await onDeleteReference?.(item.raw);
+      }
+    }
+  }
+
+  async function importAtPointer(item, clientX, clientY) {
+    if (!item) {
+      return;
+    }
+    const screenPoint = { x: clientX, y: clientY };
+    if (item.kind === "document") {
+      await onImportDocument?.(item.raw, { screenPoint, linkStatus: "linked" });
+      await onTouchDocument?.(item.raw);
+      return;
+    }
+    if (item.kind === "note") {
+      await onImportNote?.(item.raw, { screenPoint });
+      await onTouchNote?.(item.raw);
+      return;
+    }
+    await onImportReference?.(item.raw, { screenPoint, linkStatus: "linked" });
+    await onTouchReference?.(item.raw);
+  }
+
+  function beginDrag(item, event) {
+    draggingState = {
+      item,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
     };
-    const nextCollapsed = !state.collapsed;
-
-    if (nextCollapsed && state.abortController) {
-      state.abortController.abort();
-    }
-
-    previewState.set(previewId, {
-      collapsed: nextCollapsed,
-      abortController: nextCollapsed ? null : state.abortController,
-    });
-
-    body.hidden = nextCollapsed;
-    card.dataset.collapsed = nextCollapsed ? "true" : "false";
-
-    const button = card.querySelector(`button[data-action="toggle-preview-collapse"][data-preview-id="${previewId}"]`);
-    if (button instanceof HTMLButtonElement) {
-      button.textContent = nextCollapsed ? "+" : "-";
-      button.setAttribute("aria-label", nextCollapsed ? "Expand preview" : "Collapse preview");
-    }
-
-    if (!nextCollapsed) {
-      const kind = card.dataset.kind === "document" ? "document" : card.dataset.kind === "note" ? "note" : "reference";
-      const entryId = card.dataset.entryId;
-      const entry = entryId ? findEntry(kind, entryId) : null;
-      if (entry) {
-        void renderPreviewContent(previewId, kind, entry);
-      }
-    }
+    previewElement.setPointerCapture?.(event.pointerId);
   }
 
-  async function handleListAction(event) {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) {
-      return;
-    }
-
-    const button = target.closest("button[data-action][data-kind][data-entry-id]");
-    if (!(button instanceof HTMLButtonElement)) {
-      return;
-    }
-
-    const action = button.dataset.action;
-    const kind =
-      button.dataset.kind === "document" ? "document" : button.dataset.kind === "note" ? "note" : "reference";
-    const entryId = button.dataset.entryId;
-    if (!entryId) {
-      return;
-    }
-
-    const entry = findEntry(kind, entryId);
-    if (!entry) {
-      return;
-    }
-
-    if (action === "open-preview") {
-      renderPreviewCard(kind, entry);
-      return;
-    }
-
-    if (action === "import-linked") {
-      await importEntry(kind, entry);
-      return;
-    }
-
-    if (action === "import-frozen") {
-      await importEntry(kind, entry);
-      return;
-    }
-
-    if (action === "rename-entry") {
-      if (kind === "document") {
-        await onRenameDocument?.(entry);
-      } else if (kind === "note") {
-        await onRenameNote?.(entry);
-      } else {
-        await onRenameReference?.(entry);
-      }
-      return;
-    }
-
-    if (action === "delete-entry") {
-      if (kind === "document") {
-        await onDeleteDocument?.(entry);
-      } else if (kind === "note") {
-        await onDeleteNote?.(entry);
-      } else {
-        await onDeleteReference?.(entry);
-      }
-    }
+  function updateDragGhostPosition(clientX, clientY) {
+    const left = clamp(clientX + 14, 8, Math.max(8, window.innerWidth - 170));
+    const top = clamp(clientY + 14, 8, Math.max(8, window.innerHeight - 90));
+    dragGhost.style.left = `${Math.round(left)}px`;
+    dragGhost.style.top = `${Math.round(top)}px`;
   }
 
-  async function handlePreviewAction(event) {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) {
+  function stopDrag(pointerId = null) {
+    if (!draggingState) {
       return;
     }
-
-    const closeButtonCandidate = target.closest("button[data-action='close-preview'][data-preview-id]");
-    if (closeButtonCandidate instanceof HTMLButtonElement) {
-      const previewId = closeButtonCandidate.dataset.previewId;
-      if (previewId) {
-        closePreview(previewId);
-      }
+    if (pointerId !== null && draggingState.pointerId !== pointerId) {
       return;
     }
-
-    const collapseButtonCandidate = target.closest("button[data-action='toggle-preview-collapse'][data-preview-id]");
-    if (collapseButtonCandidate instanceof HTMLButtonElement) {
-      const previewId = collapseButtonCandidate.dataset.previewId;
-      if (previewId) {
-        togglePreviewCollapsed(previewId);
-      }
-      return;
-    }
-
-    const actionButton = target.closest("button[data-action][data-kind][data-entry-id]");
-    if (!(actionButton instanceof HTMLButtonElement)) {
-      return;
-    }
-
-    const action = actionButton.dataset.action;
-    if (action !== "preview-add") {
-      return;
-    }
-
-    const kind =
-      actionButton.dataset.kind === "document"
-        ? "document"
-        : actionButton.dataset.kind === "note"
-          ? "note"
-          : "reference";
-    const entryId = actionButton.dataset.entryId;
-    if (!entryId) {
-      return;
-    }
-
-    const entry = findEntry(kind, entryId);
-    if (!entry) {
-      return;
-    }
-
-    await importEntry(kind, entry);
+    previewElement.releasePointerCapture?.(draggingState.pointerId);
+    draggingState = null;
+    dragGhost.hidden = true;
   }
 
-  function startPreviewDrag(event) {
+  function onPreviewPointerDown(event) {
     if (event.pointerType === "mouse" && event.button !== 0) {
       return;
     }
+    const item = findItem(previewKey);
+    if (!item) {
+      return;
+    }
+    beginDrag(item, event);
+    event.preventDefault();
+    event.stopPropagation();
+  }
 
+  function onPreviewPointerMove(event) {
+    if (!draggingState || draggingState.pointerId !== event.pointerId) {
+      return;
+    }
+    const dx = event.clientX - draggingState.startX;
+    const dy = event.clientY - draggingState.startY;
+    const distance = Math.hypot(dx, dy);
+    if (!draggingState.active && distance >= DRAG_THRESHOLD_PX) {
+      draggingState.active = true;
+      dragGhost.hidden = false;
+      const header = dragGhost.querySelector("header");
+      if (header instanceof HTMLElement) {
+        header.textContent = draggingState.item.title;
+      }
+    }
+    if (!draggingState.active) {
+      return;
+    }
+    updateDragGhostPosition(event.clientX, event.clientY);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function onPreviewPointerUp(event) {
+    if (!draggingState || draggingState.pointerId !== event.pointerId) {
+      return;
+    }
+    const committed = draggingState.active;
+    const item = draggingState.item;
+    stopDrag(event.pointerId);
+    if (committed) {
+      void importAtPointer(item, event.clientX, event.clientY).then(() => {
+        if (typeof nowIso === "function") {
+          item.lastUsedAt = timestamp(nowIso());
+        }
+      });
+      hidePreviewNow();
+      setActiveRowKey(null);
+      setMenuRowKey(null);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function clearLongPress() {
+    if (!longPressState) {
+      return;
+    }
+    if (longPressState.timer) {
+      window.clearTimeout(longPressState.timer);
+    }
+    longPressState = null;
+  }
+
+  function onListPointerDown(event) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
       return;
     }
-    if (target.closest("button")) {
+    const chip = target.closest("button[data-action='focus-chip']");
+    if (!(chip instanceof HTMLButtonElement)) {
       return;
     }
-
-    const header = target.closest("[data-drag-handle='true']");
-    if (!(header instanceof HTMLElement)) {
+    const row = chip.closest(".library-chip-row");
+    if (!(row instanceof HTMLElement)) {
       return;
     }
-
-    const card = header.closest(".reference-preview-card");
-    if (!(card instanceof HTMLElement)) {
+    const rowKey = row.dataset.key;
+    if (!rowKey) {
       return;
     }
+    const itemKey = rowKey.startsWith("recent:") ? rowKey.slice("recent:".length) : rowKey;
 
-    const point = pointerToLayerPoint(event);
-    dragState = {
-      card,
+    clearLongPress();
+    longPressState = {
       pointerId: event.pointerId,
-      offsetX: point.x - card.offsetLeft,
-      offsetY: point.y - card.offsetTop,
+      startX: event.clientX,
+      startY: event.clientY,
+      itemKey,
+      row,
+      opened: false,
+      timer: window.setTimeout(() => {
+        if (!longPressState || longPressState.itemKey !== itemKey) {
+          return;
+        }
+        longPressState.opened = true;
+        setMenuRowKey(row.dataset.key ?? null);
+        void showPreviewForKey(itemKey, row);
+      }, LONG_PRESS_MS),
     };
+  }
 
-    // Ensure preview dragging wins over any global pointer handlers.
-    event.preventDefault();
-    event.stopPropagation();
-
-    if (card.setPointerCapture) {
-      card.setPointerCapture(event.pointerId);
+  function onListPointerMove(event) {
+    if (!longPressState || longPressState.pointerId !== event.pointerId) {
+      return;
+    }
+    const dx = event.clientX - longPressState.startX;
+    const dy = event.clientY - longPressState.startY;
+    if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX && !longPressState.opened) {
+      clearLongPress();
     }
   }
 
-  function movePreviewDrag(event) {
-    if (!dragState || dragState.pointerId !== event.pointerId) {
+  function onListPointerUp(event) {
+    if (!longPressState || longPressState.pointerId !== event.pointerId) {
       return;
     }
-
-    const card = dragState.card;
-    const point = pointerToLayerPoint(event);
-    const nextPosition = clampCardPosition(card, point.x - dragState.offsetX, point.y - dragState.offsetY);
-
-    card.style.left = `${nextPosition.left}px`;
-    card.style.top = `${nextPosition.top}px`;
-    event.preventDefault();
-    event.stopPropagation();
+    const opened = longPressState.opened;
+    clearLongPress();
+    if (opened) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   }
 
-  function endPreviewDrag(event) {
-    if (!dragState || dragState.pointerId !== event.pointerId) {
+  function onListPointerEnter(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
       return;
     }
-
-    if (dragState.card.releasePointerCapture && dragState.card.hasPointerCapture(event.pointerId)) {
-      dragState.card.releasePointerCapture(event.pointerId);
+    const row = target.closest(".library-chip-row");
+    if (!(row instanceof HTMLElement)) {
+      return;
     }
-    snapCardToCanvasEdges(dragState.card);
-    event.preventDefault();
-    event.stopPropagation();
-    dragState = null;
+    const rowKey = row.dataset.key;
+    if (!rowKey) {
+      return;
+    }
+    const itemKey = rowKey.startsWith("recent:") ? rowKey.slice("recent:".length) : rowKey;
+    void showPreviewForKey(itemKey, row);
   }
 
-  function closeOnBackdrop(event) {
-    if (!overlayOpen || !(overlayElement instanceof HTMLElement)) {
+function onListPointerLeave(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const row = target.closest(".library-chip-row");
+  if (!(row instanceof HTMLElement)) {
+    return;
+  }
+  const nextTarget = event.relatedTarget;
+  if (nextTarget instanceof Node && (row.contains(nextTarget) || previewElement.contains(nextTarget))) {
+    return;
+  }
+  hidePreviewLater();
+}
+
+  function onListClick(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
       return;
     }
 
+    const actionButton = target.closest("button[data-action]");
+    if (!(actionButton instanceof HTMLButtonElement)) {
+      return;
+    }
+    const action = actionButton.dataset.action;
+
+    const row = actionButton.closest(".library-chip-row");
+    if (!(row instanceof HTMLElement)) {
+      return;
+    }
+    const rowKey = row.dataset.key;
+    if (!rowKey) {
+      return;
+    }
+    const itemKey = rowKey.startsWith("recent:") ? rowKey.slice("recent:".length) : rowKey;
+    const item = findItem(itemKey);
+    if (!item) {
+      return;
+    }
+
+    if (action === "focus-chip") {
+      void showPreviewForKey(itemKey, row);
+      setMenuRowKey(null);
+      return;
+    }
+
+    if (action === "chip-info" || action === "chip-rename" || action === "chip-delete") {
+      void runChipAction(item, action).then(() => {
+        setMenuRowKey(null);
+      });
+    }
+  }
+
+  function onListContextMenu(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const row = target.closest(".library-chip-row");
+    if (!(row instanceof HTMLElement)) {
+      return;
+    }
+    const rowKey = row.dataset.key;
+    if (!rowKey) {
+      return;
+    }
+    const itemKey = rowKey.startsWith("recent:") ? rowKey.slice("recent:".length) : rowKey;
+    setMenuRowKey(rowKey);
+    void showPreviewForKey(itemKey, row);
+    event.preventDefault();
+  }
+
+  function onWindowPointerDown(event) {
     const target = event.target;
     if (!(target instanceof Node)) {
       return;
     }
-
-    if (panelElement instanceof HTMLElement && panelElement.contains(target)) {
+    if (previewElement.contains(target)) {
       return;
     }
-
-    if (overlayElement.contains(target)) {
-      setOverlayOpen(false);
+    if (panelRoot instanceof HTMLElement && panelRoot.contains(target)) {
+      return;
     }
+    setMenuRowKey(null);
+    hidePreviewNow();
+    setActiveRowKey(null);
   }
 
-  const onLauncherClick = () => {
-    setOverlayOpen(!overlayOpen);
-  };
-
-  const onCloseClick = () => {
-    setOverlayOpen(false);
-  };
-
-  const onReferencesTabClick = () => {
-    setTab("references");
-  };
-
-  const onDocumentsTabClick = () => {
-    setTab("documents");
-  };
-
-  const onNotesTabClick = () => {
-    setTab("notes");
-  };
-
-  const onReferencesListClick = (event) => {
-    void handleListAction(event);
-  };
-
-  const onDocumentsListClick = (event) => {
-    void handleListAction(event);
-  };
-
-  const onNotesListClick = (event) => {
-    void handleListAction(event);
-  };
-
-  const onPreviewLayerClick = (event) => {
-    void handlePreviewAction(event);
-  };
-
-  const onWindowKeyDown = (event) => {
-    if (overlayOpen && event.key === "Tab") {
-      const focusables = getOverlayFocusables();
-      if (focusables.length > 0) {
-        const active = document.activeElement;
-        const currentIndex = focusables.findIndex((entry) => entry === active);
-        const nextIndex = event.shiftKey
-          ? currentIndex <= 0
-            ? focusables.length - 1
-            : currentIndex - 1
-          : currentIndex >= focusables.length - 1
-            ? 0
-            : currentIndex + 1;
-        event.preventDefault();
-        event.stopPropagation();
-        focusables[nextIndex]?.focus();
-        return;
-      }
-    }
-
+  function onWindowKeyDown(event) {
     if (event.key === "Escape") {
-      if (overlayOpen) {
-        event.preventDefault();
-        event.stopPropagation();
-        setOverlayOpen(false);
-        return;
-      }
-
-      const previewIds = Array.from(previewCards.keys());
-      const lastPreviewId = previewIds[previewIds.length - 1] ?? null;
-      if (lastPreviewId) {
-        closePreview(lastPreviewId);
+      setMenuRowKey(null);
+      hidePreviewNow();
+      setActiveRowKey(null);
+      if (open) {
+        setOpen(false);
       }
     }
-  };
-
-  const onWindowResize = () => {
-    clampAllPreviewCards();
-  };
-
-  function wireStaticEvents() {
-    bind(launcherButton, "click", onLauncherClick);
-    bind(closeButton, "click", onCloseClick);
-    bind(overlayElement, "pointerdown", closeOnBackdrop);
-    bind(referencesTabButton, "click", onReferencesTabClick);
-    bind(notesTabButton, "click", onNotesTabClick);
-    bind(documentsTabButton, "click", onDocumentsTabClick);
-    bind(referencesListElement, "click", onReferencesListClick);
-    bind(notesListElement, "click", onNotesListClick);
-    bind(documentsListElement, "click", onDocumentsListClick);
-    bind(previewLayerElement, "click", onPreviewLayerClick);
-    bind(previewLayerElement, "pointerdown", startPreviewDrag);
-    bind(previewLayerElement, "pointermove", movePreviewDrag);
-    bind(previewLayerElement, "pointerup", endPreviewDrag);
-    bind(previewLayerElement, "pointercancel", endPreviewDrag);
-    bind(window, "keydown", onWindowKeyDown);
-    bind(window, "resize", onWindowResize, { passive: true });
   }
 
-  wireStaticEvents();
-  setOverlayOpen(false);
-  setTab("references");
+  function wireEvents() {
+    appendFloatingElements();
+
+    bind(launcherButton, "click", () => {
+      setOpen(!open);
+    });
+
+    bind(previewElement, "pointerenter", cancelPendingHide);
+    bind(previewElement, "pointerleave", hidePreviewLater);
+    bind(previewElement, "pointerdown", onPreviewPointerDown);
+    bind(previewElement, "pointermove", onPreviewPointerMove);
+    bind(previewElement, "pointerup", onPreviewPointerUp);
+    bind(previewElement, "pointercancel", onPreviewPointerUp);
+
+    bind(allListElement, "pointerdown", onListPointerDown);
+    bind(allListElement, "pointermove", onListPointerMove);
+    bind(allListElement, "pointerup", onListPointerUp);
+    bind(allListElement, "pointercancel", onListPointerUp);
+    bind(allListElement, "pointerover", onListPointerEnter);
+    bind(allListElement, "pointerout", onListPointerLeave);
+    bind(allListElement, "click", onListClick);
+    bind(allListElement, "contextmenu", onListContextMenu);
+
+    bind(recentListElement, "pointerdown", onListPointerDown);
+    bind(recentListElement, "pointermove", onListPointerMove);
+    bind(recentListElement, "pointerup", onListPointerUp);
+    bind(recentListElement, "pointercancel", onListPointerUp);
+    bind(recentListElement, "pointerover", onListPointerEnter);
+    bind(recentListElement, "pointerout", onListPointerLeave);
+    bind(recentListElement, "click", onListClick);
+    bind(recentListElement, "contextmenu", onListContextMenu);
+
+    bind(window, "pointerdown", onWindowPointerDown, true);
+    bind(window, "keydown", onWindowKeyDown);
+    bind(window, "resize", () => {
+      if (!previewKey) {
+        return;
+      }
+      const row = rowMap.get(previewKey) ?? rowMap.get(`recent:${previewKey}`);
+      if (row instanceof HTMLElement) {
+        positionPreviewForRow(row);
+      }
+    }, { passive: true });
+  }
+
+  wireEvents();
+  setOpen(false);
 
   return {
-    render({ references: nextReferences = [], notes: nextNotes = [], documents: nextDocuments = [] } = {}) {
-      references = asArray(nextReferences);
-      notes = asArray(nextNotes);
-      documents = asArray(nextDocuments);
-
-      if (referencesCountElement instanceof HTMLElement) {
-        referencesCountElement.textContent = safeCountLabel(references.length, "reference", "references");
-      }
-
-      if (documentsCountElement instanceof HTMLElement) {
-        documentsCountElement.textContent = safeCountLabel(documents.length, "document", "documents");
-      }
-      if (notesCountElement instanceof HTMLElement) {
-        notesCountElement.textContent = safeCountLabel(notes.length, "note", "notes");
-      }
-
-      if (referencesListElement instanceof HTMLElement) {
-        if (references.length < 1) {
-          referencesListElement.innerHTML = "<p class='reference-manager-empty'>No notebook references yet.</p>";
-        } else {
-          referencesListElement.innerHTML = references
-            .map((entry) =>
-              rowTemplate({
-                kind: "reference",
-                id: entry.id,
-                title: text(entry.title, "Reference"),
-                subtitle: text(entry.sourceLabel, "Notebook Reference"),
-                linkedDefaultLabel: "Linked",
-              }),
-            )
-            .join("");
-        }
-      }
-
-      if (documentsListElement instanceof HTMLElement) {
-        if (documents.length < 1) {
-          documentsListElement.innerHTML = "<p class='reference-manager-empty'>No notebook documents yet.</p>";
-        } else {
-          documentsListElement.innerHTML = documents
-            .map((entry) =>
-              rowTemplate({
-                kind: "document",
-                id: entry.id,
-                title: text(entry.title, "Document"),
-                subtitle: text(entry.fileName, "document.pdf"),
-                linkedDefaultLabel: "Place Linked",
-              }),
-            )
-            .join("");
-        }
-      }
-
-      if (notesListElement instanceof HTMLElement) {
-        if (notes.length < 1) {
-          notesListElement.innerHTML = "<p class='reference-manager-empty'>No notebook notes yet.</p>";
-        } else {
-          notesListElement.innerHTML = notes
-            .map((entry) =>
-              rowTemplate({
-                kind: "note",
-                id: entry.id,
-                title: text(entry.title, "Notes"),
-                subtitle: text(entry.metadata?.note, "Notebook Note"),
-                linkedDefaultLabel: "Place",
-              }),
-            )
-            .join("");
-        }
-      }
+    render({ references = [], notes = [], documents = [] } = {}) {
+      shelfItems = toShelfItems({ references, notes, documents });
+      renderLists();
     },
 
-    open({ tab = "references" } = {}) {
-      setTab(tab);
-      setOverlayOpen(true);
+    open() {
+      setOpen(true);
     },
 
     close() {
-      setOverlayOpen(false);
+      setOpen(false);
     },
 
-    toggle({ tab = null } = {}) {
-      if (tab) {
-        setTab(tab);
-      }
-      setOverlayOpen(!overlayOpen);
+    toggle() {
+      setOpen(!open);
     },
 
     isOpen() {
-      return overlayOpen;
+      return open;
     },
 
     dispose() {
-      for (const previewId of previewCards.keys()) {
-        closePreview(previewId);
-      }
+      clearLongPress();
+      hidePreviewNow();
+      stopDrag();
       for (const disposeEvent of eventDisposers.splice(0, eventDisposers.length)) {
         disposeEvent();
       }
+      previewElement.remove();
+      dragGhost.remove();
     },
   };
 }

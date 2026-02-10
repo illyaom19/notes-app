@@ -79,6 +79,8 @@ function normalizeSource(candidate) {
     inkStrokes: normalizeInkSnapshot(source.inkStrokes),
     createdAt: typeof source.createdAt === "string" ? source.createdAt : nowIso(),
     updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : nowIso(),
+    lastUsedAt:
+      typeof source.lastUsedAt === "string" && source.lastUsedAt.trim() ? source.lastUsedAt : null,
   };
 }
 
@@ -143,6 +145,7 @@ function cloneSource(entry) {
     inkStrokes: normalizeInkSnapshot(entry.inkStrokes),
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
+    lastUsedAt: entry.lastUsedAt ?? null,
   };
 }
 
@@ -346,6 +349,7 @@ export function createNotebookDocumentLibraryStore({
       } else {
         nextDocuments = [...notebook.documents];
         next.createdAt = nextDocuments[existingIndex].createdAt;
+        next.lastUsedAt = normalized.lastUsedAt ?? nextDocuments[existingIndex].lastUsedAt ?? null;
         nextDocuments[existingIndex] = next;
       }
 
@@ -482,6 +486,41 @@ export function createNotebookDocumentLibraryStore({
       state = nextState;
       syncNotebookAssetReferences(notebookId, state.notebooks[notebookId]);
       return true;
+    },
+
+    touchDocument(notebookId, sourceDocumentId) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof sourceDocumentId !== "string" || !sourceDocumentId.trim()) {
+        return null;
+      }
+      const index = notebook.documents.findIndex((entry) => entry.id === sourceDocumentId);
+      if (index < 0) {
+        return null;
+      }
+
+      const nextDocuments = [...notebook.documents];
+      const updated = {
+        ...nextDocuments[index],
+        lastUsedAt: nowIso(),
+      };
+      nextDocuments[index] = updated;
+
+      const nextState = {
+        ...state,
+        notebooks: {
+          ...state.notebooks,
+          [notebookId]: {
+            ...notebook,
+            documents: nextDocuments,
+          },
+        },
+      };
+      if (!persist(nextState)) {
+        return null;
+      }
+      state = nextState;
+      syncNotebookAssetReferences(notebookId, state.notebooks[notebookId]);
+      return cloneSource(updated);
     },
 
     deleteNotebook(notebookId) {
