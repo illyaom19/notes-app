@@ -109,13 +109,22 @@ export class InkEngine {
   undo() {
     if (this.store.undo()) {
       this._afterStoreMutation();
+      this._requestFastRefresh();
     }
   }
 
   redo() {
     if (this.store.redo()) {
       this._afterStoreMutation();
+      this._requestFastRefresh();
     }
+  }
+
+  _requestFastRefresh() {
+    if (!this.runtime || typeof this.runtime.requestRender !== "function") {
+      return;
+    }
+    this.runtime.requestRender({ continuousMs: 220 });
   }
 
   getTool() {
