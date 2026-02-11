@@ -89,25 +89,12 @@ export function createWidgetCreationController({
   const layoutByType = new Map(radialLayoutEntries.map((entry) => [entry.type, entry]));
   const menuButtons = Array.from(menuElement.querySelectorAll("button[data-create-type]"))
     .filter((button) => button instanceof HTMLButtonElement);
-  let hubTitle = menuElement.querySelector('[data-role="radial-hub-title"]');
-  let hubHint = menuElement.querySelector('[data-role="radial-hub-hint"]');
-
-  if (!(hubTitle instanceof HTMLElement) || !(hubHint instanceof HTMLElement)) {
-    const hub = document.createElement("div");
+  let hub = menuElement.querySelector(".creation-menu__hub");
+  if (!(hub instanceof HTMLElement)) {
+    hub = document.createElement("div");
     hub.className = "creation-menu__hub";
     hub.setAttribute("aria-hidden", "true");
-    const hubTitleNode = document.createElement("strong");
-    hubTitleNode.className = "creation-menu__hub-title";
-    hubTitleNode.dataset.role = "radial-hub-title";
-    hubTitleNode.textContent = "Create Widget";
-    const hubHintNode = document.createElement("span");
-    hubHintNode.className = "creation-menu__hub-hint";
-    hubHintNode.dataset.role = "radial-hub-hint";
-    hubHintNode.textContent = "Slide to select";
-    hub.append(hubTitleNode, hubHintNode);
     menuElement.append(hub);
-    hubTitle = hubTitleNode;
-    hubHint = hubHintNode;
   }
 
   const radialSegments = menuButtons.map((button, index) => {
@@ -119,10 +106,7 @@ export function createWidgetCreationController({
     const id = layoutEntry?.id ?? createType;
     const angleDeg = Number.isFinite(layoutEntry?.angleDeg) ? layoutEntry.angleDeg : fallbackAngle;
 
-    button.innerHTML = [
-      `<span class="creation-menu__segment-icon">${iconMarkup(icon)}</span>`,
-      `<span class="creation-menu__segment-label">${label}</span>`,
-    ].join("");
+    button.innerHTML = `<span class="creation-menu__segment-icon">${iconMarkup(icon)}</span>`;
     button.dataset.segmentId = id;
     button.ariaLabel = label;
 
@@ -165,10 +149,6 @@ export function createWidgetCreationController({
     menuElement.dataset.activeSegment = "";
     menuElement.style.left = "-9999px";
     menuElement.style.top = "-9999px";
-
-    if (hubHint instanceof HTMLElement) {
-      hubHint.textContent = "Slide to select";
-    }
 
     for (const segment of radialSegments) {
       segment.button.dataset.active = "false";
@@ -260,14 +240,7 @@ export function createWidgetCreationController({
     return { segment: nearest.segment, isSnap: true };
   }
 
-  function setCenterHint(text) {
-    if (!(hubHint instanceof HTMLElement)) {
-      return;
-    }
-    hubHint.textContent = text;
-  }
-
-  function setActiveType(type, { isSnap = false } = {}) {
+  function setActiveType(type) {
     activeCreateType = type ?? null;
     const activeSegment = radialSegments.find((segment) => segment.type === activeCreateType) ?? null;
     menuElement.dataset.activeSegment = activeSegment?.id ?? "";
@@ -276,12 +249,6 @@ export function createWidgetCreationController({
     for (const segment of radialSegments) {
       segment.button.dataset.active = segment.type === activeCreateType ? "true" : "false";
     }
-
-    if (activeSegment) {
-      setCenterHint(`${isSnap ? "Snap: " : ""}Release to create ${activeSegment.label}`);
-      return;
-    }
-    setCenterHint("Release to cancel");
   }
 
   function openMenuAt({ clientX, clientY, anchor, sourceWidgetId, pointerId }) {
@@ -311,7 +278,7 @@ export function createWidgetCreationController({
       radialGeometry = computeRadialGeometry();
       layoutRadialSegments();
       const initial = resolveSegmentAtClientPoint(clientX, clientY, { allowSnap: true });
-      setActiveType(initial?.segment?.type ?? null, { isSnap: Boolean(initial?.isSnap) });
+      setActiveType(initial?.segment?.type ?? null);
     });
   }
 
@@ -427,7 +394,7 @@ export function createWidgetCreationController({
 
       if (menuElement.dataset.open === "true") {
         const resolved = resolveSegmentAtClientPoint(event.clientX, event.clientY, { allowSnap: true });
-        setActiveType(resolved?.segment?.type ?? null, { isSnap: Boolean(resolved?.isSnap) });
+        setActiveType(resolved?.segment?.type ?? null);
         return true;
       }
 
