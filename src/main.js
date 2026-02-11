@@ -206,6 +206,9 @@ let suggestionAnalysisTimer = null;
 let suggestionAnalysisInFlight = false;
 let suggestionAnalysisQueued = false;
 let libraryDropDragState = null;
+let viewportDockDragState = null;
+let viewportDockGlowLeft = null;
+let viewportDockGlowRight = null;
 let storageUsageRefreshTimer = null;
 let storageUsageRefreshInFlight = false;
 let storageUsageRefreshQueued = false;
@@ -232,6 +235,11 @@ let onboardingOverlay = null;
 let onboardingRefreshTimer = null;
 let onboardingHintVisibleId = null;
 const failedLocalStorageKeys = new Set();
+const VIEWPORT_DOCK_EDGE_ZONE_PX = 48;
+const VIEWPORT_DOCK_HOLD_MS = 220;
+const VIEWPORT_DOCK_MARGIN_PX = 10;
+const VIEWPORT_DOCK_META_VERSION = 1;
+const VIEWPORT_DOCK_EPSILON_WORLD = 0.001;
 const onboardingRuntimeSignals = {
   searchOpened: false,
   peekActivated: false,
@@ -943,6 +951,7 @@ registry.onModuleLoaded((type) => {
 const runtime = new CanvasRuntime({
   canvas,
   onCameraChange: ({ x, y, zoom }) => {
+    applyViewportDockToAllWidgets();
     if (cameraOutput) {
       cameraOutput.textContent = `x=${x.toFixed(1)}, y=${y.toFixed(1)}, zoom=${zoom.toFixed(2)}`;
     }
@@ -999,6 +1008,11 @@ function syncCanvasViewportNow() {
   }
 
   runtime.resizeToViewport();
+  const dockedMoved = applyViewportDockToAllWidgets();
+  if (dockedMoved) {
+    runtime.requestRender({ continuousMs: 80 });
+  }
+  syncViewportDockGlowLayout();
   syncReferenceManagerPlacement();
   renderSectionMinimap();
 }
@@ -2822,6 +2836,430 @@ function toggleWidgetPinFromContextMenu(widget) {
   return true;
 }
 
+function ensureViewportDockGlowElements() {
+  if (!(document.body instanceof HTMLElement)) {
+    return false;
+  }
+  if (!(viewportDockGlowLeft instanceof HTMLElement)) {
+    viewportDockGlowLeft = document.createElement("div");
+    viewportDockGlowLeft.className = "viewport-dock-glow viewport-dock-glow--left";
+    viewportDockGlowLeft.hidden = true;
+    document.body.append(viewportDockGlowLeft);
+  }
+  if (!(viewportDockGlowRight instanceof HTMLElement)) {
+    viewportDockGlowRight = document.createElement("div");
+    viewportDockGlowRight.className = "viewport-dock-glow viewport-dock-glow--right";
+    viewportDockGlowRight.hidden = true;
+    document.body.append(viewportDockGlowRight);
+  }
+  return true;
+}
+
+function resolveCanvasViewportRect() {
+  if (!(canvas instanceof HTMLCanvasElement)) {
+    return null;
+  }
+  const rect = canvas.getBoundingClientRect();
+  if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width < 1 || rect.height < 1) {
+    return null;
+  }
+  return rect;
+}
+
+function syncViewportDockGlowLayout() {
+  if (!ensureViewportDockGlowElements()) {
+    return;
+  }
+  const rect = resolveCanvasViewportRect();
+  if (!rect) {
+    return;
+  }
+  for (const element of [viewportDockGlowLeft, viewportDockGlowRight]) {
+    if (!(element instanceof HTMLElement)) {
+      continue;
+    }
+    element.style.top = `${Math.round(rect.top)}px`;
+    element.style.height = `${Math.round(rect.height)}px`;
+    element.style.width = `${VIEWPORT_DOCK_EDGE_ZONE_PX}px`;
+  }
+  if (viewportDockGlowLeft instanceof HTMLElement) {
+    viewportDockGlowLeft.style.left = `${Math.round(rect.left)}px`;
+  }
+  if (viewportDockGlowRight instanceof HTMLElement) {
+    viewportDockGlowRight.style.left = `${Math.round(rect.right - VIEWPORT_DOCK_EDGE_ZONE_PX)}px`;
+  }
+}
+
+function setViewportDockGlowState({
+  active = false,
+  overLeft = false,
+  overRight = false,
+  armedLeft = false,
+  armedRight = false,
+} = {}) {
+  if (!ensureViewportDockGlowElements()) {
+    return;
+  }
+  syncViewportDockGlowLayout();
+  for (const element of [viewportDockGlowLeft, viewportDockGlowRight]) {
+    if (!(element instanceof HTMLElement)) {
+      continue;
+    }
+    element.hidden = !active;
+    element.dataset.active = active ? "true" : "false";
+  }
+  if (viewportDockGlowLeft instanceof HTMLElement) {
+    viewportDockGlowLeft.dataset.over = overLeft ? "true" : "false";
+    viewportDockGlowLeft.dataset.armed = armedLeft ? "true" : "false";
+  }
+  if (viewportDockGlowRight instanceof HTMLElement) {
+    viewportDockGlowRight.dataset.over = overRight ? "true" : "false";
+    viewportDockGlowRight.dataset.armed = armedRight ? "true" : "false";
+  }
+}
+
+function clearViewportDockHoldTimer(state = viewportDockDragState) {
+  if (!state || !Number.isFinite(state.holdTimer)) {
+    return;
+  }
+  window.clearTimeout(state.holdTimer);
+  state.holdTimer = null;
+}
+
+function getViewportDockSideFromPointer(clientX, clientY) {
+  const rect = resolveCanvasViewportRect();
+  if (!rect) {
+    return null;
+  }
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null;
+  }
+  if (clientY < rect.top || clientY > rect.bottom) {
+    return null;
+  }
+  if (clientX <= rect.left + VIEWPORT_DOCK_EDGE_ZONE_PX) {
+    return "left";
+  }
+  if (clientX >= rect.right - VIEWPORT_DOCK_EDGE_ZONE_PX) {
+    return "right";
+  }
+  return null;
+}
+
+function normalizeViewportDockMetadata(candidate) {
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+  const side = candidate.side === "right" ? "right" : candidate.side === "left" ? "left" : null;
+  if (!side) {
+    return null;
+  }
+  const offsetTopPx = Math.max(0, Number(candidate.offsetTopPx) || 0);
+  const widthPx = Math.max(40, Number(candidate.widthPx) || 0);
+  const heightPx = Math.max(40, Number(candidate.heightPx) || 0);
+  return {
+    side,
+    offsetTopPx,
+    widthPx,
+    heightPx,
+    version: VIEWPORT_DOCK_META_VERSION,
+  };
+}
+
+function isWidgetViewportDocked(widget) {
+  return Boolean(normalizeViewportDockMetadata(widget?.metadata?.viewportDock));
+}
+
+function applyViewportDockToWidget(widget, { camera = runtime.camera, viewportRect = resolveCanvasViewportRect() } = {}) {
+  if (!widget || !camera || !viewportRect) {
+    return false;
+  }
+  const dock = normalizeViewportDockMetadata(widget.metadata?.viewportDock);
+  if (!dock) {
+    return false;
+  }
+
+  const usableWidth = Math.max(48, viewportRect.width - VIEWPORT_DOCK_MARGIN_PX * 2);
+  const usableHeight = Math.max(48, viewportRect.height - VIEWPORT_DOCK_MARGIN_PX * 2);
+  const widthPx = Math.min(dock.widthPx, usableWidth);
+  const heightPx = Math.min(dock.heightPx, usableHeight);
+  const yPx = Math.min(
+    Math.max(dock.offsetTopPx, VIEWPORT_DOCK_MARGIN_PX),
+    Math.max(VIEWPORT_DOCK_MARGIN_PX, viewportRect.height - heightPx - VIEWPORT_DOCK_MARGIN_PX),
+  );
+  const xPx =
+    dock.side === "left"
+      ? VIEWPORT_DOCK_MARGIN_PX
+      : Math.max(VIEWPORT_DOCK_MARGIN_PX, viewportRect.width - widthPx - VIEWPORT_DOCK_MARGIN_PX);
+
+  const zoom = Math.max(0.25, camera.zoom);
+  const nextWorld = camera.screenToWorld(xPx, yPx);
+  const nextWidthWorld = widthPx / zoom;
+  const nextHeightWorld = heightPx / zoom;
+
+  let changed = false;
+  if (
+    !Number.isFinite(widget.position?.x) ||
+    Math.abs(widget.position.x - nextWorld.x) > VIEWPORT_DOCK_EPSILON_WORLD
+  ) {
+    widget.position.x = nextWorld.x;
+    changed = true;
+  }
+  if (
+    !Number.isFinite(widget.position?.y) ||
+    Math.abs(widget.position.y - nextWorld.y) > VIEWPORT_DOCK_EPSILON_WORLD
+  ) {
+    widget.position.y = nextWorld.y;
+    changed = true;
+  }
+  if (
+    !Number.isFinite(widget.size?.width) ||
+    Math.abs(widget.size.width - nextWidthWorld) > VIEWPORT_DOCK_EPSILON_WORLD
+  ) {
+    widget.size.width = nextWidthWorld;
+    changed = true;
+  }
+  if (
+    !Number.isFinite(widget.size?.height) ||
+    Math.abs(widget.size.height - nextHeightWorld) > VIEWPORT_DOCK_EPSILON_WORLD
+  ) {
+    widget.size.height = nextHeightWorld;
+    changed = true;
+  }
+
+  const normalizedDock = {
+    side: dock.side,
+    offsetTopPx: yPx,
+    widthPx,
+    heightPx,
+    version: VIEWPORT_DOCK_META_VERSION,
+  };
+  const existingDock = widget.metadata?.viewportDock;
+  if (
+    !existingDock ||
+    existingDock.side !== normalizedDock.side ||
+    Math.abs((Number(existingDock.offsetTopPx) || 0) - normalizedDock.offsetTopPx) > 0.5 ||
+    Math.abs((Number(existingDock.widthPx) || 0) - normalizedDock.widthPx) > 0.5 ||
+    Math.abs((Number(existingDock.heightPx) || 0) - normalizedDock.heightPx) > 0.5 ||
+    Number(existingDock.version) !== VIEWPORT_DOCK_META_VERSION
+  ) {
+    widget.metadata = {
+      ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+      viewportDock: normalizedDock,
+    };
+    changed = true;
+  }
+
+  return changed;
+}
+
+function applyViewportDockToAllWidgets() {
+  const viewportRect = resolveCanvasViewportRect();
+  if (!viewportRect) {
+    return false;
+  }
+  const widgets = runtime.listWidgets();
+  let changed = false;
+  for (const widget of widgets) {
+    if (!widget || !isWidgetViewportDocked(widget)) {
+      continue;
+    }
+    if (applyViewportDockToWidget(widget, { viewportRect })) {
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function dockWidgetToViewportSide(widget, side, pointerClientY = null) {
+  if (!widget || (side !== "left" && side !== "right")) {
+    return false;
+  }
+  const viewportRect = resolveCanvasViewportRect();
+  if (!viewportRect) {
+    return false;
+  }
+  const camera = runtime.camera;
+  if (!camera) {
+    return false;
+  }
+
+  const interactionBounds =
+    typeof widget.getInteractionBounds === "function"
+      ? widget.getInteractionBounds(camera)
+      : { width: widget.size?.width ?? 240, height: widget.size?.height ?? 160 };
+  const widthPx = Math.max(40, Math.min(viewportRect.width - VIEWPORT_DOCK_MARGIN_PX * 2, interactionBounds.width * camera.zoom));
+  const heightPx = Math.max(40, Math.min(viewportRect.height - VIEWPORT_DOCK_MARGIN_PX * 2, interactionBounds.height * camera.zoom));
+
+  const currentScreen = camera.worldToScreen(widget.position.x, widget.position.y);
+  const fallbackTop = currentScreen.y;
+  const requestedTop = Number.isFinite(pointerClientY)
+    ? pointerClientY - viewportRect.top - heightPx * 0.5
+    : fallbackTop;
+  const offsetTopPx = Math.max(
+    VIEWPORT_DOCK_MARGIN_PX,
+    Math.min(requestedTop, viewportRect.height - heightPx - VIEWPORT_DOCK_MARGIN_PX),
+  );
+
+  widget.metadata = {
+    ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+    viewportDock: {
+      side,
+      offsetTopPx,
+      widthPx,
+      heightPx,
+      version: VIEWPORT_DOCK_META_VERSION,
+    },
+  };
+  runtime.bringWidgetToFront(widget.id);
+  runtime.setFocusedWidgetId(widget.id);
+  runtime.setSelectedWidgetId(widget.id);
+  return applyViewportDockToWidget(widget, { viewportRect, camera });
+}
+
+function clearViewportDockTracking() {
+  if (!viewportDockDragState) {
+    setViewportDockGlowState({ active: false });
+    return;
+  }
+  clearViewportDockHoldTimer(viewportDockDragState);
+  viewportDockDragState = null;
+  setViewportDockGlowState({ active: false });
+}
+
+function beginViewportDockTracking(payload) {
+  if (!payload || payload.mode !== "move" || !payload.widgetId) {
+    clearViewportDockTracking();
+    return;
+  }
+  const initialSide = pointerOverLibraryLauncher(payload.clientX, payload.clientY)
+    ? null
+    : getViewportDockSideFromPointer(payload.clientX, payload.clientY);
+  viewportDockDragState = {
+    widgetId: payload.widgetId,
+    pointerId: Number.isFinite(payload.pointerId) ? payload.pointerId : null,
+    side: initialSide,
+    armedSide: null,
+    holdTimer: null,
+  };
+  if (initialSide) {
+    viewportDockDragState.holdTimer = window.setTimeout(() => {
+      if (!viewportDockDragState || viewportDockDragState.side !== initialSide) {
+        return;
+      }
+      viewportDockDragState.armedSide = initialSide;
+      setViewportDockGlowState({
+        active: true,
+        overLeft: initialSide === "left",
+        overRight: initialSide === "right",
+        armedLeft: initialSide === "left",
+        armedRight: initialSide === "right",
+      });
+    }, VIEWPORT_DOCK_HOLD_MS);
+  }
+  setViewportDockGlowState({
+    active: true,
+    overLeft: initialSide === "left",
+    overRight: initialSide === "right",
+    armedLeft: false,
+    armedRight: false,
+  });
+}
+
+function updateViewportDockTracking(payload) {
+  if (!viewportDockDragState || !payload || payload.phase !== "move") {
+    return;
+  }
+  if (payload.widgetId !== viewportDockDragState.widgetId) {
+    return;
+  }
+  const nextSide = pointerOverLibraryLauncher(payload.clientX, payload.clientY)
+    ? null
+    : getViewportDockSideFromPointer(payload.clientX, payload.clientY);
+  if (nextSide !== viewportDockDragState.side) {
+    clearViewportDockHoldTimer(viewportDockDragState);
+    viewportDockDragState.side = nextSide;
+    viewportDockDragState.armedSide = null;
+    if (nextSide) {
+      viewportDockDragState.holdTimer = window.setTimeout(() => {
+        if (!viewportDockDragState || viewportDockDragState.side !== nextSide) {
+          return;
+        }
+        viewportDockDragState.armedSide = nextSide;
+        setViewportDockGlowState({
+          active: true,
+          overLeft: nextSide === "left",
+          overRight: nextSide === "right",
+          armedLeft: nextSide === "left",
+          armedRight: nextSide === "right",
+        });
+      }, VIEWPORT_DOCK_HOLD_MS);
+    }
+  }
+  setViewportDockGlowState({
+    active: true,
+    overLeft: nextSide === "left",
+    overRight: nextSide === "right",
+    armedLeft: viewportDockDragState.armedSide === "left",
+    armedRight: viewportDockDragState.armedSide === "right",
+  });
+}
+
+function endViewportDockTracking(payload) {
+  if (!viewportDockDragState || !payload || payload.phase !== "end") {
+    clearViewportDockTracking();
+    return null;
+  }
+  const state = { ...viewportDockDragState };
+  clearViewportDockTracking();
+  if (payload.widgetId !== state.widgetId) {
+    return null;
+  }
+  if (pointerOverLibraryLauncher(payload.clientX, payload.clientY)) {
+    return null;
+  }
+  const releaseSide = getViewportDockSideFromPointer(payload.clientX, payload.clientY);
+  if (!releaseSide || releaseSide !== state.armedSide) {
+    return null;
+  }
+  return releaseSide;
+}
+
+function handleWidgetDragStateForViewportDock(payload) {
+  if (!payload || !payload.widgetId) {
+    return;
+  }
+  if (payload.mode !== "move") {
+    if (payload.phase === "start" || payload.phase === "end") {
+      clearViewportDockTracking();
+    }
+    return;
+  }
+  if (payload.phase === "start") {
+    beginViewportDockTracking(payload);
+    return;
+  }
+  if (payload.phase === "move") {
+    updateViewportDockTracking(payload);
+    return;
+  }
+  if (payload.phase !== "end") {
+    return;
+  }
+  const dockSide = endViewportDockTracking(payload);
+  if (!dockSide) {
+    return;
+  }
+  const widget = runtime.getWidgetById(payload.widgetId);
+  if (!widget) {
+    return;
+  }
+  const changed = dockWidgetToViewportSide(widget, dockSide, payload.clientY);
+  if (changed) {
+    updateWidgetUi({ coalesceHeavy: true });
+  }
+}
+
 function setLibraryDropTargetState({ active = false, over = false } = {}) {
   if (referenceManagerUiController && typeof referenceManagerUiController.setDropTargetState === "function") {
     referenceManagerUiController.setDropTargetState({ active, over });
@@ -3102,6 +3540,7 @@ async function addWidgetToNotebookLibraryFromDrag(widget) {
 }
 
 function handleWidgetDragStateForLibrary(payload) {
+  handleWidgetDragStateForViewportDock(payload);
   if (!payload || !payload.widgetId || (payload.mode !== "move" && payload.mode !== "resize")) {
     return;
   }
@@ -4205,6 +4644,11 @@ function scheduleWidgetHeavySync({ delayMs = 140 } = {}) {
 }
 
 function updateWidgetUi({ deferHeavy = false, coalesceHeavy = false } = {}) {
+  const dockedMoved = applyViewportDockToAllWidgets();
+  if (dockedMoved) {
+    runtime.requestRender({ continuousMs: 80 });
+  }
+
   if (widgetCountOutput) {
     widgetCountOutput.textContent = String(runtime.getWidgetCount());
   }
@@ -4217,6 +4661,7 @@ function updateWidgetUi({ deferHeavy = false, coalesceHeavy = false } = {}) {
   updateWhitespaceZoneCount();
   updateContextUi();
   syncReferenceManagerPlacement();
+  syncViewportDockGlowLayout();
   renderSuggestionRail();
   renderSectionMinimap();
   if (searchIndex && workspaceScopeId()) {

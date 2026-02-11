@@ -1093,6 +1093,50 @@ body[data-ui-mode="production"] .topbar h1 {
   display: block;
 }
 
+.viewport-dock-glow {
+  position: fixed;
+  z-index: 55;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease, filter 120ms ease;
+  filter: blur(0px);
+}
+
+.viewport-dock-glow[hidden] {
+  display: none !important;
+}
+
+.viewport-dock-glow--left {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--theme-action) 48%, transparent) 0%,
+    color-mix(in srgb, var(--theme-action-soft) 20%, transparent) 58%,
+    transparent 100%
+  );
+}
+
+.viewport-dock-glow--right {
+  background: linear-gradient(
+    270deg,
+    color-mix(in srgb, var(--theme-action) 48%, transparent) 0%,
+    color-mix(in srgb, var(--theme-action-soft) 20%, transparent) 58%,
+    transparent 100%
+  );
+}
+
+.viewport-dock-glow[data-active="true"] {
+  opacity: 0.22;
+}
+
+.viewport-dock-glow[data-over="true"] {
+  opacity: 0.38;
+}
+
+.viewport-dock-glow[data-armed="true"] {
+  opacity: 0.52;
+  filter: blur(1px);
+}
+
 .reference-manager-launcher {
   position: fixed;
   z-index: 64;
