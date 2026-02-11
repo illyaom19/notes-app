@@ -18,17 +18,45 @@
       </header>
 
       <section class="section-strip" aria-label="Notebook Sections">
+        <div id="header-create-menu" class="header-create-menu">
+          <button
+            id="header-create-toggle"
+            class="header-icon-btn"
+            type="button"
+            aria-label="Create notebook or section"
+            aria-expanded="false"
+            title="Create notebook or section"
+          >
+            +
+          </button>
+          <div id="header-create-dropdown" class="header-create-dropdown" hidden>
+            <button id="new-context" type="button">New Notebook</button>
+            <button id="new-section" type="button">New Section</button>
+          </div>
+        </div>
         <label id="context-picker-pill" class="context-pick" for="context-select">
           <span>Notebook</span>
           <select id="context-select" aria-label="Active notebook"></select>
         </label>
         <div id="section-tabs" class="section-tabs" role="tablist" aria-label="Sections"></div>
-        <button id="new-context" type="button">New Notebook</button>
-        <button id="new-section" type="button">New Section</button>
-        <button id="undo-ink" type="button" disabled>Undo</button>
-        <button id="redo-ink" type="button" disabled>Redo</button>
-        <button id="toggle-search-panel" type="button">Search</button>
-        <button id="toggle-tools" type="button" class="tools-toggle">Menu</button>
+        <button id="undo-ink" class="header-icon-btn" type="button" aria-label="Undo" title="Undo" disabled>
+          ↶
+        </button>
+        <button id="redo-ink" class="header-icon-btn" type="button" aria-label="Redo" title="Redo" disabled>
+          ↷
+        </button>
+        <button
+          id="toggle-search-panel"
+          class="header-icon-btn"
+          type="button"
+          aria-label="Search"
+          title="Search"
+        >
+          ⌕
+        </button>
+        <button id="toggle-tools" type="button" class="tools-toggle header-icon-btn" aria-label="Menu" title="Menu">
+          ☰
+        </button>
       </section>
 
       <section id="controls-panel" class="controls-panel" hidden>

@@ -87,7 +87,9 @@ export function createSearchPanelController({
     open = Boolean(nextOpen);
     panelElement.hidden = !open;
     if (toggleButton instanceof HTMLButtonElement) {
-      toggleButton.textContent = open ? "Hide Search" : "Search";
+      toggleButton.setAttribute("aria-label", open ? "Close search" : "Open search");
+      toggleButton.title = open ? "Close search" : "Open search";
+      toggleButton.dataset.open = open ? "true" : "false";
     }
     onOpenChange?.(open);
 

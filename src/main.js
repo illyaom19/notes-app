@@ -38,6 +38,9 @@ import { createPdfRasterDocumentFromBytes } from "./widgets/pdf/pdf-rasterizer.j
 
 const toggleUiModeButton = document.querySelector("#toggle-ui-mode");
 const toggleToolsButton = document.querySelector("#toggle-tools");
+const headerCreateMenu = document.querySelector("#header-create-menu");
+const headerCreateToggleButton = document.querySelector("#header-create-toggle");
+const headerCreateDropdown = document.querySelector("#header-create-dropdown");
 const controlsPanel = document.querySelector("#controls-panel");
 const statusPanel = document.querySelector(".status-panel");
 const toggleResearchPanelButton = document.querySelector("#toggle-research-panel");
@@ -156,6 +159,7 @@ let widgetRasterManager = null;
 let detachDocumentFocusSync = null;
 let detachWidgetRemovalSuggestionSync = null;
 let toolsPanelOpen = false;
+let headerCreateMenuOpen = false;
 let pendingPdfImportIntent = null;
 let uiModeState = { mode: "production" };
 let debugModeEnabled = false;
@@ -1883,8 +1887,33 @@ function syncToolsUi() {
   }
 
   if (toggleToolsButton instanceof HTMLButtonElement) {
-    toggleToolsButton.textContent = toolsPanelOpen ? "Close Menu" : "Menu";
+    toggleToolsButton.setAttribute("aria-label", toolsPanelOpen ? "Close menu" : "Open menu");
+    toggleToolsButton.title = toolsPanelOpen ? "Close menu" : "Open menu";
+    toggleToolsButton.dataset.open = toolsPanelOpen ? "true" : "false";
   }
+}
+
+function syncHeaderCreateMenuUi() {
+  if (headerCreateDropdown instanceof HTMLElement) {
+    headerCreateDropdown.hidden = !headerCreateMenuOpen;
+  }
+  if (headerCreateToggleButton instanceof HTMLButtonElement) {
+    headerCreateToggleButton.setAttribute("aria-expanded", headerCreateMenuOpen ? "true" : "false");
+    headerCreateToggleButton.dataset.open = headerCreateMenuOpen ? "true" : "false";
+  }
+}
+
+function setHeaderCreateMenuOpen(nextOpen) {
+  const next = Boolean(nextOpen);
+  if (headerCreateMenuOpen === next) {
+    return;
+  }
+  headerCreateMenuOpen = next;
+  syncHeaderCreateMenuUi();
+}
+
+function closeHeaderCreateMenu() {
+  setHeaderCreateMenuOpen(false);
 }
 
 function onboardingHintsCatalog() {
@@ -6248,6 +6277,17 @@ function wireBaseEventHandlers() {
     safeLocalStorageSetItem("notes-app.tools-panel.open", toolsPanelOpen ? "1" : "0");
     syncToolsUi();
   });
+  headerCreateToggleButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setHeaderCreateMenuOpen(!headerCreateMenuOpen);
+  });
+  newContextButton?.addEventListener("click", () => {
+    closeHeaderCreateMenu();
+  });
+  newSectionButton?.addEventListener("click", () => {
+    closeHeaderCreateMenu();
+  });
   snipExitButton?.addEventListener("click", () => {
     if (!snipTool || typeof snipTool.disarm !== "function") {
       return;
@@ -6256,23 +6296,36 @@ function wireBaseEventHandlers() {
   });
 
   window.addEventListener("pointerdown", (event) => {
-    if (!toolsPanelOpen) {
-      return;
-    }
-
     const target = event.target;
     if (!(target instanceof Node)) {
       return;
     }
 
-    if (
-      (controlsPanel instanceof HTMLElement && controlsPanel.contains(target)) ||
-      (toggleToolsButton instanceof HTMLElement && toggleToolsButton.contains(target))
-    ) {
-      return;
+    if (headerCreateMenuOpen) {
+      const inCreateMenu = headerCreateMenu instanceof HTMLElement && headerCreateMenu.contains(target);
+      if (!inCreateMenu) {
+        closeHeaderCreateMenu();
+      }
     }
 
-    closeToolsMenu();
+    if (toolsPanelOpen) {
+      if (
+        (controlsPanel instanceof HTMLElement && controlsPanel.contains(target)) ||
+        (toggleToolsButton instanceof HTMLElement && toggleToolsButton.contains(target))
+      ) {
+        return;
+      }
+
+      closeToolsMenu();
+    }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (headerCreateMenuOpen) {
+      closeHeaderCreateMenu();
+    }
   });
   window.addEventListener("resize", () => {
     if (toolsPanelOpen) {
@@ -7338,6 +7391,7 @@ async function bootstrap() {
 
   gesturePrefs = loadGesturePrefs();
   updateGestureUi();
+  syncHeaderCreateMenuUi();
 
   wireBaseEventHandlers();
   wireWidgetInteractionManager();
