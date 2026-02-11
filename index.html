@@ -18,27 +18,25 @@
       </header>
 
       <section class="section-strip" aria-label="Notebook Sections">
-        <div id="header-create-menu" class="header-create-menu">
+        <div id="context-picker-pill" class="context-pick context-dropdown">
           <button
-            id="header-create-toggle"
-            class="header-icon-btn"
+            id="context-dropdown-toggle"
+            class="context-dropdown-toggle"
             type="button"
-            aria-label="Create notebook or section"
+            aria-label="Active notebook"
             aria-expanded="false"
-            title="Create notebook or section"
           >
-            +
+            <span>Notebook</span>
+            <strong id="context-dropdown-label">none</strong>
+            <span aria-hidden="true">▾</span>
           </button>
-          <div id="header-create-dropdown" class="header-create-dropdown" hidden>
-            <button id="new-context" type="button">New Notebook</button>
-            <button id="new-section" type="button">New Section</button>
+          <div id="context-dropdown-menu" class="context-dropdown-menu header-create-dropdown" hidden>
+            <div id="context-dropdown-list" class="context-dropdown-list"></div>
+            <button id="new-context" type="button">Add new notebook...</button>
           </div>
         </div>
-        <label id="context-picker-pill" class="context-pick" for="context-select">
-          <span>Notebook</span>
-          <select id="context-select" aria-label="Active notebook"></select>
-        </label>
         <div id="section-tabs" class="section-tabs" role="tablist" aria-label="Sections"></div>
+        <button id="new-section" class="header-icon-btn section-add-btn" type="button" aria-label="Add section" title="Add section">+</button>
         <button id="undo-ink" class="header-icon-btn" type="button" aria-label="Undo" title="Undo" disabled>
           ↶
         </button>

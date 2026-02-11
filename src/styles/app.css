@@ -148,10 +148,9 @@ body[data-ui-mode="production"] .topbar h1 {
 .context-pick {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
   border: 1px solid var(--theme-line);
   border-radius: 999px;
-  padding: 0.3rem 0.5rem 0.3rem 0.6rem;
+  padding: 0.28rem 0.5rem 0.28rem 0.6rem;
   background: var(--theme-bg-surface);
 }
 
@@ -161,17 +160,50 @@ body[data-ui-mode="production"] .topbar h1 {
   white-space: nowrap;
 }
 
-.context-pick select {
-  border: 0;
-  background: transparent;
-  color: var(--theme-text);
-  font-size: 0.85rem;
-  min-width: 190px;
-  max-width: min(42vw, 260px);
+.context-dropdown {
+  position: relative;
+  flex: 0 0 auto;
 }
 
-.context-pick select:focus:not(:focus-visible) {
-  outline: none;
+.context-dropdown-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.context-dropdown-toggle strong {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--theme-text);
+  max-width: min(38vw, 220px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-dropdown-menu {
+  min-width: 12.5rem;
+}
+
+.context-dropdown-list {
+  display: grid;
+  gap: 0.32rem;
+  margin-bottom: 0.38rem;
+}
+
+.context-dropdown-list button {
+  text-align: left;
+}
+
+.context-dropdown-list button[data-active="true"] {
+  border-color: var(--theme-action);
+  background: var(--theme-action-soft);
+  color: var(--theme-action-strong);
 }
 
 .controls {
@@ -301,13 +333,6 @@ body[data-ui-mode="production"] .topbar h1 {
   background: linear-gradient(180deg, var(--theme-bg-panel) 0%, var(--theme-bg-surface) 100%);
 }
 
-.header-create-menu {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-}
-
 .header-create-dropdown {
   position: absolute;
   top: calc(100% + 0.35rem);
@@ -427,8 +452,8 @@ body[data-ui-mode="production"] .topbar h1 {
   opacity: 0.55;
 }
 
-.header-create-menu > .header-icon-btn {
-  font-size: 1.18rem;
+.section-add-btn {
+  font-size: 1.22rem;
   font-weight: 600;
 }
 
