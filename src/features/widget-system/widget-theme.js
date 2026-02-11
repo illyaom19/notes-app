@@ -52,7 +52,7 @@ export function interactionStateForWidget(widget, renderContext) {
     hovered,
     touchPrimary,
     revealActions: pinned ? false : interactiveVisible,
-    showTitle: pinned ? (!touchPrimary && hovered) : interactiveVisible,
+    showTitle: pinned ? (focused || (!touchPrimary && hovered)) : interactiveVisible,
   };
 }
 

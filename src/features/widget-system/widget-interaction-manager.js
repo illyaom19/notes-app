@@ -73,9 +73,9 @@ function isWidgetPinned(widget) {
 function shouldRevealWidgetControls({ pinned, selected, focused, hovered, touchPrimary }) {
   const active = selected || focused;
   if (pinned) {
-    // Pinned widgets keep chrome hidden; only show unpin affordance when hovered
-    // (or when touch is primary, where hover does not exist).
-    return touchPrimary ? active : hovered;
+    // Pinned widgets keep chrome hidden; show unpin affordance when selected/focused
+    // and also on desktop hover.
+    return active || (!touchPrimary && hovered);
   }
   return active || (!touchPrimary && hovered);
 }
