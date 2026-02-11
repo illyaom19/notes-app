@@ -217,6 +217,7 @@ let perfHudRefreshTimer = null;
 let perfFrameHistory = [];
 let perfBenchmarkRunning = false;
 let lastStorageEstimate = null;
+let runtimeReadyForViewportDock = false;
 
 let activeContextId = null;
 let activeSectionId = null;
@@ -951,7 +952,9 @@ registry.onModuleLoaded((type) => {
 const runtime = new CanvasRuntime({
   canvas,
   onCameraChange: ({ x, y, zoom }) => {
-    applyViewportDockToAllWidgets();
+    if (runtimeReadyForViewportDock) {
+      applyViewportDockToAllWidgets();
+    }
     if (cameraOutput) {
       cameraOutput.textContent = `x=${x.toFixed(1)}, y=${y.toFixed(1)}, zoom=${zoom.toFixed(2)}`;
     }
@@ -968,6 +971,7 @@ const runtime = new CanvasRuntime({
     renderSectionMinimap();
   },
 });
+runtimeReadyForViewportDock = true;
 if (typeof runtime.registerFrameListener === "function") {
   runtime.registerFrameListener((stats) => {
     if (Number.isFinite(stats?.frameDtMs) && stats.frameDtMs > 0) {
