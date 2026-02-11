@@ -8,7 +8,7 @@ import {
   interactionStateForWidget,
   WIDGET_THEME,
 } from "../../features/widget-system/widget-theme.js";
-import { loadPdfDocumentFromBytes } from "./pdfjs-loader.js";
+import * as pdfjsLoader from "./pdfjs-loader.js";
 import { selectRasterLevelForZoom } from "./pdf-rasterizer.js";
 import { PdfTileCache } from "./pdf-tile-cache.js";
 
@@ -59,6 +59,40 @@ function loadImageElement(src) {
     image.onerror = () => reject(new Error("Failed to decode raster image."));
     image.src = src;
   });
+}
+
+function isWorkerBootstrapError(error) {
+  const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
+  return (
+    message.includes("setting up fake worker failed") ||
+    message.includes("pdf.worker") ||
+    message.includes("failed to fetch dynamically imported module")
+  );
+}
+
+async function loadPdfDocumentCompat(pdfBytes) {
+  if (typeof pdfjsLoader.loadPdfDocumentFromBytes === "function") {
+    return pdfjsLoader.loadPdfDocumentFromBytes(pdfBytes);
+  }
+
+  const pdfjs = await pdfjsLoader.loadPdfJs();
+  const open = async (disableWorker) => {
+    const loadingTask = pdfjs.getDocument({
+      data: pdfBytes,
+      ...(disableWorker ? { disableWorker: true } : {}),
+    });
+    const pdfDocument = await loadingTask.promise;
+    return { pdfDocument, loadingTask };
+  };
+
+  try {
+    return await open(false);
+  } catch (error) {
+    if (!isWorkerBootstrapError(error)) {
+      throw error;
+    }
+    return open(true);
+  }
 }
 
 export class PdfDocumentWidget extends WidgetBase {
@@ -139,7 +173,7 @@ export class PdfDocumentWidget extends WidgetBase {
     }
 
     try {
-      const { pdfDocument } = await loadPdfDocumentFromBytes(this.pdfBytes);
+      const { pdfDocument } = await loadPdfDocumentCompat(this.pdfBytes);
       this.pdfDocument = pdfDocument;
       this.pageCount = this.pdfDocument.numPages;
 

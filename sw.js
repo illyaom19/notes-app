@@ -1,4 +1,4 @@
-const CACHE_NAME = "notes-app-pwa-v2";
+const CACHE_NAME = "notes-app-pwa-v3";
 const RUNTIME_CACHE_NAME = "notes-app-runtime-v1";
 const PDFJS_PROXY_PREFIX = "/pdfjs/";
 const PDFJS_PRIMARY_BASE = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/";
@@ -125,20 +125,22 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const networkFetch = fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, copy).catch(() => {});
-            });
-          }
-          return response;
-        })
-        .catch(() => cached);
-
-      return cached || networkFetch;
-    }),
+    fetch(request)
+      .then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, copy).catch(() => {});
+          });
+        }
+        return response;
+      })
+      .catch(async () => {
+        const cached = await caches.match(request);
+        if (cached) {
+          return cached;
+        }
+        return new Response("", { status: 503, statusText: "Offline" });
+      }),
   );
 });

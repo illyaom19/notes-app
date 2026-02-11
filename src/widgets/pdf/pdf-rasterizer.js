@@ -1,9 +1,43 @@
-import { loadPdfDocumentFromBytes } from "./pdfjs-loader.js";
+import * as pdfjsLoader from "./pdfjs-loader.js";
 
 const DEFAULT_TARGET_WIDTHS = Object.freeze([640, 1024, 1536]);
 const DEFAULT_IMAGE_TYPE = "image/webp";
 const DEFAULT_IMAGE_QUALITY = 0.82;
 const RASTER_SCHEMA_VERSION = 1;
+
+function isWorkerBootstrapError(error) {
+  const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
+  return (
+    message.includes("setting up fake worker failed") ||
+    message.includes("pdf.worker") ||
+    message.includes("failed to fetch dynamically imported module")
+  );
+}
+
+async function loadPdfDocumentCompat(pdfBytes) {
+  if (typeof pdfjsLoader.loadPdfDocumentFromBytes === "function") {
+    return pdfjsLoader.loadPdfDocumentFromBytes(pdfBytes);
+  }
+
+  const pdfjs = await pdfjsLoader.loadPdfJs();
+  const open = async (disableWorker) => {
+    const loadingTask = pdfjs.getDocument({
+      data: pdfBytes,
+      ...(disableWorker ? { disableWorker: true } : {}),
+    });
+    const pdfDocument = await loadingTask.promise;
+    return { pdfDocument, loadingTask };
+  };
+
+  try {
+    return await open(false);
+  } catch (error) {
+    if (!isWorkerBootstrapError(error)) {
+      throw error;
+    }
+    return open(true);
+  }
+}
 
 function normalizeTargetWidths(targetWidths) {
   const fallback = [...DEFAULT_TARGET_WIDTHS];
@@ -56,7 +90,7 @@ export async function createPdfRasterDocumentFromBytes(
     throw new Error("Cannot rasterize PDF without source bytes.");
   }
 
-  const { pdfDocument, loadingTask } = await loadPdfDocumentFromBytes(pdfBytes);
+  const { pdfDocument, loadingTask } = await loadPdfDocumentCompat(pdfBytes);
 
   const widths = normalizeTargetWidths(targetWidths);
   const pages = [];

@@ -1,4 +1,4 @@
-import { loadPdfDocumentFromBytes } from "../../widgets/pdf/pdfjs-loader.js";
+import * as pdfjsLoader from "../../widgets/pdf/pdfjs-loader.js";
 
 const LONG_PRESS_MS = 430;
 const PREVIEW_WIDTH = 220;
@@ -12,6 +12,38 @@ const MAX_PDF_PREVIEW_CACHE = 12;
 const LAUNCHER_SIZE = 48;
 const FLOATING_INSET = 10;
 const OVERLAY_GAP = 10;
+
+function isWorkerBootstrapError(error) {
+  const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
+  return (
+    message.includes("setting up fake worker failed") ||
+    message.includes("pdf.worker") ||
+    message.includes("failed to fetch dynamically imported module")
+  );
+}
+
+async function loadPdfDocumentCompat(bytes) {
+  if (typeof pdfjsLoader.loadPdfDocumentFromBytes === "function") {
+    return pdfjsLoader.loadPdfDocumentFromBytes(bytes);
+  }
+  const pdfjs = await pdfjsLoader.loadPdfJs();
+  const open = async (disableWorker) => {
+    const loadingTask = pdfjs.getDocument({
+      data: bytes,
+      ...(disableWorker ? { disableWorker: true } : {}),
+    });
+    const pdfDocument = await loadingTask.promise;
+    return { pdfDocument, loadingTask };
+  };
+  try {
+    return await open(false);
+  } catch (error) {
+    if (!isWorkerBootstrapError(error)) {
+      throw error;
+    }
+    return open(true);
+  }
+}
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -679,7 +711,7 @@ export function createReferenceManagerUi({
       return null;
     }
 
-    const { pdfDocument: doc } = await loadPdfDocumentFromBytes(bytes);
+    const { pdfDocument: doc } = await loadPdfDocumentCompat(bytes);
     const page = await doc.getPage(1);
     const previewCanvas = makeThumbCanvas(196, 118);
     const base = page.getViewport({ scale: 1 });

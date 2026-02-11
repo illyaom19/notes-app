@@ -1,7 +1,39 @@
-import { loadPdfDocumentFromBytes } from "../../widgets/pdf/pdfjs-loader.js";
+import * as pdfjsLoader from "../../widgets/pdf/pdfjs-loader.js";
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function isWorkerBootstrapError(error) {
+  const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
+  return (
+    message.includes("setting up fake worker failed") ||
+    message.includes("pdf.worker") ||
+    message.includes("failed to fetch dynamically imported module")
+  );
+}
+
+async function loadPdfDocumentCompat(bytes) {
+  if (typeof pdfjsLoader.loadPdfDocumentFromBytes === "function") {
+    return pdfjsLoader.loadPdfDocumentFromBytes(bytes);
+  }
+  const pdfjs = await pdfjsLoader.loadPdfJs();
+  const open = async (disableWorker) => {
+    const loadingTask = pdfjs.getDocument({
+      data: bytes,
+      ...(disableWorker ? { disableWorker: true } : {}),
+    });
+    const pdfDocument = await loadingTask.promise;
+    return { pdfDocument, loadingTask };
+  };
+  try {
+    return await open(false);
+  } catch (error) {
+    if (!isWorkerBootstrapError(error)) {
+      throw error;
+    }
+    return open(true);
+  }
 }
 
 function strokeWidth(baseWidth, pressure) {
@@ -420,7 +452,7 @@ export async function renderPdfPreview(container, entry, { loadDocumentBytes, lo
       if (signal?.aborted) {
         return;
       }
-      const loaded = await loadPdfDocumentFromBytes(bytes);
+      const loaded = await loadPdfDocumentCompat(bytes);
       pdfDocument = loaded.pdfDocument;
     } catch (_error) {
       const title = typeof entry?.title === "string" && entry.title.trim() ? entry.title.trim() : "document.pdf";
