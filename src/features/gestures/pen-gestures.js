@@ -119,6 +119,26 @@ function isBarrelSignal(event) {
   return false;
 }
 
+function isHoverBarrelSignal(event) {
+  if (event.pointerType !== "pen") {
+    return false;
+  }
+  const pressure = Number.isFinite(event.pressure) ? event.pressure : null;
+  if (pressure !== null && pressure > 0) {
+    return false;
+  }
+  if (event.button === 1) {
+    return true;
+  }
+  if ((event.buttons & 0b10) !== 0 || (event.buttons & 0b100000) !== 0) {
+    return true;
+  }
+  if (event.buttons === 1 && pressure !== null && pressure <= 0) {
+    return true;
+  }
+  return false;
+}
+
 export function createPenGestureController({ canvas, getPrefs, onAction, onStatusChange }) {
   if (!(canvas instanceof HTMLElement) || !supportsPenGestures()) {
     onStatusChange?.({ supported: false, lastGesture: "unsupported" });
@@ -130,6 +150,7 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
 
   const pointerState = new Map();
   const swallowedPointers = new Set();
+  const hoverBarrelPointers = new Set();
   let lastTap = null;
 
   const emitStatus = (next = {}) => {
@@ -176,6 +197,7 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
     if (event.pointerType !== "pen") {
       return;
     }
+    hoverBarrelPointers.delete(event.pointerId);
 
     const prefs = normalizeGesturePrefs(getPrefs?.());
     if (!prefs.enabled) {
@@ -215,6 +237,20 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
   };
 
   const onPointerMove = (event) => {
+    if (event.pointerType === "pen") {
+      const hoverBarrel = isHoverBarrelSignal(event);
+      if (hoverBarrel) {
+        if (!hoverBarrelPointers.has(event.pointerId)) {
+          hoverBarrelPointers.add(event.pointerId);
+          invokeGesture("barrelTap", event);
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      hoverBarrelPointers.delete(event.pointerId);
+    }
+
     const state = pointerState.get(event.pointerId);
     if (!state) {
       return;
@@ -235,6 +271,7 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
   const finalizePointer = (event, cancelled = false) => {
     const state = pointerState.get(event.pointerId);
     pointerState.delete(event.pointerId);
+    hoverBarrelPointers.delete(event.pointerId);
 
     const wasSwallowed = swallowedPointers.has(event.pointerId);
     swallowedPointers.delete(event.pointerId);
@@ -281,6 +318,7 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
       canvas.removeEventListener("pointercancel", onPointerCancel, { capture: true });
       pointerState.clear();
       swallowedPointers.clear();
+      hoverBarrelPointers.clear();
       lastTap = null;
     },
 
