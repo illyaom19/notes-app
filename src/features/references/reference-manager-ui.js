@@ -1126,6 +1126,7 @@ export function createReferenceManagerUi({
         hidePreviewNow();
         setActiveRowKey(null);
         setMenuRowKey(null);
+        setOpen(false);
       }).catch((error) => {
         console.error("Library drag import failed:", error);
         triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
@@ -1389,8 +1390,14 @@ function onListPointerLeave(event) {
   }
 
   function onWindowPointerDown(event) {
+    if (draggingState) {
+      return;
+    }
     const target = event.target;
     if (!(target instanceof Node)) {
+      return;
+    }
+    if (launcherButton.contains(target)) {
       return;
     }
     if (previewElement.contains(target)) {
@@ -1402,6 +1409,9 @@ function onListPointerLeave(event) {
     setMenuRowKey(null);
     hidePreviewNow();
     setActiveRowKey(null);
+    if (open) {
+      setOpen(false);
+    }
   }
 
   function onWindowKeyDown(event) {

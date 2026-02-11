@@ -70,6 +70,16 @@ function isWidgetPinned(widget) {
   return Boolean(widget?.metadata?.pinned);
 }
 
+function shouldRevealWidgetControls({ pinned, selected, focused, hovered, touchPrimary }) {
+  const active = selected || focused;
+  if (pinned) {
+    // Pinned widgets keep chrome hidden; only show unpin affordance when hovered
+    // (or when touch is primary, where hover does not exist).
+    return touchPrimary ? active : hovered;
+  }
+  return active || (!touchPrimary && hovered);
+}
+
 function widgetBounds(widget, camera) {
   if (typeof widget.getInteractionBounds === "function") {
     const bounds = widget.getInteractionBounds(camera);
@@ -265,10 +275,13 @@ export function createWidgetInteractionManager({
         continue;
       }
 
-      const revealActions =
-        selectedId === widget.id ||
-        focusedId === widget.id ||
-        (!touchPrimary && hoveredId === widget.id);
+      const revealActions = shouldRevealWidgetControls({
+        pinned: isWidgetPinned(widget),
+        selected: selectedId === widget.id,
+        focused: focusedId === widget.id,
+        hovered: hoveredId === widget.id,
+        touchPrimary,
+      });
       if (!revealActions) {
         continue;
       }
@@ -618,21 +631,28 @@ export function createWidgetInteractionManager({
       const flags = interactionFlags(widget);
       const rects = controlRects(widget, camera);
       const selected = selectedId === widget.id || focusedId === widget.id;
+      const focused = focusedId === widget.id;
       const hovered = hoveredId === widget.id;
-      const revealActions = selected || (!touchPrimary && hovered);
+      const pinned = isWidgetPinned(widget);
+      const revealActions = shouldRevealWidgetControls({
+        pinned,
+        selected,
+        focused,
+        hovered,
+        touchPrimary,
+      });
       const unavailableControls = controlsUnavailable({
         flags,
         rects,
         camera,
         collapsed: widget.collapsed,
-        pinned: isWidgetPinned(widget),
+        pinned,
       });
 
       if (!revealActions) {
         return;
       }
 
-      const pinned = isWidgetPinned(widget);
       const pinScreen = camera.worldToScreen(rects.pin.x, rects.pin.y);
       const pinW = rects.pin.width * camera.zoom;
       const pinH = rects.pin.height * camera.zoom;

@@ -44,13 +44,15 @@ export function interactionStateForWidget(widget, renderContext) {
   const focused = interaction.focusedWidgetId === widgetId || selected;
   const hovered = interaction.hoverWidgetId === widgetId;
   const touchPrimary = interaction.isTouchPrimary === true;
+  const pinned = Boolean(widget?.metadata?.pinned);
+  const interactiveVisible = focused || (!touchPrimary && hovered);
   return {
     selected,
     focused,
     hovered,
     touchPrimary,
-    revealActions: focused || (!touchPrimary && hovered),
-    showTitle: focused || (!touchPrimary && hovered),
+    revealActions: pinned ? false : interactiveVisible,
+    showTitle: pinned ? (!touchPrimary && hovered) : interactiveVisible,
   };
 }
 
@@ -81,6 +83,26 @@ export function drawUnifiedWidgetFrame(
   const height = worldHeight * camera.zoom;
   const headerHeight = Math.max(8, Math.min(height, headerWorldHeight * camera.zoom));
   const focused = interaction?.focused === true;
+  const pinned = Boolean(widget?.metadata?.pinned);
+
+  if (pinned) {
+    strokeRoundedRect(
+      ctx,
+      screen.x,
+      screen.y,
+      width,
+      height,
+      borderRadius,
+      "rgba(31, 111, 120, 0.35)",
+      Math.max(1, frameStrokeWidth),
+    );
+    return {
+      screen,
+      width,
+      height,
+      headerHeight,
+    };
+  }
 
   fillStrokeRoundedRect(
     ctx,
