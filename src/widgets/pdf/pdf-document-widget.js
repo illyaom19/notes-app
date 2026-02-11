@@ -20,6 +20,8 @@ const COLLAPSED_ZONE_WORLD = 14;
 const GUTTER_MIN_WORLD = 22;
 const GUTTER_MAX_WORLD = 44;
 const CONTENT_EDGE_PAD_WORLD = 6;
+const DOCK_CONTENT_MIN_ZOOM = 0.4;
+const DOCK_CONTENT_MAX_ZOOM = 3.5;
 
 function intersects(a, b) {
   return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
@@ -552,6 +554,53 @@ export class PdfDocumentWidget extends WidgetBase {
     return this._pageSegments.get(pageNumber) ?? [];
   }
 
+  _isViewportDocked() {
+    const dock = this.metadata?.viewportDock;
+    return Boolean(dock && typeof dock === "object" && (dock.side === "left" || dock.side === "right"));
+  }
+
+  _resolveDockViewportView() {
+    const source = this.metadata?.viewportDock?.view;
+    const zoomRaw = Number(source?.zoom);
+    const offsetXRaw = Number(source?.offsetXWorld);
+    const offsetYRaw = Number(source?.offsetYWorld);
+    return {
+      zoom: Number.isFinite(zoomRaw)
+        ? Math.max(DOCK_CONTENT_MIN_ZOOM, Math.min(DOCK_CONTENT_MAX_ZOOM, zoomRaw))
+        : 1,
+      offsetXWorld: Number.isFinite(offsetXRaw) ? offsetXRaw : 0,
+      offsetYWorld: Number.isFinite(offsetYRaw) ? offsetYRaw : 0,
+    };
+  }
+
+  _dockViewportContentRect() {
+    return {
+      x: this._layoutMetrics.pageX,
+      y: this.position.y + HEADER_WORLD,
+      width: this._layoutMetrics.pageWidth,
+      height: Math.max(20, this.size.height - HEADER_WORLD - DOCUMENT_BOTTOM_PADDING_WORLD),
+    };
+  }
+
+  _transformDockRect(rect, dockView, contentRect) {
+    if (!dockView || !contentRect) {
+      return rect;
+    }
+    return {
+      x: contentRect.x + (rect.x - contentRect.x + dockView.offsetXWorld) * dockView.zoom,
+      y: contentRect.y + (rect.y - contentRect.y + dockView.offsetYWorld) * dockView.zoom,
+      width: rect.width * dockView.zoom,
+      height: rect.height * dockView.zoom,
+    };
+  }
+
+  _transformDockY(worldY, dockView, contentRect) {
+    if (!dockView || !contentRect) {
+      return worldY;
+    }
+    return contentRect.y + (worldY - contentRect.y + dockView.offsetYWorld) * dockView.zoom;
+  }
+
   _buildPageTileMappings(pageEntry, scaleBucket, visibleWorld) {
     const viewport = pageEntry.pageProxy.getViewport({ scale: scaleBucket });
     const pageBounds = this._getPageBoundsByNumber(pageEntry.pageNumber);
@@ -838,7 +887,10 @@ export class PdfDocumentWidget extends WidgetBase {
       cameraZoom: camera.zoom,
       viewMode: renderContext?.viewMode,
     });
-    const showPageChrome = interaction.revealActions;
+    const viewportDocked = this._isViewportDocked();
+    const dockView = viewportDocked ? this._resolveDockViewportView() : null;
+    const dockContentRect = viewportDocked ? this._dockViewportContentRect() : null;
+    const showPageChrome = interaction.revealActions && !viewportDocked;
     const transformingWidgetId =
       typeof renderContext?.interaction?.transformingWidgetId === "string"
         ? renderContext.interaction.transformingWidgetId
@@ -897,14 +949,39 @@ export class PdfDocumentWidget extends WidgetBase {
       return;
     }
 
+    if (dockContentRect) {
+      const contentScreen = camera.worldToScreen(dockContentRect.x, dockContentRect.y);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(
+        contentScreen.x,
+        contentScreen.y,
+        Math.max(1, dockContentRect.width * camera.zoom),
+        Math.max(1, dockContentRect.height * camera.zoom),
+      );
+      ctx.clip();
+    }
+
     let firstVisiblePage = null;
     let lastVisiblePage = null;
 
+    const dockVisibleWorld = dockContentRect
+      ? {
+          minX: dockContentRect.x,
+          maxX: dockContentRect.x + dockContentRect.width,
+          minY: dockContentRect.y,
+          maxY: dockContentRect.y + dockContentRect.height,
+        }
+      : null;
+
     for (const pageEntry of this.pages) {
-      const pageBounds = this._getPageBoundsByNumber(pageEntry.pageNumber);
-      if (!pageBounds) {
+      const basePageBounds = this._getPageBoundsByNumber(pageEntry.pageNumber);
+      if (!basePageBounds) {
         continue;
       }
+      const pageBounds = dockView
+        ? this._transformDockRect(basePageBounds, dockView, dockContentRect)
+        : basePageBounds;
 
       const pageWorldRect = {
         minX: pageBounds.x,
@@ -914,6 +991,9 @@ export class PdfDocumentWidget extends WidgetBase {
       };
 
       if (!intersects(pageWorldRect, visibleWorld)) {
+        continue;
+      }
+      if (dockVisibleWorld && !intersects(pageWorldRect, dockVisibleWorld)) {
         continue;
       }
 
@@ -941,16 +1021,32 @@ export class PdfDocumentWidget extends WidgetBase {
       if (Array.isArray(pageEntry.rasterLevels) && pageEntry.rasterLevels.length > 0) {
         const mappings = this._getPageSegmentsByNumber(pageEntry.pageNumber)
           .filter((segment) => {
-            if (segment.worldEndY <= segment.worldStartY) {
+            const segmentWorldStartY = dockView
+              ? this._transformDockY(segment.worldStartY, dockView, dockContentRect)
+              : segment.worldStartY;
+            const segmentWorldEndY = dockView
+              ? this._transformDockY(segment.worldEndY, dockView, dockContentRect)
+              : segment.worldEndY;
+            if (segmentWorldEndY <= segmentWorldStartY) {
               return false;
             }
-            return !(segment.worldEndY < visibleWorld.minY || segment.worldStartY > visibleWorld.maxY);
+            if (segmentWorldEndY < visibleWorld.minY || segmentWorldStartY > visibleWorld.maxY) {
+              return false;
+            }
+            if (dockVisibleWorld && (segmentWorldEndY < dockVisibleWorld.minY || segmentWorldStartY > dockVisibleWorld.maxY)) {
+              return false;
+            }
+            return true;
           })
           .map((segment) => ({
             sourceStartY: segment.sourceStartY,
             sourceEndY: segment.sourceEndY,
-            worldStartY: segment.worldStartY,
-            worldEndY: segment.worldEndY,
+            worldStartY: dockView
+              ? this._transformDockY(segment.worldStartY, dockView, dockContentRect)
+              : segment.worldStartY,
+            worldEndY: dockView
+              ? this._transformDockY(segment.worldEndY, dockView, dockContentRect)
+              : segment.worldEndY,
           }));
         const drawLevel = selectRasterLevelForZoom(pageEntry, camera.zoom);
         if (drawLevel?.image) {
@@ -976,7 +1072,44 @@ export class PdfDocumentWidget extends WidgetBase {
         }
       } else if (pageEntry.tileCache) {
         const scaleBucket = this._getScaleBucket(camera.zoom);
-        const mappings = this._buildPageTileMappings(pageEntry, scaleBucket, visibleWorld);
+        const mappingVisibleWorld = dockView
+          ? {
+              minX: -Infinity,
+              maxX: Infinity,
+              minY: -Infinity,
+              maxY: Infinity,
+            }
+          : visibleWorld;
+        let mappings = this._buildPageTileMappings(pageEntry, scaleBucket, mappingVisibleWorld);
+        if (dockView) {
+          mappings = mappings
+            .map((mapping) => ({
+              ...mapping,
+              worldX:
+                dockContentRect.x + (mapping.worldX - dockContentRect.x + dockView.offsetXWorld) * dockView.zoom,
+              worldY: this._transformDockY(mapping.worldY, dockView, dockContentRect),
+              worldWidth: mapping.worldWidth * dockView.zoom,
+              worldHeight: mapping.worldHeight * dockView.zoom,
+            }))
+            .filter((mapping) => {
+              if (mapping.worldHeight <= 0 || mapping.worldWidth <= 0) {
+                return false;
+              }
+              const mappingRect = {
+                minX: mapping.worldX,
+                maxX: mapping.worldX + mapping.worldWidth,
+                minY: mapping.worldY,
+                maxY: mapping.worldY + mapping.worldHeight,
+              };
+              if (!intersects(mappingRect, visibleWorld)) {
+                return false;
+              }
+              if (dockVisibleWorld && !intersects(mappingRect, dockVisibleWorld)) {
+                return false;
+              }
+              return true;
+            });
+        }
         if (!externalWidgetTransformActive) {
           pageEntry.tileCache.requestMappedRegions({
             mappings,
@@ -1020,11 +1153,11 @@ export class PdfDocumentWidget extends WidgetBase {
       }
     }
 
-    if (
-      showPageChrome &&
-      !externalWidgetTransformActive &&
-      firstVisiblePage !== null &&
-      lastVisiblePage !== null
+      if (
+        showPageChrome &&
+        !externalWidgetTransformActive &&
+        firstVisiblePage !== null &&
+        lastVisiblePage !== null
     ) {
       const visibleLabel =
         firstVisiblePage === lastVisiblePage
@@ -1043,6 +1176,10 @@ export class PdfDocumentWidget extends WidgetBase {
       ctx.fillText(visibleLabel, pillX + pillW / 2, pillY + pillH / 2);
       ctx.textAlign = "start";
       ctx.textBaseline = "alphabetic";
+    }
+
+    if (dockContentRect) {
+      ctx.restore();
     }
   }
 

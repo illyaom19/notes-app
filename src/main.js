@@ -243,11 +243,13 @@ const VIEWPORT_DOCK_MARGIN_PX = 10;
 const VIEWPORT_DOCK_META_VERSION = 1;
 const VIEWPORT_DOCK_EPSILON_WORLD = 0.001;
 const VIEWPORT_DOCK_WIDTH_RATIO = 0.25;
-const VIEWPORT_DOCK_HEIGHT_RATIO = 1 / 3;
+const VIEWPORT_DOCK_HEIGHT_RATIO = 0.5;
 const VIEWPORT_DOCK_MIN_WIDTH_PX = 120;
 const VIEWPORT_DOCK_MIN_HEIGHT_PX = 120;
 const VIEWPORT_DOCK_MAX_WIDTH_RATIO = 0.45;
 const VIEWPORT_DOCK_MAX_HEIGHT_RATIO = 0.6;
+const VIEWPORT_DOCK_CONTENT_MIN_ZOOM = 0.4;
+const VIEWPORT_DOCK_CONTENT_MAX_ZOOM = 3.5;
 const WIDGET_TRASH_TARGET_SIZE_PX = 56;
 const WIDGET_TRASH_TARGET_MARGIN_PX = 14;
 const onboardingRuntimeSignals = {
@@ -2982,26 +2984,37 @@ function normalizeViewportDockMetadata(candidate) {
   if (!candidate || typeof candidate !== "object") {
     return null;
   }
+  const normalizeDockView = (viewCandidate) => {
+    const viewSource = viewCandidate && typeof viewCandidate === "object" ? viewCandidate : {};
+    return {
+      zoom: clamp(
+        Number.isFinite(Number(viewSource.zoom)) ? Number(viewSource.zoom) : 1,
+        VIEWPORT_DOCK_CONTENT_MIN_ZOOM,
+        VIEWPORT_DOCK_CONTENT_MAX_ZOOM,
+      ),
+      offsetXWorld: Number.isFinite(Number(viewSource.offsetXWorld)) ? Number(viewSource.offsetXWorld) : 0,
+      offsetYWorld: Number.isFinite(Number(viewSource.offsetYWorld)) ? Number(viewSource.offsetYWorld) : 0,
+    };
+  };
   const side = candidate.side === "right" ? "right" : candidate.side === "left" ? "left" : null;
   if (!side) {
     return null;
   }
   const offsetTopPx = Math.max(0, Number(candidate.offsetTopPx) || 0);
-  const widthRatio = clamp(
-    Number(candidate.widthRatio) || VIEWPORT_DOCK_WIDTH_RATIO,
-    VIEWPORT_DOCK_WIDTH_RATIO,
-    VIEWPORT_DOCK_MAX_WIDTH_RATIO,
-  );
-  const heightRatio = clamp(
-    Number(candidate.heightRatio) || VIEWPORT_DOCK_HEIGHT_RATIO,
-    VIEWPORT_DOCK_HEIGHT_RATIO,
-    VIEWPORT_DOCK_MAX_HEIGHT_RATIO,
-  );
+  const widthRatio = VIEWPORT_DOCK_WIDTH_RATIO;
+  const heightRatio = VIEWPORT_DOCK_HEIGHT_RATIO;
+  const restoreWidthWorld = Number(candidate.restoreWidthWorld);
+  const restoreHeightWorld = Number(candidate.restoreHeightWorld);
   return {
     side,
     offsetTopPx,
     widthRatio,
     heightRatio,
+    restoreWidthWorld:
+      Number.isFinite(restoreWidthWorld) && restoreWidthWorld > 0 ? restoreWidthWorld : null,
+    restoreHeightWorld:
+      Number.isFinite(restoreHeightWorld) && restoreHeightWorld > 0 ? restoreHeightWorld : null,
+    view: normalizeDockView(candidate.view),
     version: VIEWPORT_DOCK_META_VERSION,
   };
 }
@@ -3078,8 +3091,11 @@ function applyViewportDockToWidget(widget, { camera = runtime.camera, viewportRe
   const normalizedDock = {
     side: dock.side,
     offsetTopPx: yPx,
-    widthRatio: dock.widthRatio,
-    heightRatio: dock.heightRatio,
+    widthRatio: VIEWPORT_DOCK_WIDTH_RATIO,
+    heightRatio: VIEWPORT_DOCK_HEIGHT_RATIO,
+    restoreWidthWorld: dock.restoreWidthWorld,
+    restoreHeightWorld: dock.restoreHeightWorld,
+    view: dock.view,
     version: VIEWPORT_DOCK_META_VERSION,
   };
   const existingDock = widget.metadata?.viewportDock;
@@ -3089,6 +3105,11 @@ function applyViewportDockToWidget(widget, { camera = runtime.camera, viewportRe
     Math.abs((Number(existingDock.offsetTopPx) || 0) - normalizedDock.offsetTopPx) > 0.5 ||
     Math.abs((Number(existingDock.widthRatio) || VIEWPORT_DOCK_WIDTH_RATIO) - normalizedDock.widthRatio) > 0.001 ||
     Math.abs((Number(existingDock.heightRatio) || VIEWPORT_DOCK_HEIGHT_RATIO) - normalizedDock.heightRatio) > 0.001 ||
+    Math.abs((Number(existingDock.restoreWidthWorld) || 0) - (Number(normalizedDock.restoreWidthWorld) || 0)) > 0.001 ||
+    Math.abs((Number(existingDock.restoreHeightWorld) || 0) - (Number(normalizedDock.restoreHeightWorld) || 0)) > 0.001 ||
+    Math.abs((Number(existingDock?.view?.zoom) || 1) - (Number(normalizedDock?.view?.zoom) || 1)) > 0.0001 ||
+    Math.abs((Number(existingDock?.view?.offsetXWorld) || 0) - (Number(normalizedDock?.view?.offsetXWorld) || 0)) > 0.001 ||
+    Math.abs((Number(existingDock?.view?.offsetYWorld) || 0) - (Number(normalizedDock?.view?.offsetYWorld) || 0)) > 0.001 ||
     Number(existingDock.version) !== VIEWPORT_DOCK_META_VERSION
   ) {
     widget.metadata = {
@@ -3157,11 +3178,17 @@ function dockWidgetToViewportSide(widget, side, pointerClientY = null) {
     ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
   };
   delete metadata.pinned;
+  const existingDock = normalizeViewportDockMetadata(metadata.viewportDock);
+  const restoreWidthWorld = existingDock?.restoreWidthWorld ?? Math.max(20, Number(widget.size?.width) || 20);
+  const restoreHeightWorld = existingDock?.restoreHeightWorld ?? Math.max(20, Number(widget.size?.height) || 20);
   metadata.viewportDock = {
     side,
     offsetTopPx,
     widthRatio: VIEWPORT_DOCK_WIDTH_RATIO,
     heightRatio: VIEWPORT_DOCK_HEIGHT_RATIO,
+    restoreWidthWorld,
+    restoreHeightWorld,
+    view: existingDock?.view ?? { zoom: 1, offsetXWorld: 0, offsetYWorld: 0 },
     version: VIEWPORT_DOCK_META_VERSION,
   };
   widget.metadata = metadata;
@@ -3707,10 +3734,10 @@ function handleWidgetDragStateForLibrary(payload) {
   if (payload.phase === "end") {
     const dragState = { ...libraryDropDragState };
     libraryDropDragState = null;
-    setLibraryDropTargetState({ active: false, over: false });
-    setWidgetTrashDropTargetState({ active: false, over: false });
 
     if (dragState.mode !== "move") {
+      setLibraryDropTargetState({ active: false, over: false });
+      setWidgetTrashDropTargetState({ active: false, over: false });
       return;
     }
     const hasPointerLocation = Number.isFinite(payload.clientX) && Number.isFinite(payload.clientY);
@@ -3720,6 +3747,8 @@ function handleWidgetDragStateForLibrary(payload) {
     const droppedOverLibrary = hasPointerLocation
       ? pointerOverLibraryLauncher(payload.clientX, payload.clientY)
       : Boolean(dragState.overLibrary);
+    setLibraryDropTargetState({ active: false, over: false });
+    setWidgetTrashDropTargetState({ active: false, over: false });
     if (droppedOverTrash) {
       runtime.removeWidgetById(dragState.widgetId, { reason: "drag-trash-delete" });
       if (runtime.getSelectedWidgetId() === dragState.widgetId) {

@@ -761,6 +761,11 @@ export class CanvasRuntime {
     this.canvas.addEventListener(
       "wheel",
       (event) => {
+        if (this._dispatchPointer("onWheel", event)) {
+          event.preventDefault();
+          this.requestRender({ continuousMs: 140 });
+          return;
+        }
         event.preventDefault();
         this._lastPointerType = "mouse";
         const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08;

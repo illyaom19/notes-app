@@ -14,6 +14,8 @@ const TAP_MOVE_THRESHOLD_PX = 8;
 const UNAVAILABLE_DOT_PX = 8;
 const MIN_COLLAPSE_ACTION_PX = 10;
 const MIN_RESIZE_ACTION_PX = 16;
+const VIEWPORT_DOCK_CONTENT_MIN_ZOOM = 0.4;
+const VIEWPORT_DOCK_CONTENT_MAX_ZOOM = 3.5;
 
 function worldPoint(event, camera) {
   return camera.screenToWorld(event.offsetX, event.offsetY);
@@ -243,6 +245,72 @@ function mutateWidgetSize(widget, dx, dy) {
 
   widget.size.width = Math.max(120, widget.size.width + dx);
   widget.size.height = Math.max(80, widget.size.height + dy);
+}
+
+function viewportBodyRect(rects) {
+  const headerBottom = rects.header.y + rects.header.height;
+  return {
+    x: rects.bounds.x,
+    y: headerBottom,
+    width: rects.bounds.width,
+    height: Math.max(1, rects.bounds.y + rects.bounds.height - headerBottom),
+  };
+}
+
+function normalizeDockView(viewCandidate) {
+  const source = viewCandidate && typeof viewCandidate === "object" ? viewCandidate : {};
+  return {
+    zoom: clamp(
+      Number.isFinite(Number(source.zoom)) ? Number(source.zoom) : 1,
+      VIEWPORT_DOCK_CONTENT_MIN_ZOOM,
+      VIEWPORT_DOCK_CONTENT_MAX_ZOOM,
+    ),
+    offsetXWorld: Number.isFinite(Number(source.offsetXWorld)) ? Number(source.offsetXWorld) : 0,
+    offsetYWorld: Number.isFinite(Number(source.offsetYWorld)) ? Number(source.offsetYWorld) : 0,
+  };
+}
+
+function mutateDockViewportPan(widget, dx, dy) {
+  if (!widget || !isWidgetViewportDocked(widget)) {
+    return false;
+  }
+  const metadata = widget.metadata && typeof widget.metadata === "object" ? { ...widget.metadata } : {};
+  const dock = metadata.viewportDock && typeof metadata.viewportDock === "object" ? { ...metadata.viewportDock } : null;
+  if (!dock) {
+    return false;
+  }
+  const view = normalizeDockView(dock.view);
+  view.offsetXWorld += dx / Math.max(0.01, view.zoom);
+  view.offsetYWorld += dy / Math.max(0.01, view.zoom);
+  dock.view = view;
+  metadata.viewportDock = dock;
+  widget.metadata = metadata;
+  return true;
+}
+
+function mutateDockViewportZoom(widget, pointerWorldX, pointerWorldY, zoomFactor) {
+  if (!widget || !isWidgetViewportDocked(widget)) {
+    return false;
+  }
+  const metadata = widget.metadata && typeof widget.metadata === "object" ? { ...widget.metadata } : {};
+  const dock = metadata.viewportDock && typeof metadata.viewportDock === "object" ? { ...metadata.viewportDock } : null;
+  if (!dock) {
+    return false;
+  }
+  const view = normalizeDockView(dock.view);
+  const nextZoom = clamp(view.zoom * zoomFactor, VIEWPORT_DOCK_CONTENT_MIN_ZOOM, VIEWPORT_DOCK_CONTENT_MAX_ZOOM);
+  if (Math.abs(nextZoom - view.zoom) < 0.0001) {
+    return false;
+  }
+  const anchorX = Number.isFinite(pointerWorldX) ? pointerWorldX - widget.position.x : 0;
+  const anchorY = Number.isFinite(pointerWorldY) ? pointerWorldY - widget.position.y : 0;
+  view.offsetXWorld += anchorX * (1 / nextZoom - 1 / view.zoom);
+  view.offsetYWorld += anchorY * (1 / nextZoom - 1 / view.zoom);
+  view.zoom = nextZoom;
+  dock.view = view;
+  metadata.viewportDock = dock;
+  widget.metadata = metadata;
+  return true;
 }
 
 function isTypingTarget(target) {
@@ -492,6 +560,14 @@ export function createWidgetInteractionManager({
             ? { ...widget.metadata }
             : {};
           if (metadata.viewportDock && typeof metadata.viewportDock === "object") {
+            const restoreWidth = Number(metadata.viewportDock.restoreWidthWorld);
+            const restoreHeight = Number(metadata.viewportDock.restoreHeightWorld);
+            if (Number.isFinite(restoreWidth) && restoreWidth > 20) {
+              widget.size.width = restoreWidth;
+            }
+            if (Number.isFinite(restoreHeight) && restoreHeight > 20) {
+              widget.size.height = restoreHeight;
+            }
             delete metadata.viewportDock;
             widget.metadata = metadata;
             if (typeof onWidgetUndocked === "function") {
@@ -507,6 +583,25 @@ export function createWidgetInteractionManager({
           runtime.setWidgetTransformState(widget.id, "move");
         }
         emitWidgetDragState("start", event, widget.id, "move");
+        return true;
+      }
+
+      const bodyRect = viewportBodyRect(rects);
+      if (viewportDocked && !widget.collapsed && rectContains(bodyRect, point.x, point.y)) {
+        if (!touchCanCaptureInteraction) {
+          return false;
+        }
+        clearTapState();
+        runtime.bringWidgetToFront(widget.id);
+        runtime.setFocusedWidgetId(widget.id);
+        runtime.setSelectedWidgetId(widget.id);
+        dragState.pointerId = event.pointerId;
+        dragState.widgetId = widget.id;
+        dragState.mode = "viewport-pan";
+        dragState.lastWorld = point;
+        if (typeof runtime.setWidgetTransformState === "function") {
+          runtime.setWidgetTransformState(widget.id, "move");
+        }
         return true;
       }
 
@@ -550,9 +645,34 @@ export function createWidgetInteractionManager({
         mutateWidgetPosition(widget, dx, dy);
       } else if (dragState.mode === "resize") {
         mutateWidgetSize(widget, dx, dy);
+      } else if (dragState.mode === "viewport-pan") {
+        mutateDockViewportPan(widget, dx, dy);
       }
 
       emitWidgetDragState("move", event, widget.id, dragState.mode);
+      if (typeof onWidgetPreviewMutated === "function") {
+        onWidgetPreviewMutated(widget);
+      }
+      return true;
+    },
+
+    onWheel(event, context) {
+      const widget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
+      if (!widget || !isWidgetViewportDocked(widget) || widget.collapsed) {
+        return false;
+      }
+      const camera = context.camera;
+      const point = worldPoint(event, camera);
+      const rects = controlRects(widget, camera);
+      const bodyRect = viewportBodyRect(rects);
+      if (!rectContains(bodyRect, point.x, point.y)) {
+        return false;
+      }
+      const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08;
+      const changed = mutateDockViewportZoom(widget, point.x, point.y, zoomFactor);
+      if (!changed) {
+        return false;
+      }
       if (typeof onWidgetPreviewMutated === "function") {
         onWidgetPreviewMutated(widget);
       }
