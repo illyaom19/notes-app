@@ -5,7 +5,11 @@ const HEADER_HEIGHT_PX = 34;
 const CONTROL_SIZE_PX = 24;
 const RESIZE_HANDLE_PX = 24;
 const CONTROL_PADDING_PX = 6;
-const COLLAPSE_BUTTON_Y_OFFSET_PX = 3;
+const COLLAPSE_BUTTON_Y_OFFSET_PX = 12;
+const PIN_CONTROL_GAP_PX = 6;
+const PIN_CONTROL_MIN_W_PX = 22;
+const PIN_CONTROL_MIN_H_PX = 16;
+const PIN_CONTROL_MAX_H_PX = 24;
 const TAP_MOVE_THRESHOLD_PX = 8;
 const UNAVAILABLE_DOT_PX = 8;
 const MIN_COLLAPSE_ACTION_PX = 10;
@@ -40,6 +44,10 @@ function rectsOverlap(a, b, inset = 0) {
     a.y + a.height - inset < b.y + inset ||
     a.y + inset > b.y + b.height - inset
   );
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function interactionFlags(widget) {
@@ -100,6 +108,37 @@ function controlRects(widget, camera) {
   const handleSize = worldSizeForPixels(camera, RESIZE_HANDLE_PX);
   const collapseYOffset = worldSizeForPixels(camera, COLLAPSE_BUTTON_Y_OFFSET_PX);
   const collapseMaxY = bounds.y + Math.max(pad, headerHeight - controlSize - pad);
+  const floatingTitle = widget && typeof widget === "object" ? widget._floatingTitleLayout : null;
+  let pin;
+  if (
+    floatingTitle &&
+    Number.isFinite(floatingTitle.x) &&
+    Number.isFinite(floatingTitle.y) &&
+    Number.isFinite(floatingTitle.width) &&
+    Number.isFinite(floatingTitle.height)
+  ) {
+    const floatingZoom = Math.max(1, Number(floatingTitle.zoom) || camera.zoom);
+    const pinHeightPx = clamp(floatingTitle.height, PIN_CONTROL_MIN_H_PX, PIN_CONTROL_MAX_H_PX);
+    const pinWidthPx = Math.max(PIN_CONTROL_MIN_W_PX, pinHeightPx + 6);
+    const pinX = floatingTitle.x + floatingTitle.width + PIN_CONTROL_GAP_PX * floatingZoom;
+    const pinY = floatingTitle.y + Math.max(0, (floatingTitle.height - pinHeightPx) * 0.5);
+    const pinWorld = camera.screenToWorld(pinX, pinY);
+    pin = {
+      x: pinWorld.x,
+      y: pinWorld.y,
+      width: pinWidthPx / Math.max(0.25, camera.zoom),
+      height: pinHeightPx / Math.max(0.25, camera.zoom),
+    };
+  } else {
+    const pinW = worldSizeForPixels(camera, PIN_CONTROL_MIN_W_PX);
+    const pinH = worldSizeForPixels(camera, PIN_CONTROL_MIN_H_PX);
+    pin = {
+      x: bounds.x + Math.max(pad, 2),
+      y: bounds.y - pinH - worldSizeForPixels(camera, 4),
+      width: pinW,
+      height: pinH,
+    };
+  }
 
   return {
     bounds,
@@ -121,16 +160,17 @@ function controlRects(widget, camera) {
       width: handleSize,
       height: handleSize,
     },
+    pin,
   };
 }
 
 function controlsUnavailable({ flags, rects, camera, collapsed, pinned = false }) {
   const unavailable = {
-    collapse: false,
+    collapse: pinned,
     resize: collapsed || pinned,
   };
 
-  if (flags.collapsible) {
+  if (flags.collapsible && !pinned) {
     const collapseScreen = toScreenRect(rects.collapse, camera);
     unavailable.collapse =
       collapseScreen.width < MIN_COLLAPSE_ACTION_PX || collapseScreen.height < MIN_COLLAPSE_ACTION_PX;
@@ -142,7 +182,7 @@ function controlsUnavailable({ flags, rects, camera, collapsed, pinned = false }
       resizeScreen.width < MIN_RESIZE_ACTION_PX || resizeScreen.height < MIN_RESIZE_ACTION_PX;
   }
 
-  if (flags.collapsible && flags.resizable && !collapsed && !unavailable.collapse && !unavailable.resize) {
+  if (flags.collapsible && flags.resizable && !collapsed && !pinned && !unavailable.collapse && !unavailable.resize) {
     const collapseScreen = toScreenRect(rects.collapse, camera);
     const resizeScreen = toScreenRect(rects.resize, camera);
     if (rectsOverlap(collapseScreen, resizeScreen, 2)) {
@@ -210,6 +250,36 @@ export function createWidgetInteractionManager({
     moved: false,
   };
   const activeTouchPointerIds = new Set();
+
+  function pickWidgetByPinControl(event, camera) {
+    const world = worldPoint(event, camera);
+    const selectedId = runtime.getSelectedWidgetId();
+    const focusedId = runtime.getFocusedWidgetId();
+    const hoveredId = runtime.getHoveredWidgetId?.() ?? null;
+    const touchPrimary = event.pointerType === "touch";
+    const widgets = runtime.listWidgets();
+
+    for (let index = widgets.length - 1; index >= 0; index -= 1) {
+      const widget = widgets[index];
+      if (!widget) {
+        continue;
+      }
+
+      const revealActions =
+        selectedId === widget.id ||
+        focusedId === widget.id ||
+        (!touchPrimary && hoveredId === widget.id);
+      if (!revealActions) {
+        continue;
+      }
+
+      const rects = controlRects(widget, camera);
+      if (rectContains(rects.pin, world.x, world.y)) {
+        return widget;
+      }
+    }
+    return null;
+  }
 
   function emitWidgetDragState(phase, event, widgetId, mode) {
     if (typeof onWidgetDragStateChange !== "function") {
@@ -292,6 +362,25 @@ export function createWidgetInteractionManager({
       }
 
       const camera = context.camera;
+      const pinWidget = pickWidgetByPinControl(event, camera);
+      if (pinWidget) {
+        if (isTouch && activeTouchPointerIds.size > 1) {
+          return false;
+        }
+        clearTapState();
+        runtime.bringWidgetToFront(pinWidget.id);
+        runtime.setFocusedWidgetId(pinWidget.id);
+        runtime.setSelectedWidgetId(pinWidget.id);
+        pinWidget.metadata = {
+          ...(pinWidget.metadata && typeof pinWidget.metadata === "object" ? pinWidget.metadata : {}),
+          pinned: !Boolean(pinWidget.metadata?.pinned),
+        };
+        if (typeof onWidgetCommitMutated === "function") {
+          onWidgetCommitMutated(pinWidget);
+        }
+        return true;
+      }
+
       const widget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
       if (!widget) {
         clearTapState();
@@ -543,7 +632,30 @@ export function createWidgetInteractionManager({
         return;
       }
 
-      if (flags.collapsible) {
+      const pinned = isWidgetPinned(widget);
+      const pinScreen = camera.worldToScreen(rects.pin.x, rects.pin.y);
+      const pinW = rects.pin.width * camera.zoom;
+      const pinH = rects.pin.height * camera.zoom;
+      fillPill(
+        ctx,
+        pinScreen.x,
+        pinScreen.y,
+        pinW,
+        pinH,
+        pinned ? WIDGET_THEME.palette.controlBg : WIDGET_THEME.palette.controlBgSoft,
+      );
+      drawControlGlyph(
+        ctx,
+        "pin",
+        {
+          x: pinScreen.x,
+          y: pinScreen.y,
+          size: Math.min(pinW, pinH),
+          color: WIDGET_THEME.palette.controlFg,
+        },
+      );
+
+      if (!pinned && flags.collapsible) {
         const collapseScreen = camera.worldToScreen(rects.collapse.x, rects.collapse.y);
         const collapseW = rects.collapse.width * camera.zoom;
         const collapseH = rects.collapse.height * camera.zoom;
@@ -573,7 +685,7 @@ export function createWidgetInteractionManager({
         }
       }
 
-      if (flags.resizable && !widget.collapsed) {
+      if (!pinned && flags.resizable && !widget.collapsed) {
         const resizeScreen = camera.worldToScreen(rects.resize.x, rects.resize.y);
         const resizeW = rects.resize.width * camera.zoom;
         const resizeH = rects.resize.height * camera.zoom;

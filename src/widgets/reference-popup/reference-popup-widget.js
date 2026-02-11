@@ -459,6 +459,7 @@ export class ReferencePopupWidget extends WidgetBase {
       frame,
       focused: interaction.focused,
       visible: interaction.showTitle,
+      widget: this,
     });
 
     const width = frame.width;
@@ -564,6 +565,7 @@ export class ReferencePopupWidget extends WidgetBase {
       frame,
       focused: interaction.focused,
       visible: interaction.showTitle,
+      widget: this,
     });
   }
 }

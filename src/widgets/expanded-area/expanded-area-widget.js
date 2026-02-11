@@ -37,6 +37,7 @@ export class ExpandedAreaWidget extends WidgetBase {
       frame,
       focused: interaction.focused,
       visible: interaction.showTitle,
+      widget: this,
     });
   }
 
@@ -52,6 +53,7 @@ export class ExpandedAreaWidget extends WidgetBase {
       frame,
       focused: interaction.focused,
       visible: interaction.showTitle,
+      widget: this,
     });
   }
 }

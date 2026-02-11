@@ -131,9 +131,12 @@ export function drawUnifiedWidgetFrame(
 export function drawFloatingWidgetTitle(
   ctx,
   camera,
-  { title = "", frame = null, focused = false, visible = false } = {},
+  { title = "", frame = null, focused = false, visible = false, widget = null } = {},
 ) {
   if (!visible || !frame || !title) {
+    if (widget && typeof widget === "object") {
+      widget._floatingTitleLayout = null;
+    }
     return;
   }
 
@@ -146,6 +149,16 @@ export function drawFloatingWidgetTitle(
   const pillW = Math.min(Math.max(44 * effectiveZoom, textWidth + padX * 2), Math.max(64, frame.width - 18));
   const pillX = frame.screen.x + 10;
   const pillY = frame.screen.y - pillH - Math.max(4, 6 * effectiveZoom);
+
+  if (widget && typeof widget === "object") {
+    widget._floatingTitleLayout = {
+      x: pillX,
+      y: pillY,
+      width: pillW,
+      height: pillH,
+      zoom: effectiveZoom,
+    };
+  }
 
   fillPill(
     ctx,
@@ -222,6 +235,28 @@ export function drawControlGlyph(ctx, glyph, { x, y, size, color = "#ffffff", li
     ctx.moveTo(centerX - half, centerY - half * 0.55);
     ctx.lineTo(centerX, centerY + half * 0.55);
     ctx.lineTo(centerX + half, centerY - half * 0.55);
+    ctx.stroke();
+  } else if (glyph === "pin") {
+    const headR = Math.max(1, size * 0.12);
+    const wingHalf = Math.max(2, size * 0.18);
+    const wingY = centerY - size * 0.08;
+    const tipY = centerY + size * 0.22;
+    const tailY = y + size - Math.max(2, size * 0.12);
+
+    ctx.beginPath();
+    ctx.arc(centerX, y + size * 0.24, headR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(centerX - wingHalf, wingY);
+    ctx.lineTo(centerX, tipY);
+    ctx.lineTo(centerX + wingHalf, wingY);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(centerX, tipY);
+    ctx.lineTo(centerX, tailY);
     ctx.stroke();
   } else {
     ctx.beginPath();

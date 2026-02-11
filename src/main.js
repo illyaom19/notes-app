@@ -2861,6 +2861,72 @@ function pointerOverLibraryLauncher(clientX, clientY) {
   );
 }
 
+function animateWidgetBackToOrigin(widget, originPosition, { durationMs = 220 } = {}) {
+  if (
+    !widget ||
+    !originPosition ||
+    !Number.isFinite(originPosition.x) ||
+    !Number.isFinite(originPosition.y)
+  ) {
+    return Promise.resolve(false);
+  }
+
+  const targetWidgetId = typeof widget.id === "string" ? widget.id : null;
+  const fromX = Number(widget.position?.x);
+  const fromY = Number(widget.position?.y);
+  const toX = originPosition.x;
+  const toY = originPosition.y;
+  if (!Number.isFinite(fromX) || !Number.isFinite(fromY)) {
+    return Promise.resolve(false);
+  }
+
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  if (Math.hypot(dx, dy) < 0.01) {
+    widget.position.x = toX;
+    widget.position.y = toY;
+    runtime.requestRender({ continuousMs: 80 });
+    return Promise.resolve(false);
+  }
+
+  const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+  const total = Math.max(80, Number(durationMs) || 220);
+  let startAt = 0;
+
+  return new Promise((resolve) => {
+    const frame = (timestamp) => {
+      if (!startAt) {
+        startAt = timestamp;
+      }
+      const elapsed = timestamp - startAt;
+      const t = Math.max(0, Math.min(1, elapsed / total));
+      const eased = easeOutCubic(t);
+
+      const liveWidget = targetWidgetId ? runtime.getWidgetById(targetWidgetId) : widget;
+      if (!liveWidget) {
+        resolve(false);
+        return;
+      }
+
+      liveWidget.position.x = fromX + dx * eased;
+      liveWidget.position.y = fromY + dy * eased;
+      runtime.requestRender({ continuousMs: 80 });
+
+      if (t < 1) {
+        window.requestAnimationFrame(frame);
+        return;
+      }
+
+      liveWidget.position.x = toX;
+      liveWidget.position.y = toY;
+      runtime.requestRender({ continuousMs: 120 });
+      resolve(true);
+    };
+
+    window.requestAnimationFrame(frame);
+  });
+}
+
 function savePdfWidgetToNotebookLibrary(widget, { forcedSourceId = null } = {}) {
   if (!activeContextId || !widget || widget.type !== "pdf-document") {
     return null;
@@ -3035,10 +3101,18 @@ function handleWidgetDragStateForLibrary(payload) {
   }
 
   if (payload.phase === "start") {
+    const draggedWidget = runtime.getWidgetById(payload.widgetId);
     libraryDropDragState = {
       widgetId: payload.widgetId,
       mode: payload.mode,
       over: payload.mode === "move" && pointerOverLibraryLauncher(payload.clientX, payload.clientY),
+      originPosition:
+        draggedWidget && Number.isFinite(draggedWidget.position?.x) && Number.isFinite(draggedWidget.position?.y)
+          ? {
+              x: draggedWidget.position.x,
+              y: draggedWidget.position.y,
+            }
+          : null,
     };
     setLibraryDropTargetState({
       active: payload.mode === "move",
@@ -3079,17 +3153,26 @@ function handleWidgetDragStateForLibrary(payload) {
       return;
     }
 
-    void addWidgetToNotebookLibraryFromDrag(widget).then((result) => {
-      if (result.ok) {
-        showLibraryDropFeedback({ kind: "success", message: "Added to Library" });
-        return;
-      }
-      if (result.reason === "duplicate") {
-        showLibraryDropFeedback({ kind: "deny", message: "Already in Library" });
-        return;
-      }
-      showLibraryDropFeedback({ kind: "deny", message: "Could not add to Library" });
-    });
+    void addWidgetToNotebookLibraryFromDrag(widget)
+      .then(async (result) => {
+        await animateWidgetBackToOrigin(widget, dragState.originPosition);
+        updateWidgetUi({ coalesceHeavy: true });
+        if (result.ok) {
+          showLibraryDropFeedback({ kind: "success", message: "Added to Library" });
+          return;
+        }
+        if (result.reason === "duplicate") {
+          showLibraryDropFeedback({ kind: "deny", message: "Already in Library" });
+          return;
+        }
+        showLibraryDropFeedback({ kind: "deny", message: "Could not add to Library" });
+      })
+      .catch(async (error) => {
+        console.error("Failed to add widget to library from drag.", error);
+        await animateWidgetBackToOrigin(widget, dragState.originPosition);
+        updateWidgetUi({ coalesceHeavy: true });
+        showLibraryDropFeedback({ kind: "deny", message: "Could not add to Library" });
+      });
   }
 }
 

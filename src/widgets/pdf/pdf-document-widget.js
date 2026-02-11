@@ -14,6 +14,7 @@ import { PdfTileCache } from "./pdf-tile-cache.js";
 
 const HEADER_WORLD = 40;
 const PAGE_GAP_WORLD = 16;
+const DOCUMENT_BOTTOM_PADDING_WORLD = 12;
 const MIN_WIDGET_HEIGHT = 320;
 const COLLAPSED_ZONE_WORLD = 14;
 const GUTTER_MIN_WORLD = 22;
@@ -247,7 +248,10 @@ export class PdfDocumentWidget extends WidgetBase {
     this.documentWorldHeight = currentY > 0 ? currentY - PAGE_GAP_WORLD : 0;
     const metrics = this._resolveLayoutMetrics();
     this._refreshPageBaseLayoutForWidth(metrics.pageWidth);
-    const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + this.documentWorldHeight);
+    const requiredHeight = Math.max(
+      MIN_WIDGET_HEIGHT,
+      HEADER_WORLD + this.documentWorldHeight + DOCUMENT_BOTTOM_PADDING_WORLD,
+    );
     this.size.height = requiredHeight;
     this._markLayoutDirty();
     this._ensureDisplayLayout();
@@ -281,7 +285,10 @@ export class PdfDocumentWidget extends WidgetBase {
     this.documentWorldHeight = currentY > 0 ? currentY - PAGE_GAP_WORLD : 0;
     const metrics = this._resolveLayoutMetrics();
     this._refreshPageBaseLayoutForWidth(metrics.pageWidth);
-    const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + this.documentWorldHeight);
+    const requiredHeight = Math.max(
+      MIN_WIDGET_HEIGHT,
+      HEADER_WORLD + this.documentWorldHeight + DOCUMENT_BOTTOM_PADDING_WORLD,
+    );
     this.size.height = requiredHeight;
     this._markLayoutDirty();
     this._ensureDisplayLayout();
@@ -515,7 +522,10 @@ export class PdfDocumentWidget extends WidgetBase {
     }
 
     const documentDisplayHeight = Math.max(60, this.documentWorldHeight - cumulativeReduction);
-    const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + documentDisplayHeight);
+    const requiredHeight = Math.max(
+      MIN_WIDGET_HEIGHT,
+      HEADER_WORLD + documentDisplayHeight + DOCUMENT_BOTTOM_PADDING_WORLD,
+    );
     this.size.height = requiredHeight;
   }
 
@@ -843,6 +853,7 @@ export class PdfDocumentWidget extends WidgetBase {
       frame,
       focused: interaction.focused,
       visible: interaction.showTitle,
+      widget: this,
     });
 
     if (this.loading) {
@@ -1049,6 +1060,7 @@ export class PdfDocumentWidget extends WidgetBase {
       frame,
       focused: interaction.focused,
       visible: interaction.showTitle,
+      widget: this,
     });
 
     const inset = 10;
