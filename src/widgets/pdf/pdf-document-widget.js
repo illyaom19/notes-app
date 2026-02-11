@@ -8,7 +8,7 @@ import {
   interactionStateForWidget,
   WIDGET_THEME,
 } from "../../features/widget-system/widget-theme.js";
-import { loadPdfJs } from "./pdfjs-loader.js";
+import { loadPdfDocumentFromBytes } from "./pdfjs-loader.js";
 import { selectRasterLevelForZoom } from "./pdf-rasterizer.js";
 import { PdfTileCache } from "./pdf-tile-cache.js";
 
@@ -139,9 +139,8 @@ export class PdfDocumentWidget extends WidgetBase {
     }
 
     try {
-      const pdfjs = await loadPdfJs();
-      const loadingTask = pdfjs.getDocument({ data: this.pdfBytes });
-      this.pdfDocument = await loadingTask.promise;
+      const { pdfDocument } = await loadPdfDocumentFromBytes(this.pdfBytes);
+      this.pdfDocument = pdfDocument;
       this.pageCount = this.pdfDocument.numPages;
 
       await this._buildPageLayout();

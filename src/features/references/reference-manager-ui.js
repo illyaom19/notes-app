@@ -1,4 +1,4 @@
-import { loadPdfJs } from "../../widgets/pdf/pdfjs-loader.js";
+import { loadPdfDocumentFromBytes } from "../../widgets/pdf/pdfjs-loader.js";
 
 const LONG_PRESS_MS = 430;
 const PREVIEW_WIDTH = 220;
@@ -679,8 +679,7 @@ export function createReferenceManagerUi({
       return null;
     }
 
-    const pdfjs = await loadPdfJs();
-    const doc = await pdfjs.getDocument({ data: bytes }).promise;
+    const { pdfDocument: doc } = await loadPdfDocumentFromBytes(bytes);
     const page = await doc.getPage(1);
     const previewCanvas = makeThumbCanvas(196, 118);
     const base = page.getViewport({ scale: 1 });

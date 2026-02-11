@@ -1,4 +1,4 @@
-import { loadPdfJs } from "../../widgets/pdf/pdfjs-loader.js";
+import { loadPdfDocumentFromBytes } from "../../widgets/pdf/pdfjs-loader.js";
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -417,11 +417,11 @@ export async function renderPdfPreview(container, entry, { loadDocumentBytes, lo
     }
   } else {
     try {
-      const pdfjs = await loadPdfJs();
       if (signal?.aborted) {
         return;
       }
-      pdfDocument = await pdfjs.getDocument({ data: bytes }).promise;
+      const loaded = await loadPdfDocumentFromBytes(bytes);
+      pdfDocument = loaded.pdfDocument;
     } catch (_error) {
       const title = typeof entry?.title === "string" && entry.title.trim() ? entry.title.trim() : "document.pdf";
       container.append(messageCard(`Unable to render PDF preview. Reupload "${title}".`));

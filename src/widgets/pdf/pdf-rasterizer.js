@@ -1,4 +1,4 @@
-import { loadPdfJs } from "./pdfjs-loader.js";
+import { loadPdfDocumentFromBytes } from "./pdfjs-loader.js";
 
 const DEFAULT_TARGET_WIDTHS = Object.freeze([640, 1024, 1536]);
 const DEFAULT_IMAGE_TYPE = "image/webp";
@@ -56,9 +56,7 @@ export async function createPdfRasterDocumentFromBytes(
     throw new Error("Cannot rasterize PDF without source bytes.");
   }
 
-  const pdfjs = await loadPdfJs();
-  const loadingTask = pdfjs.getDocument({ data: pdfBytes });
-  const pdfDocument = await loadingTask.promise;
+  const { pdfDocument, loadingTask } = await loadPdfDocumentFromBytes(pdfBytes);
 
   const widths = normalizeTargetWidths(targetWidths);
   const pages = [];

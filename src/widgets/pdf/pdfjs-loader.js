@@ -37,3 +37,53 @@ export async function loadPdfJs() {
 
   return loadPromise;
 }
+
+function isWorkerBootstrapError(error) {
+  const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
+  return (
+    message.includes("setting up fake worker failed") ||
+    message.includes("pdf.worker") ||
+    message.includes("failed to fetch dynamically imported module")
+  );
+}
+
+export async function loadPdfDocumentFromBytes(bytes, { forceDisableWorker = false } = {}) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
+    throw new Error("PDF bytes are unavailable.");
+  }
+
+  const pdfjs = await loadPdfJs();
+  const openDocument = async (disableWorker) => {
+    const loadingTask = pdfjs.getDocument({
+      data: bytes,
+      ...(disableWorker ? { disableWorker: true } : {}),
+    });
+    try {
+      const pdfDocument = await loadingTask.promise;
+      return {
+        pdfDocument,
+        loadingTask,
+      };
+    } catch (error) {
+      try {
+        loadingTask.destroy?.();
+      } catch (_error) {
+        // Ignore cleanup failure and rethrow original.
+      }
+      throw error;
+    }
+  };
+
+  if (forceDisableWorker) {
+    return openDocument(true);
+  }
+
+  try {
+    return await openDocument(false);
+  } catch (error) {
+    if (!isWorkerBootstrapError(error)) {
+      throw error;
+    }
+    return openDocument(true);
+  }
+}
