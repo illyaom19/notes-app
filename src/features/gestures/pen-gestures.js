@@ -107,6 +107,15 @@ function isBarrelSignal(event) {
     return true;
   }
 
+  // Galaxy Tab S7+/Samsung Internet can surface barrel taps as a normal tip
+  // press with zero pressure. Treat that as barrel intent as well.
+  if (event.pointerType === "pen" && event.buttons === 1) {
+    const pressure = Number.isFinite(event.pressure) ? event.pressure : null;
+    if (pressure !== null && pressure <= 0) {
+      return true;
+    }
+  }
+
   return false;
 }
 
