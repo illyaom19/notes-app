@@ -19,6 +19,14 @@ function worldPoint(event, camera) {
   return camera.screenToWorld(event.offsetX, event.offsetY);
 }
 
+function worldPointFromClient(canvas, camera, clientX, clientY) {
+  if (!(canvas instanceof HTMLCanvasElement)) {
+    return camera.screenToWorld(clientX, clientY);
+  }
+  const rect = canvas.getBoundingClientRect();
+  return camera.screenToWorld(clientX - rect.left, clientY - rect.top);
+}
+
 function worldSizeForPixels(camera, pixels) {
   return pixels / Math.max(0.25, camera.zoom);
 }
@@ -800,6 +808,104 @@ export function createWidgetInteractionManager({
   window.addEventListener("keydown", handleKeyDown);
 
   return {
+    beginExternalMoveDrag({ widgetId, pointerId, pointerType = "mouse", clientX, clientY } = {}) {
+      if (typeof widgetId !== "string" || !widgetId.trim()) {
+        return false;
+      }
+      if (!Number.isFinite(pointerId) || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+        return false;
+      }
+      const widget = runtime.getWidgetById(widgetId);
+      if (!widget || interactionFlags(widget).movable === false || isWidgetPinned(widget)) {
+        return false;
+      }
+
+      const camera = runtime.camera;
+      if (!camera) {
+        return false;
+      }
+
+      clearTapState();
+      if (dragState.pointerId !== null) {
+        const draggedWidgetId = dragState.widgetId;
+        const draggedMode = dragState.mode;
+        const draggedWidget = draggedWidgetId ? runtime.getWidgetById(draggedWidgetId) : null;
+        clearDragState();
+        emitWidgetDragState("end", { pointerType, clientX, clientY, pointerId }, draggedWidgetId, draggedMode);
+        if (draggedWidget && typeof onWidgetCommitMutated === "function") {
+          onWidgetCommitMutated(draggedWidget);
+        }
+      }
+
+      runtime.bringWidgetToFront(widget.id);
+      runtime.setFocusedWidgetId(widget.id);
+      runtime.setSelectedWidgetId(widget.id);
+      dragState.pointerId = pointerId;
+      dragState.widgetId = widget.id;
+      dragState.mode = "move";
+      dragState.lastWorld = worldPointFromClient(canvas, camera, clientX, clientY);
+      if (typeof runtime.setWidgetTransformState === "function") {
+        runtime.setWidgetTransformState(widget.id, "move");
+      }
+      emitWidgetDragState("start", { pointerType, clientX, clientY, pointerId }, widget.id, "move");
+      return true;
+    },
+
+    moveExternalDrag({ pointerId, pointerType = "mouse", clientX, clientY } = {}) {
+      if (!Number.isFinite(pointerId) || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+        return false;
+      }
+      if (dragState.pointerId !== pointerId || !dragState.widgetId || !dragState.mode) {
+        return false;
+      }
+      const widget = runtime.getWidgetById(dragState.widgetId);
+      if (!widget) {
+        clearDragState();
+        return false;
+      }
+      const camera = runtime.camera;
+      if (!camera) {
+        clearDragState();
+        return false;
+      }
+
+      const point = worldPointFromClient(canvas, camera, clientX, clientY);
+      const dx = point.x - dragState.lastWorld.x;
+      const dy = point.y - dragState.lastWorld.y;
+      dragState.lastWorld = point;
+
+      if (dragState.mode === "move") {
+        mutateWidgetPosition(widget, dx, dy);
+      } else if (dragState.mode === "resize") {
+        mutateWidgetSize(widget, dx, dy);
+      }
+
+      emitWidgetDragState("move", { pointerType, clientX, clientY, pointerId }, widget.id, dragState.mode);
+      if (typeof onWidgetPreviewMutated === "function") {
+        onWidgetPreviewMutated(widget);
+      }
+      return true;
+    },
+
+    endExternalDrag({ pointerId, pointerType = "mouse", clientX = null, clientY = null } = {}) {
+      if (!Number.isFinite(pointerId)) {
+        return false;
+      }
+      if (dragState.pointerId !== pointerId) {
+        return false;
+      }
+      const draggedWidgetId = dragState.widgetId;
+      const draggedMode = dragState.mode;
+      const draggedWidget = draggedWidgetId ? runtime.getWidgetById(draggedWidgetId) : null;
+      clearDragState();
+      emitWidgetDragState("end", { pointerType, clientX, clientY, pointerId }, draggedWidgetId, draggedMode);
+      if (draggedWidget && typeof onWidgetCommitMutated === "function") {
+        onWidgetCommitMutated(draggedWidget);
+      }
+      clearTapState();
+      return true;
+    },
+
     dispose() {
       if (typeof runtime.setWidgetTransformState === "function") {
         runtime.setWidgetTransformState(null, null);

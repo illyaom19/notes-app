@@ -6790,10 +6790,10 @@ function wireReferenceManagerUi() {
         }),
       });
       if (!widget) {
-        return false;
+        return { imported: false };
       }
       updateWidgetUi();
-      return true;
+      return { imported: true, widgetId: widget.id };
     },
     onImportDocument: async (entry, { screenPoint = null } = {}) => {
       const widget = await createPdfWidgetFromLibraryEntry(entry, {
@@ -6806,10 +6806,10 @@ function wireReferenceManagerUi() {
         }),
       });
       if (!widget) {
-        return false;
+        return { imported: false };
       }
       updateWidgetUi();
-      return true;
+      return { imported: true, widgetId: widget.id };
     },
     onImportNote: async (entry, { screenPoint = null } = {}) => {
       const widget = await createNoteWidgetFromLibraryEntry(
@@ -6822,11 +6822,33 @@ function wireReferenceManagerUi() {
         }),
       );
       if (!widget) {
-        return false;
+        return { imported: false };
       }
       updateWidgetUi();
-      return true;
+      return { imported: true, widgetId: widget.id };
     },
+    onBeginSpawnDrag: ({ widgetId, pointerId, pointerType, clientX, clientY }) =>
+      widgetInteractionManager?.beginExternalMoveDrag?.({
+        widgetId,
+        pointerId,
+        pointerType,
+        clientX,
+        clientY,
+      }) === true,
+    onMoveSpawnDrag: ({ pointerId, pointerType, clientX, clientY }) =>
+      widgetInteractionManager?.moveExternalDrag?.({
+        pointerId,
+        pointerType,
+        clientX,
+        clientY,
+      }) === true,
+    onEndSpawnDrag: ({ pointerId, pointerType, clientX, clientY }) =>
+      widgetInteractionManager?.endExternalDrag?.({
+        pointerId,
+        pointerType,
+        clientX,
+        clientY,
+      }) === true,
     onRenameReference: async (entry) => {
       await renameNotebookReferenceFromManager(entry);
     },

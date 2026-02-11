@@ -6,6 +6,7 @@ const PREVIEW_HEIGHT = 152;
 const PREVIEW_MARGIN = 12;
 const PREVIEW_HIDE_DELAY_MS = 760;
 const DRAG_THRESHOLD_PX = 7;
+const PREVIEW_FLIGHT_MS = 130;
 const MAX_VISIBLE_CHIPS = 6;
 const MAX_RECENT = 3;
 const MAX_PDF_PREVIEW_CACHE = 12;
@@ -273,6 +274,9 @@ export function createReferenceManagerUi({
   onImportReference,
   onImportNote,
   onImportDocument,
+  onBeginSpawnDrag,
+  onMoveSpawnDrag,
+  onEndSpawnDrag,
   onRenameReference,
   onDeleteReference,
   onRenameNote,
@@ -314,6 +318,9 @@ export function createReferenceManagerUi({
   let feedbackTimer = null;
   let bodyTouchActionBeforeDrag = null;
   let htmlTouchActionBeforeDrag = null;
+  let previewFlightElement = null;
+  let previewFlightTimer = null;
+  let previewVisibilityBeforeFlight = null;
   const pdfPreviewCache = new Map();
   const pdfPreviewPending = new Map();
   let pdfPreviewQueue = Promise.resolve();
@@ -335,14 +342,6 @@ export function createReferenceManagerUi({
     <div class="library-chip-preview-body" data-role="preview-body"></div>
   `;
 
-  const dragGhost = document.createElement("article");
-  dragGhost.className = "library-widget-drag-ghost";
-  dragGhost.hidden = true;
-  dragGhost.innerHTML = `
-    <header>Library Widget</header>
-    <div class="library-widget-drag-ghost-body"></div>
-  `;
-
   const dropFeedback = document.createElement("div");
   dropFeedback.className = "library-drop-feedback";
   dropFeedback.hidden = true;
@@ -361,9 +360,6 @@ export function createReferenceManagerUi({
     }
     if (!previewElement.isConnected) {
       shellElement.append(previewElement);
-    }
-    if (!dragGhost.isConnected) {
-      shellElement.append(dragGhost);
     }
     if (!dropFeedback.isConnected) {
       shellElement.append(dropFeedback);
@@ -938,15 +934,25 @@ export function createReferenceManagerUi({
     }
   }
 
+  function normalizeImportResult(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const imported = value.imported === true;
+      const widgetId =
+        typeof value.widgetId === "string" && value.widgetId.trim() ? value.widgetId.trim() : null;
+      return { imported, widgetId };
+    }
+    return { imported: value === true, widgetId: null };
+  }
+
   async function importAtPointer(item, clientX, clientY) {
     if (!item) {
-      return false;
+      return { imported: false, widgetId: null };
     }
 
     const viewportRect = resolveViewportRect();
     if (!pointInRect(clientX, clientY, viewportRect)) {
       triggerDropFeedback({ kind: "deny", message: "Drop on canvas to add" });
-      return false;
+      return { imported: false, widgetId: null };
     }
 
     const screenPoint = { x: clientX, y: clientY };
@@ -960,40 +966,40 @@ export function createReferenceManagerUi({
       droppedInsideCanvas: true,
     };
     if (item.kind === "document") {
-      const imported = await onImportDocument?.(item.raw, {
+      const imported = normalizeImportResult(await onImportDocument?.(item.raw, {
         screenPoint,
         canvasPoint,
         dropMeta,
         linkStatus: "linked",
-      });
-      if (!imported) {
+      }));
+      if (!imported.imported) {
         triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
-        return false;
+        return { imported: false, widgetId: null };
       }
       await onTouchDocument?.(item.raw);
-      return true;
+      return imported;
     }
     if (item.kind === "note") {
-      const imported = await onImportNote?.(item.raw, { screenPoint, canvasPoint, dropMeta });
-      if (!imported) {
+      const imported = normalizeImportResult(await onImportNote?.(item.raw, { screenPoint, canvasPoint, dropMeta }));
+      if (!imported.imported) {
         triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
-        return false;
+        return { imported: false, widgetId: null };
       }
       await onTouchNote?.(item.raw);
-      return true;
+      return imported;
     }
-    const imported = await onImportReference?.(item.raw, {
+    const imported = normalizeImportResult(await onImportReference?.(item.raw, {
       screenPoint,
       canvasPoint,
       dropMeta,
       linkStatus: "linked",
-    });
-    if (!imported) {
+    }));
+    if (!imported.imported) {
       triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
-      return false;
+      return { imported: false, widgetId: null };
     }
     await onTouchReference?.(item.raw);
-    return true;
+    return imported;
   }
 
   function setDragTouchGuard(enabled) {
@@ -1033,7 +1039,13 @@ export function createReferenceManagerUi({
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
       active: false,
+      transitioning: false,
+      spawned: false,
+      spawnWidgetId: null,
+      cancelled: false,
       captureTarget: captureTarget instanceof HTMLElement ? captureTarget : previewElement,
     };
     try {
@@ -1044,11 +1056,143 @@ export function createReferenceManagerUi({
     setDragTouchGuard(true);
   }
 
-  function updateDragGhostPosition(clientX, clientY) {
-    const left = clamp(clientX + 14, 8, Math.max(8, window.innerWidth - 170));
-    const top = clamp(clientY + 14, 8, Math.max(8, window.innerHeight - 90));
-    dragGhost.style.left = `${Math.round(left)}px`;
-    dragGhost.style.top = `${Math.round(top)}px`;
+  function clearPreviewFlightVisual({ restorePreview = true } = {}) {
+    if (previewFlightTimer) {
+      window.clearTimeout(previewFlightTimer);
+      previewFlightTimer = null;
+    }
+    if (previewFlightElement) {
+      previewFlightElement.remove();
+      previewFlightElement = null;
+    }
+    if (restorePreview && previewVisibilityBeforeFlight !== null) {
+      previewElement.style.visibility = previewVisibilityBeforeFlight;
+      previewVisibilityBeforeFlight = null;
+    }
+  }
+
+  function resolveFlightSourceRect(state) {
+    if (!previewElement.hidden) {
+      const rect = previewElement.getBoundingClientRect();
+      if (rect.width > 2 && rect.height > 2) {
+        return rect;
+      }
+    }
+    if (state?.captureTarget instanceof HTMLElement) {
+      const rect = state.captureTarget.getBoundingClientRect();
+      if (rect.width > 2 && rect.height > 2) {
+        return rect;
+      }
+    }
+    return null;
+  }
+
+  async function spawnDraggedWidget(state) {
+    if (!state || state.cancelled || state.spawned) {
+      return;
+    }
+    try {
+      const imported = await importAtPointer(state.item, state.lastClientX, state.lastClientY);
+      if (!draggingState || draggingState.pointerId !== state.pointerId || state.cancelled) {
+        return;
+      }
+      if (!imported.imported) {
+        stopDrag(state.pointerId);
+        return;
+      }
+      state.spawned = true;
+      state.spawnWidgetId = imported.widgetId;
+      if (typeof nowIso === "function") {
+        state.item.lastUsedAt = timestamp(nowIso());
+      }
+
+      hidePreviewNow();
+      setActiveRowKey(null);
+      setMenuRowKey(null);
+      setOpen(false);
+
+      if (state.spawnWidgetId && typeof onBeginSpawnDrag === "function") {
+        onBeginSpawnDrag({
+          widgetId: state.spawnWidgetId,
+          pointerId: state.pointerId,
+          pointerType: state.pointerType,
+          clientX: state.lastClientX,
+          clientY: state.lastClientY,
+        });
+      }
+    } catch (error) {
+      console.error("Library drag import failed:", error);
+      triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
+      stopDrag(state.pointerId);
+    }
+  }
+
+  function startPreviewFlight(state) {
+    const sourceRect = resolveFlightSourceRect(state);
+    if (!sourceRect || !(shellElement instanceof HTMLElement)) {
+      state.transitioning = false;
+      void spawnDraggedWidget(state);
+      return;
+    }
+
+    clearPreviewFlightVisual({ restorePreview: false });
+    const flight = previewElement.cloneNode(true);
+    if (!(flight instanceof HTMLElement)) {
+      state.transitioning = false;
+      void spawnDraggedWidget(state);
+      return;
+    }
+    flight.classList.add("library-chip-preview-flight");
+    flight.hidden = false;
+    flight.style.left = `${Math.round(sourceRect.left)}px`;
+    flight.style.top = `${Math.round(sourceRect.top)}px`;
+    flight.style.width = `${Math.round(sourceRect.width)}px`;
+    flight.style.height = `${Math.round(sourceRect.height)}px`;
+    previewFlightElement = flight;
+    shellElement.append(flight);
+
+    if (!previewElement.hidden && previewVisibilityBeforeFlight === null) {
+      previewVisibilityBeforeFlight = previewElement.style.visibility ?? "";
+      previewElement.style.visibility = "hidden";
+    }
+
+    const targetWidth = Math.max(132, sourceRect.width * 0.9);
+    const targetHeight = Math.max(96, sourceRect.height * 0.9);
+    const targetLeft = clamp(
+      state.lastClientX - targetWidth * 0.5,
+      8,
+      Math.max(8, window.innerWidth - targetWidth - 8),
+    );
+    const targetTop = clamp(
+      state.lastClientY - targetHeight * 0.52,
+      8,
+      Math.max(8, window.innerHeight - targetHeight - 8),
+    );
+
+    flight.style.transition = `left ${PREVIEW_FLIGHT_MS}ms ease, top ${PREVIEW_FLIGHT_MS}ms ease, width ${PREVIEW_FLIGHT_MS}ms ease, height ${PREVIEW_FLIGHT_MS}ms ease, opacity ${PREVIEW_FLIGHT_MS}ms ease, transform ${PREVIEW_FLIGHT_MS}ms ease`;
+    requestAnimationFrame(() => {
+      if (previewFlightElement !== flight) {
+        return;
+      }
+      flight.style.left = `${Math.round(targetLeft)}px`;
+      flight.style.top = `${Math.round(targetTop)}px`;
+      flight.style.width = `${Math.round(targetWidth)}px`;
+      flight.style.height = `${Math.round(targetHeight)}px`;
+      flight.style.opacity = "0.94";
+      flight.style.transform = "scale(0.96)";
+    });
+
+    previewFlightTimer = window.setTimeout(() => {
+      if (previewFlightElement !== flight) {
+        return;
+      }
+      clearPreviewFlightVisual();
+      if (!draggingState || draggingState !== state || state.cancelled) {
+        return;
+      }
+      state.transitioning = false;
+      void spawnDraggedWidget(state);
+    }, PREVIEW_FLIGHT_MS + 24);
   }
 
   function stopDrag(pointerId = null) {
@@ -1063,9 +1207,10 @@ export function createReferenceManagerUi({
     } catch (_error) {
       // Ignore unsupported pointer capture paths.
     }
+    draggingState.cancelled = true;
     draggingState = null;
     setDragTouchGuard(false);
-    dragGhost.hidden = true;
+    clearPreviewFlightVisual();
     if (!previewHovered && !menuRowKey) {
       hidePreviewLater();
     }
@@ -1089,21 +1234,41 @@ export function createReferenceManagerUi({
     if (!draggingState || draggingState.pointerId !== event.pointerId) {
       return;
     }
+    draggingState.lastClientX = event.clientX;
+    draggingState.lastClientY = event.clientY;
+
+    if (draggingState.spawned) {
+      if (typeof onMoveSpawnDrag === "function") {
+        onMoveSpawnDrag({
+          pointerId: event.pointerId,
+          pointerType: event.pointerType,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        });
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    if (draggingState.transitioning) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     const dx = event.clientX - draggingState.startX;
     const dy = event.clientY - draggingState.startY;
     const distance = Math.hypot(dx, dy);
     if (!draggingState.active && distance >= DRAG_THRESHOLD_PX) {
       draggingState.active = true;
-      dragGhost.hidden = false;
-      const header = dragGhost.querySelector("header");
-      if (header instanceof HTMLElement) {
-        header.textContent = draggingState.item.title;
-      }
+      draggingState.transitioning = true;
+      draggingState.pointerType = event.pointerType;
+      startPreviewFlight(draggingState);
     }
     if (!draggingState.active) {
       return;
     }
-    updateDragGhostPosition(event.clientX, event.clientY);
     event.preventDefault();
     event.stopPropagation();
   }
@@ -1112,33 +1277,38 @@ export function createReferenceManagerUi({
     if (!draggingState || draggingState.pointerId !== event.pointerId) {
       return;
     }
-    const committed = draggingState.active;
-    const item = draggingState.item;
-    stopDrag(event.pointerId);
-    if (committed) {
-      void importAtPointer(item, event.clientX, event.clientY).then((imported) => {
-        if (!imported) {
-          return;
-        }
-        if (typeof nowIso === "function") {
-          item.lastUsedAt = timestamp(nowIso());
-        }
-        hidePreviewNow();
-        setActiveRowKey(null);
-        setMenuRowKey(null);
-        setOpen(false);
-      }).catch((error) => {
-        console.error("Library drag import failed:", error);
-        triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
+    const spawned = draggingState.spawned;
+    const active = draggingState.active;
+    draggingState.lastClientX = event.clientX;
+    draggingState.lastClientY = event.clientY;
+    if (spawned && typeof onEndSpawnDrag === "function") {
+      onEndSpawnDrag({
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        clientX: event.clientX,
+        clientY: event.clientY,
       });
     }
-    event.preventDefault();
-    event.stopPropagation();
+    stopDrag(event.pointerId);
+    if (active) {
+      clearLongPress();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
   }
 
   function onPreviewPointerCancel(event) {
     if (!draggingState || draggingState.pointerId !== event.pointerId) {
       return;
+    }
+    if (draggingState.spawned && typeof onEndSpawnDrag === "function") {
+      onEndSpawnDrag({
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
     }
     stopDrag(event.pointerId);
     clearLongPress();
@@ -1541,7 +1711,6 @@ function onListPointerLeave(event) {
         disposeEvent();
       }
       previewElement.remove();
-      dragGhost.remove();
       dropFeedback.remove();
     },
   };
