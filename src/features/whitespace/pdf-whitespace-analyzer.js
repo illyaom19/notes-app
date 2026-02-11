@@ -100,6 +100,46 @@ async function analyzePage(pageProxy, pageNumber) {
   });
 }
 
+function pickRasterLevel(pageEntry) {
+  if (!Array.isArray(pageEntry?.rasterLevels) || pageEntry.rasterLevels.length < 1) {
+    return null;
+  }
+  return pageEntry.rasterLevels[pageEntry.rasterLevels.length - 1];
+}
+
+function analyzeRasterPage(pageEntry, pageNumber) {
+  const level = pickRasterLevel(pageEntry);
+  if (!level?.image) {
+    return [];
+  }
+  const width = Math.max(1, Math.floor(level.width || level.image.naturalWidth || level.image.width || 1));
+  const height = Math.max(1, Math.floor(level.height || level.image.naturalHeight || level.image.height || 1));
+  if (width < 2 || height < 2) {
+    return [];
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) {
+    return [];
+  }
+  ctx.drawImage(level.image, 0, 0, width, height);
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const rowDarkRatios = getRowDarkRatios(imageData, width, height);
+  const runs = detectWhitespaceRuns(rowDarkRatios);
+  return runs.map((zone, index) => ({
+    id: `p${pageNumber}-w${index + 1}`,
+    pageNumber,
+    normalizedY: zone.startRow / canvas.height,
+    normalizedHeight: zone.rowCount / canvas.height,
+    confidence: 1 - Math.min(1, zone.rowCount / canvas.height),
+    collapsed: false,
+    linkedWidgetId: null,
+  }));
+}
+
 export async function analyzePdfWhitespaceZones(pdfWidget) {
   if (!pdfWidget?.pages?.length) {
     return [];
@@ -107,7 +147,12 @@ export async function analyzePdfWhitespaceZones(pdfWidget) {
 
   const zones = [];
   for (const pageEntry of pdfWidget.pages) {
-    const pageZones = await analyzePage(pageEntry.pageProxy, pageEntry.pageNumber);
+    let pageZones = [];
+    if (pageEntry?.pageProxy) {
+      pageZones = await analyzePage(pageEntry.pageProxy, pageEntry.pageNumber);
+    } else {
+      pageZones = analyzeRasterPage(pageEntry, pageEntry.pageNumber);
+    }
     zones.push(...pageZones);
   }
 

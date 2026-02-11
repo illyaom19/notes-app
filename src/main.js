@@ -34,6 +34,7 @@ import { createSuggestionUiController } from "./features/suggestions/suggestion-
 import { createReferenceManagerUi } from "./features/references/reference-manager-ui.js";
 import { createSectionMinimapController } from "./features/minimap/section-minimap-controller.js";
 import { ALLOWED_CREATION_INTENT_TYPES } from "./features/widget-system/widget-types.js";
+import { createPdfRasterDocumentFromBytes } from "./widgets/pdf/pdf-rasterizer.js";
 
 const toggleUiModeButton = document.querySelector("#toggle-ui-mode");
 const toggleToolsButton = document.querySelector("#toggle-tools");
@@ -2629,7 +2630,11 @@ async function copyWidgetFromContextMenu(widget) {
     return true;
   }
 
-  if (widget.type === "pdf-document" && widget.pdfBytes instanceof Uint8Array) {
+  if (widget.type === "pdf-document") {
+    const rasterDocument = widget.rasterDocument && typeof widget.rasterDocument === "object" ? widget.rasterDocument : null;
+    if (!rasterDocument && !(widget.pdfBytes instanceof Uint8Array)) {
+      return false;
+    }
     const sourceDocumentId =
       typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim()
         ? widget.metadata.sourceDocumentId
@@ -2652,7 +2657,8 @@ async function copyWidgetFromContextMenu(widget) {
     }
 
     await createPdfWidgetFromBytes({
-      bytes: widget.pdfBytes,
+      bytes: rasterDocument ? null : widget.pdfBytes,
+      rasterDocument,
       fileName: widget.fileName ?? "document.pdf",
       definition: {
         metadata: {
@@ -2859,7 +2865,8 @@ function savePdfWidgetToNotebookLibrary(widget, { forcedSourceId = null } = {}) 
   if (!activeContextId || !widget || widget.type !== "pdf-document") {
     return null;
   }
-  if (!(widget.pdfBytes instanceof Uint8Array)) {
+  const rasterDocument = widget.rasterDocument && typeof widget.rasterDocument === "object" ? widget.rasterDocument : null;
+  if (!rasterDocument && !(widget.pdfBytes instanceof Uint8Array)) {
     return null;
   }
 
@@ -2867,7 +2874,8 @@ function savePdfWidgetToNotebookLibrary(widget, { forcedSourceId = null } = {}) 
     title: widget.metadata?.title ?? widget.fileName ?? "Document",
     sourceType: "pdf",
     fileName: widget.fileName ?? "document.pdf",
-    pdfBytes: widget.pdfBytes,
+    rasterDocument,
+    pdfBytes: rasterDocument ? null : widget.pdfBytes,
     inkStrokes: captureWidgetInkSnapshot(widget.id),
     status: "active",
     tags: ["pdf"],
@@ -2952,7 +2960,8 @@ function isWidgetDuplicateInNotebookLibrary(widget) {
     if (sourceId && notebookDocumentLibraryStore.getDocument(activeContextId, sourceId)) {
       return true;
     }
-    if (!(widget.pdfBytes instanceof Uint8Array)) {
+    const rasterDocument = widget.rasterDocument && typeof widget.rasterDocument === "object" ? widget.rasterDocument : null;
+    if (!rasterDocument && !(widget.pdfBytes instanceof Uint8Array)) {
       return false;
     }
 
@@ -2961,12 +2970,13 @@ function isWidgetDuplicateInNotebookLibrary(widget) {
         sourceDocumentId: null,
         inkStrokes: captureWidgetInkSnapshot(widget.id),
       },
-      { pdfBytes: widget.pdfBytes },
+      { pdfBytes: widget.pdfBytes, pdfRasterDocument: rasterDocument },
     );
     const documents = notebookDocumentLibraryStore.listDocuments(activeContextId);
     return documents.some((entry) => {
       const bytes = notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, entry.id);
-      return fingerprintDocumentEntry(entry, { pdfBytes: bytes }) === candidateFingerprint;
+      const raster = notebookDocumentLibraryStore.loadDocumentRaster(activeContextId, entry.id);
+      return fingerprintDocumentEntry(entry, { pdfBytes: bytes, pdfRasterDocument: raster }) === candidateFingerprint;
     });
   }
 
@@ -3310,7 +3320,9 @@ function syncWidgetsToLibrarySnapshots() {
         typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim()
           ? widget.metadata.sourceDocumentId
           : null;
-      if (!sourceId || !(widget.pdfBytes instanceof Uint8Array) || widget.pdfBytes.length < 1) {
+      const rasterDocument =
+        widget.rasterDocument && typeof widget.rasterDocument === "object" ? widget.rasterDocument : null;
+      if (!sourceId || (!rasterDocument && (!(widget.pdfBytes instanceof Uint8Array) || widget.pdfBytes.length < 1))) {
         continue;
       }
       notebookDocumentLibraryStore.upsertDocument(activeContextId, {
@@ -3318,7 +3330,8 @@ function syncWidgetsToLibrarySnapshots() {
         title: widget.metadata?.title ?? widget.fileName ?? "Document",
         sourceType: "pdf",
         fileName: widget.fileName ?? "document.pdf",
-        pdfBytes: widget.pdfBytes,
+        rasterDocument,
+        pdfBytes: rasterDocument ? null : widget.pdfBytes,
         inkStrokes: captureWidgetInkSnapshot(widget.id),
         status: "active",
         tags: ["pdf"],
@@ -4824,14 +4837,15 @@ async function analyzeWhitespaceForPdfWidget(pdfWidget) {
 
 async function createPdfWidgetFromBytes({
   bytes,
+  rasterDocument = null,
   fileName,
   definition = {},
   intent = null,
   sourceDocument = null,
   linkStatus = "frozen",
 } = {}) {
-  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
-    throw new Error("PDF bytes are unavailable.");
+  if (!rasterDocument && (!(bytes instanceof Uint8Array) || bytes.length < 1)) {
+    throw new Error("PDF source is unavailable.");
   }
 
   const normalizedIntent = normalizeCreationIntent(intent);
@@ -4872,7 +4886,8 @@ async function createPdfWidgetFromBytes({
       ...(definition.metadata ?? {}),
     }, normalizedIntent, finalPlacement, "pdf-document"),
     dataPayload: {
-      bytes,
+      bytes: bytes instanceof Uint8Array ? bytes : null,
+      rasterDocument: rasterDocument && typeof rasterDocument === "object" ? rasterDocument : null,
       fileName: resolvedFileName,
     },
     collapsed: definition.collapsed,
@@ -4925,6 +4940,7 @@ async function createPdfWidgetFromFile(
   { linkStatus = "linked", sourceDocumentId = null } = {},
 ) {
   const bytes = new Uint8Array(await file.arrayBuffer());
+  const rasterDocument = await createPdfRasterDocumentFromBytes(bytes);
   let sourceDocument = null;
 
   if (activeContextId) {
@@ -4935,7 +4951,7 @@ async function createPdfWidgetFromFile(
           : file.name,
       sourceType: "pdf",
       fileName: file.name,
-      pdfBytes: bytes,
+      rasterDocument,
       status: "active",
       tags: ["pdf"],
     };
@@ -4955,7 +4971,8 @@ async function createPdfWidgetFromFile(
   }
 
   const widget = await createPdfWidgetFromBytes({
-    bytes,
+    bytes: null,
+    rasterDocument,
     fileName: file.name,
     definition,
     intent,
@@ -5170,11 +5187,17 @@ async function createPdfWidgetFromNotebookSource(sourceDocument, intent = null, 
     return null;
   }
 
-  const bytes = activeContextId
-    ? notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, sourceDocument.id)
-    : decodeBase64ToBytes(sourceDocument.bytesBase64);
-  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
-    await showNoticeDialog(`Notebook document "${sourceDocument.title}" is missing PDF bytes.`, {
+  const rasterDocument = activeContextId
+    ? notebookDocumentLibraryStore.loadDocumentRaster(activeContextId, sourceDocument.id)
+    : null;
+  const bytes =
+    rasterDocument && typeof rasterDocument === "object"
+      ? null
+      : activeContextId
+        ? notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, sourceDocument.id)
+        : decodeBase64ToBytes(sourceDocument.bytesBase64);
+  if (!rasterDocument && (!(bytes instanceof Uint8Array) || bytes.length < 1)) {
+    await showNoticeDialog(`Notebook document "${sourceDocument.title}" is missing import data. Reupload it.`, {
       title: "PDF Import",
     });
     return null;
@@ -5182,6 +5205,7 @@ async function createPdfWidgetFromNotebookSource(sourceDocument, intent = null, 
 
   const widget = await createPdfWidgetFromBytes({
     bytes,
+    rasterDocument,
     fileName: sourceDocument.fileName ?? `${sourceDocument.title}.pdf`,
     definition: {
       metadata: {
@@ -5208,12 +5232,12 @@ async function createPdfWidgetFromNotebookSource(sourceDocument, intent = null, 
 async function hydrateExistingPdfWidgetFromBytes(
   widget,
   bytes,
-  { fileName = null, sourceDocument = null, clearMissingFlag = true } = {},
+  { rasterDocument = null, fileName = null, sourceDocument = null, clearMissingFlag = true } = {},
 ) {
   if (!widget || widget.type !== "pdf-document") {
     return false;
   }
-  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
+  if (!rasterDocument && (!(bytes instanceof Uint8Array) || bytes.length < 1)) {
     return false;
   }
 
@@ -5222,7 +5246,8 @@ async function hydrateExistingPdfWidgetFromBytes(
       ? widget.getWhitespaceZones()
       : [];
 
-  widget.pdfBytes = bytes;
+  widget.pdfBytes = bytes instanceof Uint8Array ? bytes : null;
+  widget.rasterDocument = rasterDocument && typeof rasterDocument === "object" ? rasterDocument : null;
   if (typeof fileName === "string" && fileName.trim()) {
     widget.fileName = fileName.trim();
   }
@@ -5274,12 +5299,14 @@ async function tryRestorePdfWidgetFromLinkedDocument(widget) {
     return false;
   }
 
-  const bytes = notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, sourceDocumentId);
-  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
+  const rasterDocument = notebookDocumentLibraryStore.loadDocumentRaster(activeContextId, sourceDocumentId);
+  const bytes = rasterDocument ? null : notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, sourceDocumentId);
+  if (!rasterDocument && (!(bytes instanceof Uint8Array) || bytes.length < 1)) {
     return false;
   }
 
   return hydrateExistingPdfWidgetFromBytes(widget, bytes, {
+    rasterDocument,
     fileName: sourceDocument.fileName ?? widget.fileName ?? "document.pdf",
     sourceDocument,
   });
@@ -5295,6 +5322,7 @@ async function reimportMissingPdfForWidget(widgetId, file) {
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer());
+  const rasterDocument = await createPdfRasterDocumentFromBytes(bytes);
   let sourceDocument = null;
   const sourceDocumentId =
     typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim()
@@ -5310,13 +5338,14 @@ async function reimportMissingPdfForWidget(widgetId, file) {
           : file.name,
       sourceType: "pdf",
       fileName: file.name,
-      pdfBytes: bytes,
+      rasterDocument,
       status: "active",
       tags: ["pdf"],
     });
   }
 
   const restored = await hydrateExistingPdfWidgetFromBytes(widget, bytes, {
+    rasterDocument,
     fileName: file.name,
     sourceDocument,
   });
@@ -6718,6 +6747,12 @@ function wireReferenceManagerUi() {
         return null;
       }
       return notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, entry.id);
+    },
+    onLoadDocumentRaster: (entry) => {
+      if (!activeContextId || !entry || typeof entry.id !== "string") {
+        return null;
+      }
+      return notebookDocumentLibraryStore.loadDocumentRaster(activeContextId, entry.id);
     },
     canvasElement: canvas,
   });

@@ -9,6 +9,7 @@ import {
   WIDGET_THEME,
 } from "../../features/widget-system/widget-theme.js";
 import { loadPdfJs } from "./pdfjs-loader.js";
+import { selectRasterLevelForZoom } from "./pdf-rasterizer.js";
 import { PdfTileCache } from "./pdf-tile-cache.js";
 
 const HEADER_WORLD = 40;
@@ -42,6 +43,24 @@ function preferredPdfLabel(widget) {
   return title || fileName || "document.pdf";
 }
 
+function isRasterDocument(candidate) {
+  return Boolean(
+    candidate &&
+      typeof candidate === "object" &&
+      Array.isArray(candidate.pages) &&
+      candidate.pages.length > 0,
+  );
+}
+
+function loadImageElement(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to decode raster image."));
+    image.src = src;
+  });
+}
+
 export class PdfDocumentWidget extends WidgetBase {
   constructor(definition) {
     super({
@@ -54,6 +73,9 @@ export class PdfDocumentWidget extends WidgetBase {
 
     this.fileName = definition.dataPayload?.fileName ?? "document.pdf";
     this.pdfBytes = definition.dataPayload?.bytes ?? null;
+    this.rasterDocument = isRasterDocument(definition.dataPayload?.rasterDocument)
+      ? definition.dataPayload.rasterDocument
+      : null;
 
     this.pdfDocument = null;
     this.pageCount = 0;
@@ -94,6 +116,22 @@ export class PdfDocumentWidget extends WidgetBase {
     this.documentWorldHeight = 0;
     this.thumbnailCanvas = null;
 
+    if (isRasterDocument(this.rasterDocument)) {
+      try {
+        await this._buildPageLayoutFromRasterDocument();
+        await this._buildThumbnail();
+        this.loading = false;
+      } catch (error) {
+        this.loading = false;
+        const reason =
+          typeof error?.message === "string" && error.message.trim()
+            ? error.message.trim()
+            : "Rasterized PDF render failed";
+        this.loadError = `${reason}. Reimport "${preferredPdfLabel(this)}".`;
+      }
+      return;
+    }
+
     if (!(this.pdfBytes instanceof Uint8Array) || this.pdfBytes.length === 0) {
       this.loading = false;
       this.loadError = `PDF data missing. Reimport "${preferredPdfLabel(this)}".`;
@@ -117,6 +155,69 @@ export class PdfDocumentWidget extends WidgetBase {
           : "PDF render failed";
       this.loadError = `${reason}. Reimport "${preferredPdfLabel(this)}".`;
     }
+  }
+
+  async _buildPageLayoutFromRasterDocument() {
+    if (!isRasterDocument(this.rasterDocument)) {
+      return;
+    }
+
+    this.pages = [];
+    let currentY = 0;
+    let totalPageCount = 0;
+    const sortedPages = [...this.rasterDocument.pages].sort(
+      (a, b) => (Number(a?.pageNumber) || 0) - (Number(b?.pageNumber) || 0),
+    );
+
+    for (const sourcePage of sortedPages) {
+      const pageNumber = Number(sourcePage?.pageNumber) || totalPageCount + 1;
+      const baseWidth = Math.max(1, Number(sourcePage?.width) || 1);
+      const baseHeight = Math.max(1, Number(sourcePage?.height) || 1);
+      const rasterLevels = [];
+      const rawLevels = Array.isArray(sourcePage?.levels) ? sourcePage.levels : [];
+      for (const level of rawLevels) {
+        if (typeof level?.dataUrl !== "string" || !level.dataUrl) {
+          continue;
+        }
+        const image = await loadImageElement(level.dataUrl);
+        rasterLevels.push({
+          id: typeof level.id === "string" ? level.id : "",
+          width: Math.max(1, Number(level.width) || image.naturalWidth || 1),
+          height: Math.max(1, Number(level.height) || image.naturalHeight || 1),
+          dataUrl: level.dataUrl,
+          image,
+        });
+      }
+      if (rasterLevels.length < 1) {
+        continue;
+      }
+
+      const worldHeight = Math.max(40, (baseHeight / baseWidth) * this.size.width);
+      this.pages.push({
+        pageNumber,
+        viewportAt1: { width: baseWidth, height: baseHeight },
+        baseWorldY: currentY,
+        baseWorldHeight: worldHeight,
+        rasterLevels,
+        pageProxy: null,
+        tileCache: null,
+      });
+      currentY += worldHeight + PAGE_GAP_WORLD;
+      totalPageCount += 1;
+    }
+
+    if (totalPageCount < 1) {
+      throw new Error("Raster document has no renderable pages");
+    }
+
+    this.pageCount = totalPageCount;
+    this.documentWorldHeight = currentY > 0 ? currentY - PAGE_GAP_WORLD : 0;
+    const metrics = this._resolveLayoutMetrics();
+    this._refreshPageBaseLayoutForWidth(metrics.pageWidth);
+    const requiredHeight = Math.max(MIN_WIDGET_HEIGHT, HEADER_WORLD + this.documentWorldHeight);
+    this.size.height = requiredHeight;
+    this._markLayoutDirty();
+    this._ensureDisplayLayout();
   }
 
   async _buildPageLayout() {
@@ -181,15 +282,33 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   async _buildThumbnail() {
-    const firstPage = this.pages[0]?.pageProxy;
+    const firstPage = this.pages[0];
     if (!firstPage) {
       return;
     }
 
-    const baseViewport = firstPage.getViewport({ scale: 1 });
+    if (Array.isArray(firstPage.rasterLevels) && firstPage.rasterLevels.length > 0) {
+      const previewLevel = firstPage.rasterLevels[firstPage.rasterLevels.length - 1];
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.floor(previewLevel.width));
+      canvas.height = Math.max(1, Math.floor(previewLevel.height));
+      const ctx = canvas.getContext("2d", { alpha: false });
+      if (!ctx) {
+        return;
+      }
+      ctx.drawImage(previewLevel.image, 0, 0, canvas.width, canvas.height);
+      this.thumbnailCanvas = canvas;
+      return;
+    }
+
+    const firstPageProxy = firstPage.pageProxy;
+    if (!firstPageProxy) {
+      return;
+    }
+    const baseViewport = firstPageProxy.getViewport({ scale: 1 });
     const targetWidth = 220;
     const scale = targetWidth / baseViewport.width;
-    const viewport = firstPage.getViewport({ scale });
+    const viewport = firstPageProxy.getViewport({ scale });
 
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.floor(viewport.width));
@@ -200,7 +319,7 @@ export class PdfDocumentWidget extends WidgetBase {
       return;
     }
 
-    const renderTask = firstPage.render({
+    const renderTask = firstPageProxy.render({
       canvasContext: ctx,
       viewport,
       intent: "display",
@@ -644,6 +763,13 @@ export class PdfDocumentWidget extends WidgetBase {
     const whitespaceRevision = this.whitespaceZones
       .map((zone) => `${zone.id}:${zone.collapsed ? 1 : 0}:${zone.linkedWidgetId ? 1 : 0}`)
       .join("|");
+    const rasterRevision = this.pages
+      .map((page) =>
+        Array.isArray(page?.rasterLevels)
+          ? page.rasterLevels.map((level) => `${level.id}:${level.width}x${level.height}`).join(",")
+          : "",
+      )
+      .join("|");
     return [
       this.loading ? "loading" : "ready",
       this.loadError ?? "",
@@ -651,6 +777,7 @@ export class PdfDocumentWidget extends WidgetBase {
       this.pageCount,
       this.documentWorldHeight.toFixed(2),
       tileRevision,
+      rasterRevision,
       whitespaceRevision,
     ].join("::");
   }
@@ -766,25 +893,64 @@ export class PdfDocumentWidget extends WidgetBase {
         1,
       );
 
-      const scaleBucket = this._getScaleBucket(camera.zoom);
-      const mappings = this._buildPageTileMappings(pageEntry, scaleBucket, visibleWorld);
-      if (!externalWidgetTransformActive) {
-        pageEntry.tileCache.requestMappedRegions({
+      let drawnTiles = 0;
+      if (Array.isArray(pageEntry.rasterLevels) && pageEntry.rasterLevels.length > 0) {
+        const mappings = this._getPageSegmentsByNumber(pageEntry.pageNumber)
+          .filter((segment) => {
+            if (segment.worldEndY <= segment.worldStartY) {
+              return false;
+            }
+            return !(segment.worldEndY < visibleWorld.minY || segment.worldStartY > visibleWorld.maxY);
+          })
+          .map((segment) => ({
+            sourceStartY: segment.sourceStartY,
+            sourceEndY: segment.sourceEndY,
+            worldStartY: segment.worldStartY,
+            worldEndY: segment.worldEndY,
+          }));
+        const drawLevel = selectRasterLevelForZoom(pageEntry, camera.zoom);
+        if (drawLevel?.image) {
+          for (const segment of mappings) {
+            const srcTop = (segment.sourceStartY / pageEntry.baseWorldHeight) * drawLevel.height;
+            const srcBottom = (segment.sourceEndY / pageEntry.baseWorldHeight) * drawLevel.height;
+            const srcHeight = Math.max(1, srcBottom - srcTop);
+            const worldHeight = Math.max(0.01, segment.worldEndY - segment.worldStartY);
+            const segmentScreen = camera.worldToScreen(pageBounds.x, segment.worldStartY);
+            ctx.drawImage(
+              drawLevel.image,
+              0,
+              srcTop,
+              drawLevel.width,
+              srcHeight,
+              segmentScreen.x,
+              segmentScreen.y,
+              pageScreenW,
+              worldHeight * camera.zoom,
+            );
+            drawnTiles += 1;
+          }
+        }
+      } else if (pageEntry.tileCache) {
+        const scaleBucket = this._getScaleBucket(camera.zoom);
+        const mappings = this._buildPageTileMappings(pageEntry, scaleBucket, visibleWorld);
+        if (!externalWidgetTransformActive) {
+          pageEntry.tileCache.requestMappedRegions({
+            mappings,
+            scaleBucket,
+          });
+        }
+        const drawScaleBucket =
+          externalWidgetTransformActive
+            ? pageEntry.tileCache.closestAvailableScaleBucket(scaleBucket) ?? scaleBucket
+            : scaleBucket;
+
+        drawnTiles = pageEntry.tileCache.drawMappedRegions({
+          ctx,
+          camera,
           mappings,
-          scaleBucket,
+          scaleBucket: drawScaleBucket,
         });
       }
-      const drawScaleBucket =
-        externalWidgetTransformActive
-          ? pageEntry.tileCache.closestAvailableScaleBucket(scaleBucket) ?? scaleBucket
-          : scaleBucket;
-
-      const drawnTiles = pageEntry.tileCache.drawMappedRegions({
-        ctx,
-        camera,
-        mappings,
-        scaleBucket: drawScaleBucket,
-      });
 
       if (drawnTiles === 0) {
         if (interaction.showTitle) {

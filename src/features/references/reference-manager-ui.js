@@ -210,6 +210,26 @@ function setActiveRow(row, active) {
   row.dataset.active = active ? "true" : "false";
 }
 
+function resolveRasterPreviewLevel(rasterDocument) {
+  if (!rasterDocument || typeof rasterDocument !== "object" || !Array.isArray(rasterDocument.pages)) {
+    return null;
+  }
+  const firstPage = rasterDocument.pages[0];
+  if (!firstPage || !Array.isArray(firstPage.levels) || firstPage.levels.length < 1) {
+    return null;
+  }
+  return firstPage.levels[firstPage.levels.length - 1] ?? null;
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to load raster preview image."));
+    image.src = src;
+  });
+}
+
 export function createReferenceManagerUi({
   launcherButton,
   overlayElement,
@@ -234,6 +254,7 @@ export function createReferenceManagerUi({
   onTouchNote,
   onTouchDocument,
   onLoadDocumentBytes,
+  onLoadDocumentRaster,
 }) {
   if (!(launcherButton instanceof HTMLButtonElement)) {
     return {
@@ -633,6 +654,23 @@ export function createReferenceManagerUi({
   }
 
   async function buildPdfPreviewCanvas(item) {
+    if (typeof onLoadDocumentRaster === "function") {
+      const raster = onLoadDocumentRaster(item.raw);
+      const level = resolveRasterPreviewLevel(raster);
+      if (typeof level?.dataUrl === "string" && level.dataUrl) {
+        const image = await loadImage(level.dataUrl);
+        const previewCanvas = makeThumbCanvas(196, 118);
+        previewCanvas.width = Math.max(1, Number(level.width) || image.naturalWidth || 1);
+        previewCanvas.height = Math.max(1, Number(level.height) || image.naturalHeight || 1);
+        const ctx = previewCanvas.getContext("2d", { alpha: false });
+        if (ctx) {
+          ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+          ctx.drawImage(image, 0, 0, previewCanvas.width, previewCanvas.height);
+        }
+        return previewCanvas;
+      }
+    }
+
     if (typeof onLoadDocumentBytes !== "function") {
       return null;
     }

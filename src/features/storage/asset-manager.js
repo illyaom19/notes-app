@@ -614,6 +614,27 @@ export function createAssetManager({
     });
   }
 
+  function registerPdfRasterDocument(rasterDocument, { ownerId = null, derivedFrom = null } = {}) {
+    if (!rasterDocument || typeof rasterDocument !== "object") {
+      return null;
+    }
+    let payload = null;
+    try {
+      payload = JSON.stringify(rasterDocument);
+    } catch (_error) {
+      return null;
+    }
+    if (typeof payload !== "string" || payload.length < 2) {
+      return null;
+    }
+    return registerAsset({
+      type: "pdf-raster-document",
+      data: payload,
+      ownerId,
+      derivedFrom,
+    });
+  }
+
   function loadAssetData(assetId) {
     const record = findRecord(assetId);
     if (!record) {
@@ -661,6 +682,41 @@ export function createAssetManager({
     }
 
     return payload;
+  }
+
+  function loadPdfRasterDocument(assetId) {
+    const payload = loadAssetData(assetId);
+    if (!payload) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(payload);
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+      const pages = Array.isArray(parsed.pages) ? parsed.pages : [];
+      return {
+        schemaVersion: Number.isFinite(parsed.schemaVersion) ? Number(parsed.schemaVersion) : 1,
+        pageCount: Number.isFinite(parsed.pageCount) ? Number(parsed.pageCount) : pages.length,
+        pages: pages.map((page) => ({
+          pageNumber: Number(page?.pageNumber) || 1,
+          width: Math.max(1, Number(page?.width) || 1),
+          height: Math.max(1, Number(page?.height) || 1),
+          levels: Array.isArray(page?.levels)
+            ? page.levels
+                .filter((level) => typeof level?.dataUrl === "string" && level.dataUrl.length > 0)
+                .map((level) => ({
+                  id: typeof level.id === "string" ? level.id : "",
+                  width: Math.max(1, Number(level.width) || 1),
+                  height: Math.max(1, Number(level.height) || 1),
+                  dataUrl: level.dataUrl,
+                }))
+            : [],
+        })),
+      };
+    } catch (_error) {
+      return null;
+    }
   }
 
   function replaceContextReferences(contextId, refsByAssetId) {
@@ -805,9 +861,11 @@ export function createAssetManager({
     registerAsset,
     registerPdfBytes,
     registerImageDataUrl,
+    registerPdfRasterDocument,
     loadAssetData,
     loadPdfBytes,
     loadImageDataUrl,
+    loadPdfRasterDocument,
     replaceContextReferences,
     removeContextReferences,
     ownerRef,

@@ -373,22 +373,25 @@ export function renderReferencePreview(container, entry) {
   });
 }
 
-export async function renderPdfPreview(container, entry, { loadDocumentBytes, signal } = {}) {
+export async function renderPdfPreview(container, entry, { loadDocumentBytes, loadDocumentRaster, signal } = {}) {
   clearElement(container);
   if (!(container instanceof HTMLElement)) {
     return;
   }
 
-  if (typeof loadDocumentBytes !== "function") {
+  const loadRaster = typeof loadDocumentRaster === "function" ? loadDocumentRaster : null;
+  if (typeof loadDocumentBytes !== "function" && !loadRaster) {
     container.append(messageCard("PDF preview unavailable."));
     return;
   }
 
-  const bytes = loadDocumentBytes(entry);
+  const rasterDocument = loadRaster ? loadRaster(entry) : null;
+  const bytes = typeof loadDocumentBytes === "function" ? loadDocumentBytes(entry) : null;
   if (signal?.aborted) {
     return;
   }
-  if (!(bytes instanceof Uint8Array) || bytes.length < 1) {
+  const rasterPages = Array.isArray(rasterDocument?.pages) ? rasterDocument.pages : [];
+  if ((!rasterPages || rasterPages.length < 1) && (!(bytes instanceof Uint8Array) || bytes.length < 1)) {
     const title = typeof entry?.title === "string" && entry.title.trim() ? entry.title.trim() : "document.pdf";
     container.append(messageCard(`PDF bytes missing. Reupload "${title}".`));
     return;
@@ -401,31 +404,39 @@ export async function renderPdfPreview(container, entry, { loadDocumentBytes, si
   viewport.append(stage);
   container.append(viewport);
 
-  let pdfDocument = null;
-  try {
-    const pdfjs = await loadPdfJs();
-    if (signal?.aborted) {
-      return;
-    }
-    pdfDocument = await pdfjs.getDocument({ data: bytes }).promise;
-  } catch (_error) {
-    const title = typeof entry?.title === "string" && entry.title.trim() ? entry.title.trim() : "document.pdf";
-    container.append(messageCard(`Unable to render PDF preview. Reupload "${title}".`));
-    return;
-  }
-
   const pageWidth = 290;
   const gap = 12;
   const pageHeights = [];
-  for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
-    const page = await pdfDocument.getPage(pageNumber);
-    if (signal?.aborted) {
+  let pdfDocument = null;
+  let renderFromRaster = rasterPages.length > 0;
+  if (renderFromRaster) {
+    for (const pageEntry of rasterPages) {
+      const width = Math.max(1, Number(pageEntry?.width) || 1);
+      const height = Math.max(1, Number(pageEntry?.height) || 1);
+      pageHeights.push((height / width) * pageWidth);
+    }
+  } else {
+    try {
+      const pdfjs = await loadPdfJs();
+      if (signal?.aborted) {
+        return;
+      }
+      pdfDocument = await pdfjs.getDocument({ data: bytes }).promise;
+    } catch (_error) {
+      const title = typeof entry?.title === "string" && entry.title.trim() ? entry.title.trim() : "document.pdf";
+      container.append(messageCard(`Unable to render PDF preview. Reupload "${title}".`));
       return;
     }
-    const base = page.getViewport({ scale: 1 });
-    const scale = pageWidth / Math.max(1, base.width);
-    const viewport = page.getViewport({ scale });
-    pageHeights.push(viewport.height);
+    for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+      const page = await pdfDocument.getPage(pageNumber);
+      if (signal?.aborted) {
+        return;
+      }
+      const base = page.getViewport({ scale: 1 });
+      const scale = pageWidth / Math.max(1, base.width);
+      const viewport = page.getViewport({ scale });
+      pageHeights.push(viewport.height);
+    }
   }
 
   const totalHeight = pageHeights.reduce((sum, value) => sum + value, 0) + Math.max(0, pageHeights.length - 1) * gap;
@@ -443,36 +454,76 @@ export async function renderPdfPreview(container, entry, { loadDocumentBytes, si
   stage.append(pdfContent);
 
   let yOffset = 0;
-  for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
-    const page = await pdfDocument.getPage(pageNumber);
-    if (signal?.aborted) {
-      return;
+  if (renderFromRaster) {
+    for (const pageEntry of rasterPages) {
+      const levels = Array.isArray(pageEntry?.levels) ? pageEntry.levels : [];
+      const level = levels[levels.length - 1] ?? null;
+      if (!level || typeof level.dataUrl !== "string" || !level.dataUrl) {
+        continue;
+      }
+      const img = new Image();
+      const loaded = new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+      img.src = level.dataUrl;
+      if (typeof img.decode === "function") {
+        await img.decode().catch(() => null);
+      } else {
+        await loaded.catch(() => null);
+      }
+      if (signal?.aborted) {
+        return;
+      }
+      const sourceWidth = Math.max(1, Number(pageEntry?.width) || img.naturalWidth || 1);
+      const sourceHeight = Math.max(1, Number(pageEntry?.height) || img.naturalHeight || 1);
+      const drawHeight = (sourceHeight / sourceWidth) * pageWidth;
+      const pageWrap = document.createElement("div");
+      pageWrap.className = "reference-preview-pdf-page";
+      pageWrap.style.top = `${Math.round(yOffset)}px`;
+      pageWrap.style.height = `${Math.round(drawHeight)}px`;
+      const canvas = makeCanvas(pageWidth, drawHeight);
+      canvas.className = "reference-preview-pdf-canvas";
+      const ctx = canvas.getContext("2d", { alpha: false });
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      }
+      pageWrap.append(canvas);
+      pdfContent.append(pageWrap);
+      yOffset += drawHeight + gap;
     }
+  } else {
+    for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+      const page = await pdfDocument.getPage(pageNumber);
+      if (signal?.aborted) {
+        return;
+      }
 
-    const base = page.getViewport({ scale: 1 });
-    const scale = pageWidth / Math.max(1, base.width);
-    const viewport = page.getViewport({ scale });
+      const base = page.getViewport({ scale: 1 });
+      const scale = pageWidth / Math.max(1, base.width);
+      const viewport = page.getViewport({ scale });
 
-    const pageWrap = document.createElement("div");
-    pageWrap.className = "reference-preview-pdf-page";
-    pageWrap.style.top = `${Math.round(yOffset)}px`;
-    pageWrap.style.height = `${Math.round(viewport.height)}px`;
+      const pageWrap = document.createElement("div");
+      pageWrap.className = "reference-preview-pdf-page";
+      pageWrap.style.top = `${Math.round(yOffset)}px`;
+      pageWrap.style.height = `${Math.round(viewport.height)}px`;
 
-    const canvas = makeCanvas(viewport.width, viewport.height);
-    canvas.className = "reference-preview-pdf-canvas";
-    pageWrap.append(canvas);
-    pdfContent.append(pageWrap);
+      const canvas = makeCanvas(viewport.width, viewport.height);
+      canvas.className = "reference-preview-pdf-canvas";
+      pageWrap.append(canvas);
+      pdfContent.append(pageWrap);
 
-    const ctx = canvas.getContext("2d", { alpha: false });
-    if (ctx) {
-      await page.render({
-        canvasContext: ctx,
-        viewport,
-        intent: "display",
-        background: "white",
-      }).promise;
+      const ctx = canvas.getContext("2d", { alpha: false });
+      if (ctx) {
+        await page.render({
+          canvasContext: ctx,
+          viewport,
+          intent: "display",
+          background: "white",
+        }).promise;
+      }
+      yOffset += viewport.height + gap;
     }
-    yOffset += viewport.height + gap;
   }
   pdfContent.append(inkOverlay);
   stage.style.width = `${pageWidth + 20}px`;

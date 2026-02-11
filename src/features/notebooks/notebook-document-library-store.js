@@ -57,11 +57,21 @@ function normalizeSource(candidate) {
 
   const source = asObject(candidate);
   const title = typeof source.title === "string" && source.title.trim() ? source.title.trim() : "Document";
+  const pdfRasterAssetId =
+    typeof source.pdfRasterAssetId === "string" && source.pdfRasterAssetId.trim()
+      ? source.pdfRasterAssetId.trim()
+      : null;
   const pdfAssetId =
     typeof source.pdfAssetId === "string" && source.pdfAssetId.trim() ? source.pdfAssetId.trim() : null;
   const bytesBase64 =
     typeof source.bytesBase64 === "string" && source.bytesBase64.trim() ? source.bytesBase64.trim() : null;
-  if (!pdfAssetId && !bytesBase64 && !(source.pdfBytes instanceof Uint8Array)) {
+  if (
+    !pdfRasterAssetId &&
+    !pdfAssetId &&
+    !bytesBase64 &&
+    !(source.pdfBytes instanceof Uint8Array) &&
+    !(source.rasterDocument && typeof source.rasterDocument === "object")
+  ) {
     return null;
   }
 
@@ -72,6 +82,7 @@ function normalizeSource(candidate) {
       typeof source.sourceType === "string" && source.sourceType.trim() ? source.sourceType.trim() : "pdf",
     fileName:
       typeof source.fileName === "string" && source.fileName.trim() ? source.fileName.trim() : `${title}.pdf`,
+    pdfRasterAssetId,
     pdfAssetId,
     bytesBase64,
     status: source.status === "deleted" ? "deleted" : "active",
@@ -138,6 +149,10 @@ function cloneSource(entry) {
     title: entry.title,
     sourceType: entry.sourceType,
     fileName: entry.fileName,
+    pdfRasterAssetId:
+      typeof entry.pdfRasterAssetId === "string" && entry.pdfRasterAssetId.trim()
+        ? entry.pdfRasterAssetId
+        : null,
     pdfAssetId: typeof entry.pdfAssetId === "string" && entry.pdfAssetId.trim() ? entry.pdfAssetId : null,
     bytesBase64: entry.bytesBase64,
     status: entry.status,
@@ -213,6 +228,11 @@ export function createNotebookDocumentLibraryStore({
     for (const entry of notebook.documents) {
       if (entry.status === "deleted") {
         continue;
+      }
+      if (typeof entry.pdfRasterAssetId === "string" && entry.pdfRasterAssetId.trim()) {
+        const existingRaster = refsByAssetId.get(entry.pdfRasterAssetId) ?? new Set();
+        existingRaster.add(notebookDocumentOwnerRef(notebookId, entry.id));
+        refsByAssetId.set(entry.pdfRasterAssetId, existingRaster);
       }
       if (typeof entry.pdfAssetId !== "string" || !entry.pdfAssetId.trim()) {
         continue;
@@ -318,6 +338,23 @@ export function createNotebookDocumentLibraryStore({
       return decodeBase64ToBytes(found.bytesBase64);
     },
 
+    loadDocumentRaster(notebookId, sourceDocumentId) {
+      const notebook = ensureNotebook(notebookId);
+      if (!notebook || typeof sourceDocumentId !== "string" || !sourceDocumentId.trim()) {
+        return null;
+      }
+
+      const found = notebook.documents.find((entry) => entry.id === sourceDocumentId);
+      if (!found) {
+        return null;
+      }
+
+      if (typeof found.pdfRasterAssetId === "string" && found.pdfRasterAssetId.trim()) {
+        return assetManager.loadPdfRasterDocument(found.pdfRasterAssetId);
+      }
+      return null;
+    },
+
     upsertDocument(notebookId, candidate) {
       const notebook = ensureNotebook(notebookId);
       const normalized = normalizeSource(candidate);
@@ -326,6 +363,14 @@ export function createNotebookDocumentLibraryStore({
       }
 
       const ownerRef = notebookDocumentOwnerRef(notebookId, normalized.id);
+      let resolvedPdfRasterAssetId = normalized.pdfRasterAssetId;
+      if (!resolvedPdfRasterAssetId && candidate?.rasterDocument && typeof candidate.rasterDocument === "object") {
+        const registeredRaster = assetManager.registerPdfRasterDocument(candidate.rasterDocument, {
+          ownerId: ownerRef,
+          derivedFrom: normalized.id,
+        });
+        resolvedPdfRasterAssetId = registeredRaster?.id ?? null;
+      }
       let resolvedPdfAssetId = normalized.pdfAssetId;
       if (!resolvedPdfAssetId && candidate?.pdfBytes instanceof Uint8Array && candidate.pdfBytes.length > 0) {
         const registered = assetManager.registerPdfBytes(candidate.pdfBytes, {
@@ -345,15 +390,16 @@ export function createNotebookDocumentLibraryStore({
         resolvedPdfAssetId = registered?.id ?? null;
       }
 
-      if (!resolvedPdfAssetId) {
+      if (!resolvedPdfRasterAssetId && !resolvedPdfAssetId) {
         return null;
       }
 
       const existingIndex = notebook.documents.findIndex((entry) => entry.id === normalized.id);
       const next = {
         ...normalized,
+        pdfRasterAssetId: resolvedPdfRasterAssetId,
         pdfAssetId: resolvedPdfAssetId,
-        bytesBase64: null,
+        bytesBase64: resolvedPdfRasterAssetId || resolvedPdfAssetId ? null : normalized.bytesBase64,
         updatedAt: nowIso(),
       };
 

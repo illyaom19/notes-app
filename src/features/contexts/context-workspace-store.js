@@ -433,6 +433,51 @@ function decodeBytes(base64Value) {
   }
 }
 
+function encodeRasterDocument(rasterDocument) {
+  if (!rasterDocument || typeof rasterDocument !== "object") {
+    return null;
+  }
+  try {
+    return JSON.stringify(rasterDocument);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function decodeRasterDocument(serialized) {
+  if (typeof serialized !== "string" || !serialized.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(serialized);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const pages = Array.isArray(parsed.pages) ? parsed.pages : [];
+    return {
+      schemaVersion: Number.isFinite(parsed.schemaVersion) ? Number(parsed.schemaVersion) : 1,
+      pageCount: Number.isFinite(parsed.pageCount) ? Number(parsed.pageCount) : pages.length,
+      pages: pages.map((page, index) => ({
+        pageNumber: Number(page?.pageNumber) || index + 1,
+        width: Math.max(1, Number(page?.width) || 1),
+        height: Math.max(1, Number(page?.height) || 1),
+        levels: Array.isArray(page?.levels)
+          ? page.levels
+              .filter((level) => typeof level?.dataUrl === "string" && level.dataUrl.length > 0)
+              .map((level, levelIndex) => ({
+                id: typeof level.id === "string" ? level.id : `p${index + 1}-l${levelIndex + 1}`,
+                width: Math.max(1, Number(level.width) || 1),
+                height: Math.max(1, Number(level.height) || 1),
+                dataUrl: level.dataUrl,
+              }))
+          : [],
+      })),
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
 function appendAssetRef(refsByAssetId, assetId, ownerRef) {
   if (!(refsByAssetId instanceof Map)) {
     return;
@@ -474,6 +519,43 @@ function canonicalizeWidgetAssets({
   };
 
   if (nextWidget.type === "pdf-document") {
+    const pdfRasterAssetId =
+      typeof nextWidget.dataPayload.pdfRasterAssetId === "string" && nextWidget.dataPayload.pdfRasterAssetId.trim()
+        ? nextWidget.dataPayload.pdfRasterAssetId
+        : null;
+    if (pdfRasterAssetId) {
+      const rasterFromAsset = assetManager.loadPdfRasterDocument(pdfRasterAssetId);
+      if (rasterFromAsset && typeof rasterFromAsset === "object") {
+        appendAssetRef(refsByAssetId, pdfRasterAssetId, ownerRef);
+        if (typeof nextWidget.dataPayload.rasterDocumentJson === "string" && nextWidget.dataPayload.rasterDocumentJson) {
+          nextWidget.dataPayload.rasterDocumentJson = null;
+          changed = true;
+        }
+        if (typeof nextWidget.dataPayload.bytesBase64 === "string" && nextWidget.dataPayload.bytesBase64) {
+          nextWidget.dataPayload.bytesBase64 = null;
+          changed = true;
+        }
+        return { widget: nextWidget, changed };
+      }
+      nextWidget.dataPayload.pdfRasterAssetId = null;
+      changed = true;
+    }
+
+    const rasterDocument = decodeRasterDocument(nextWidget.dataPayload.rasterDocumentJson);
+    if (rasterDocument) {
+      const registeredRaster = assetManager.registerPdfRasterDocument(rasterDocument, {
+        ownerId: ownerRef,
+      });
+      if (registeredRaster) {
+        nextWidget.dataPayload.pdfRasterAssetId = registeredRaster.id;
+        nextWidget.dataPayload.rasterDocumentJson = null;
+        nextWidget.dataPayload.bytesBase64 = null;
+        appendAssetRef(refsByAssetId, registeredRaster.id, ownerRef);
+        changed = true;
+        return { widget: nextWidget, changed };
+      }
+    }
+
     const pdfAssetId =
       typeof nextWidget.dataPayload.pdfAssetId === "string" && nextWidget.dataPayload.pdfAssetId.trim()
         ? nextWidget.dataPayload.pdfAssetId
@@ -654,10 +736,16 @@ function sanitizeSerializedWidget(candidate, contextId) {
       typeof dataPayload.fileName === "string" && dataPayload.fileName
         ? dataPayload.fileName
         : "document.pdf";
+    widget.dataPayload.pdfRasterAssetId =
+      typeof dataPayload.pdfRasterAssetId === "string" && dataPayload.pdfRasterAssetId.trim()
+        ? dataPayload.pdfRasterAssetId
+        : null;
     widget.dataPayload.pdfAssetId =
       typeof dataPayload.pdfAssetId === "string" && dataPayload.pdfAssetId.trim()
         ? dataPayload.pdfAssetId
         : null;
+    widget.dataPayload.rasterDocumentJson =
+      typeof dataPayload.rasterDocumentJson === "string" ? dataPayload.rasterDocumentJson : null;
     widget.dataPayload.bytesBase64 =
       typeof dataPayload.bytesBase64 === "string" ? dataPayload.bytesBase64 : null;
 
@@ -936,18 +1024,40 @@ function serializeWidget(
           ? state.metadata.title
           : "document.pdf";
 
+    const rasterDocument =
+      widget.rasterDocument && typeof widget.rasterDocument === "object" ? widget.rasterDocument : null;
+    const registeredRasterAsset =
+      assetManager && rasterDocument
+        ? assetManager.registerPdfRasterDocument(rasterDocument, { ownerId: ownerRef })
+        : null;
+    if (registeredRasterAsset) {
+      base.dataPayload.pdfRasterAssetId = registeredRasterAsset.id;
+      base.dataPayload.rasterDocumentJson = null;
+      base.dataPayload.pdfAssetId = null;
+      base.dataPayload.bytesBase64 = null;
+      appendAssetRef(refsByAssetId, registeredRasterAsset.id, ownerRef);
+    } else if (rasterDocument) {
+      base.dataPayload.pdfRasterAssetId = null;
+      base.dataPayload.rasterDocumentJson = encodeRasterDocument(rasterDocument);
+      base.dataPayload.pdfAssetId = null;
+      base.dataPayload.bytesBase64 = null;
+    } else {
+      base.dataPayload.pdfRasterAssetId = null;
+      base.dataPayload.rasterDocumentJson = null;
+    }
+
     const registeredPdfAsset =
       assetManager && widget.pdfBytes instanceof Uint8Array
         ? assetManager.registerPdfBytes(widget.pdfBytes, { ownerId: ownerRef })
         : null;
-    if (registeredPdfAsset) {
+    if (!base.dataPayload.pdfRasterAssetId && !base.dataPayload.rasterDocumentJson && registeredPdfAsset) {
       base.dataPayload.pdfAssetId = registeredPdfAsset.id;
       base.dataPayload.bytesBase64 = null;
       appendAssetRef(refsByAssetId, registeredPdfAsset.id, ownerRef);
-    } else if (allowInlinePdfBase64Fallback) {
+    } else if (!base.dataPayload.pdfRasterAssetId && !base.dataPayload.rasterDocumentJson && allowInlinePdfBase64Fallback) {
       base.dataPayload.pdfAssetId = null;
       base.dataPayload.bytesBase64 = encodeBytes(widget.pdfBytes);
-    } else {
+    } else if (!base.dataPayload.pdfRasterAssetId && !base.dataPayload.rasterDocumentJson) {
       return null;
     }
 
@@ -1247,6 +1357,13 @@ export function createContextWorkspaceStore({
       };
 
       if (normalized.type === "pdf-document") {
+        const rasterFromAsset =
+          typeof normalized.dataPayload.pdfRasterAssetId === "string"
+            ? assetManager.loadPdfRasterDocument(normalized.dataPayload.pdfRasterAssetId)
+            : null;
+        const rasterFromInline = decodeRasterDocument(normalized.dataPayload.rasterDocumentJson);
+        const rasterDocument = rasterFromAsset ?? rasterFromInline ?? null;
+
         const bytesFromAsset =
           typeof normalized.dataPayload.pdfAssetId === "string"
             ? assetManager.loadPdfBytes(normalized.dataPayload.pdfAssetId)
@@ -1255,13 +1372,15 @@ export function createContextWorkspaceStore({
         const hasBytes = bytes instanceof Uint8Array && bytes.length > 0;
 
         definition.dataPayload = {
+          rasterDocument,
+          pdfRasterAssetId: normalized.dataPayload.pdfRasterAssetId ?? null,
           bytes: hasBytes ? bytes : null,
           fileName: normalized.dataPayload.fileName,
           pdfAssetId: normalized.dataPayload.pdfAssetId,
         };
         definition.metadata = {
           ...definition.metadata,
-          missingPdfBytes: !hasBytes,
+          missingPdfBytes: !hasBytes && !rasterDocument,
         };
         definition.runtimeState = {
           ...(normalized.runtimeState && typeof normalized.runtimeState === "object"

@@ -20,6 +20,31 @@ function hashBytes(bytes) {
   return (hash >>> 0).toString(16);
 }
 
+function hashRasterDocument(rasterDocument) {
+  if (!rasterDocument || typeof rasterDocument !== "object" || !Array.isArray(rasterDocument.pages)) {
+    return "0";
+  }
+  let hash = 0x811c9dc5;
+  for (const page of rasterDocument.pages) {
+    const levels = Array.isArray(page?.levels) ? page.levels : [];
+    const prefix = `${Number(page?.pageNumber) || 0}:${Number(page?.width) || 0}:${Number(page?.height) || 0}:${levels.length}`;
+    for (let index = 0; index < prefix.length; index += 1) {
+      hash ^= prefix.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    for (const level of levels) {
+      const descriptor = `${Number(level?.width) || 0}:${Number(level?.height) || 0}:${
+        typeof level?.dataUrl === "string" ? level.dataUrl.length : 0
+      }`;
+      for (let index = 0; index < descriptor.length; index += 1) {
+        hash ^= descriptor.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+      }
+    }
+  }
+  return (hash >>> 0).toString(16);
+}
+
 function normalizeNumber(value, precision = 4) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -108,7 +133,7 @@ export function fingerprintNoteEntry(entry) {
   return `note:${hashPayload(payload)}`;
 }
 
-export function fingerprintDocumentEntry(entry, { pdfBytes = null } = {}) {
+export function fingerprintDocumentEntry(entry, { pdfBytes = null, pdfRasterDocument = null } = {}) {
   if (!entry || typeof entry !== "object") {
     return "document:invalid";
   }
@@ -127,6 +152,7 @@ export function fingerprintDocumentEntry(entry, { pdfBytes = null } = {}) {
     kind: "document",
     bytesHash: hashBytes(pdfBytes),
     bytesLength: pdfBytes instanceof Uint8Array ? pdfBytes.length : 0,
+    rasterHash: hashRasterDocument(pdfRasterDocument),
     ink: normalizeInk(entry.inkStrokes),
   };
   return `document:${hashPayload(payload)}`;
