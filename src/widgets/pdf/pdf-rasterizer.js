@@ -151,13 +151,23 @@ export async function createPdfRasterDocumentFromBytes(
 }
 
 export function selectRasterLevelForZoom(pageEntry, cameraZoom = 1) {
-  const levels = Array.isArray(pageEntry?.levels) ? pageEntry.levels : [];
+  const levels = Array.isArray(pageEntry?.levels)
+    ? pageEntry.levels
+    : Array.isArray(pageEntry?.rasterLevels)
+      ? pageEntry.rasterLevels
+      : [];
   if (levels.length < 1) {
     return null;
   }
 
   const targetZoom = Math.max(0.05, Number(cameraZoom) || 1);
-  const targetWidth = Math.max(1, (Number(pageEntry?.width) || levels[0].width || 1) * targetZoom);
+  const baseWidth =
+    Number(pageEntry?.width) ||
+    Number(pageEntry?.baseWorldWidth) ||
+    Number(pageEntry?.viewportAt1?.width) ||
+    Number(levels[0]?.width) ||
+    1;
+  const targetWidth = Math.max(1, baseWidth * targetZoom);
 
   let best = levels[0];
   let bestDistance = Math.abs((levels[0]?.width || 1) - targetWidth);
