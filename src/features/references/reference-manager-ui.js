@@ -12,6 +12,8 @@ const MAX_RECENT = 3;
 const MAX_PDF_PREVIEW_CACHE = 12;
 const LAUNCHER_SIZE = 48;
 const FLOATING_INSET = 10;
+const LAUNCHER_OFFSET_X = -20;
+const LAUNCHER_OFFSET_Y = -20;
 const OVERLAY_GAP = 10;
 
 function isWorkerBootstrapError(error) {
@@ -413,8 +415,8 @@ export function createReferenceManagerUi({
     const minLauncherTop = viewportRect.top + FLOATING_INSET;
     const maxLauncherLeft = Math.max(minLauncherLeft, viewportRect.right - FLOATING_INSET - LAUNCHER_SIZE);
     const maxLauncherTop = Math.max(minLauncherTop, viewportRect.bottom - FLOATING_INSET - LAUNCHER_SIZE);
-    const launcherLeft = clamp(maxLauncherLeft, minLauncherLeft, maxLauncherLeft);
-    const launcherTop = clamp(maxLauncherTop, minLauncherTop, maxLauncherTop);
+    const launcherLeft = clamp(maxLauncherLeft + LAUNCHER_OFFSET_X, minLauncherLeft, maxLauncherLeft);
+    const launcherTop = clamp(maxLauncherTop + LAUNCHER_OFFSET_Y, minLauncherTop, maxLauncherTop);
 
     launcherButton.style.right = "auto";
     launcherButton.style.bottom = "auto";
