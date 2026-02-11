@@ -1,7 +1,7 @@
 import { InkEngine } from "./ink-engine.js";
 
-export function createInkFeature({ runtime, onStateChange, getActiveContextId }) {
-  const engine = new InkEngine({ runtime, onStateChange, getActiveContextId });
+export function createInkFeature({ runtime, onStateChange, getActiveContextId, onCreateNoteFromLasso }) {
+  const engine = new InkEngine({ runtime, onStateChange, getActiveContextId, onCreateNoteFromLasso });
   engine.attach();
 
   return {

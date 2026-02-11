@@ -71,6 +71,32 @@ export class StrokeStore {
     return true;
   }
 
+  transformStrokes(predicate, transformer) {
+    if (typeof predicate !== "function" || typeof transformer !== "function") {
+      return 0;
+    }
+
+    let transformed = 0;
+    for (let index = 0; index < this._done.length; index += 1) {
+      const stroke = this._done[index];
+      if (!predicate(stroke)) {
+        continue;
+      }
+      const nextStroke = transformer(stroke);
+      if (nextStroke && nextStroke !== stroke) {
+        this._done[index] = nextStroke;
+      }
+      transformed += 1;
+    }
+
+    if (transformed > 0) {
+      this._undone = [];
+      this._revision += 1;
+    }
+
+    return transformed;
+  }
+
   serialize() {
     return {
       version: 2,

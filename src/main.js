@@ -44,6 +44,9 @@ const toggleResearchPanelButton = document.querySelector("#toggle-research-panel
 const toggleSearchPanelButton = document.querySelector("#toggle-search-panel");
 const enableInkButton = document.querySelector("#enable-ink");
 const toggleInkToolButton = document.querySelector("#toggle-ink-tool");
+const inkToolDropdown = document.querySelector("#ink-tool-dropdown");
+const inkToolDropdownToggle = document.querySelector("#ink-tool-dropdown-toggle");
+const inkToolDropdownMenu = document.querySelector("#ink-tool-dropdown-menu");
 const undoInkButton = document.querySelector("#undo-ink");
 const redoInkButton = document.querySelector("#redo-ink");
 const startWorkerButton = document.querySelector("#start-worker");
@@ -252,6 +255,9 @@ const VIEWPORT_DOCK_CONTENT_MIN_ZOOM = 0.4;
 const VIEWPORT_DOCK_CONTENT_MAX_ZOOM = 3.5;
 const WIDGET_TRASH_TARGET_SIZE_PX = 56;
 const WIDGET_TRASH_TARGET_MARGIN_PX = 14;
+const LASSO_NOTE_PADDING_WORLD = 28;
+const LASSO_NOTE_MIN_WIDTH_WORLD = 220;
+const LASSO_NOTE_MIN_HEIGHT_WORLD = 120;
 const onboardingRuntimeSignals = {
   searchOpened: false,
   peekActivated: false,
@@ -1842,7 +1848,7 @@ function updateInkUi(state) {
   const undoDepth = Number.isFinite(inkStateSnapshot.undoDepth) ? inkStateSnapshot.undoDepth : 0;
   const redoDepth = Number.isFinite(inkStateSnapshot.redoDepth) ? inkStateSnapshot.redoDepth : 0;
   const activePointers = Number.isFinite(inkStateSnapshot.activePointers) ? inkStateSnapshot.activePointers : 0;
-  const activeTool = inkStateSnapshot.activeTool === "eraser" ? "eraser" : "pen";
+  const activeTool = normalizeInkTool(inkStateSnapshot.activeTool);
   const enabled = inkStateSnapshot.enabled !== false;
 
   strokeCountOutput.textContent = String(completed);
@@ -1855,11 +1861,19 @@ function updateInkUi(state) {
 
   if (toggleInkToolButton instanceof HTMLButtonElement) {
     toggleInkToolButton.disabled = !inkFeature;
-    toggleInkToolButton.textContent = activeTool === "eraser" ? "Ink Tool: Eraser" : "Ink Tool: Pen";
+    toggleInkToolButton.textContent =
+      activeTool === "eraser" ? "Ink Tool: Eraser" : activeTool === "lasso" ? "Ink Tool: Lasso" : "Ink Tool: Pen";
   }
+  syncInkToolDropdownUi(activeTool, enabled);
 
   if (activePointers > 0) {
-    inkStateOutput.textContent = activeTool === "eraser" ? "erasing" : "writing";
+    if (activeTool === "eraser") {
+      inkStateOutput.textContent = "erasing";
+    } else if (activeTool === "lasso") {
+      inkStateOutput.textContent = "lassoing";
+    } else {
+      inkStateOutput.textContent = "writing";
+    }
     return;
   }
 
@@ -1871,11 +1885,135 @@ function updateInkUi(state) {
   inkStateOutput.textContent = inkFeature ? (enabled ? "active" : "paused") : "idle";
 }
 
+function normalizeInkTool(tool) {
+  return tool === "eraser" || tool === "lasso" ? tool : "pen";
+}
+
 function currentInkTool() {
   if (!inkFeature || typeof inkFeature.getTool !== "function") {
     return "pen";
   }
-  return inkFeature.getTool() === "eraser" ? "eraser" : "pen";
+  return normalizeInkTool(inkFeature.getTool());
+}
+
+function syncInkToolDropdownUi(activeTool = "pen", enabled = true) {
+  if (!(inkToolDropdownToggle instanceof HTMLButtonElement) || !(inkToolDropdownMenu instanceof HTMLElement)) {
+    return;
+  }
+  const nextTool = normalizeInkTool(activeTool);
+  const icon = nextTool === "eraser" ? "⌫" : nextTool === "lasso" ? "◌" : "✎";
+  const label = nextTool === "eraser" ? "Eraser" : nextTool === "lasso" ? "Lasso" : "Pen";
+  inkToolDropdownToggle.textContent = icon;
+  inkToolDropdownToggle.title = `Ink tool: ${label}`;
+  inkToolDropdownToggle.setAttribute("aria-label", `Ink tool: ${label}`);
+  inkToolDropdownToggle.disabled = !inkFeature || !enabled;
+  for (const button of inkToolDropdownMenu.querySelectorAll("button[data-ink-tool]")) {
+    const target = button instanceof HTMLButtonElement ? button : null;
+    if (!target) {
+      continue;
+    }
+    target.dataset.active = normalizeInkTool(target.dataset.inkTool) === nextTool ? "true" : "false";
+  }
+  if (inkToolDropdownToggle.disabled) {
+    setInkToolDropdownOpen(false);
+  }
+}
+
+function isInkToolDropdownOpen() {
+  return (
+    inkToolDropdownToggle instanceof HTMLButtonElement &&
+    inkToolDropdownMenu instanceof HTMLElement &&
+    inkToolDropdownToggle.getAttribute("aria-expanded") === "true" &&
+    !inkToolDropdownMenu.hidden
+  );
+}
+
+function setInkToolDropdownOpen(nextOpen) {
+  if (!(inkToolDropdownToggle instanceof HTMLButtonElement) || !(inkToolDropdownMenu instanceof HTMLElement)) {
+    return false;
+  }
+  const open = Boolean(nextOpen) && !inkToolDropdownToggle.disabled;
+  inkToolDropdownToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  inkToolDropdownToggle.dataset.open = open ? "true" : "false";
+  inkToolDropdownMenu.hidden = !open;
+  return open;
+}
+
+function isWithinInkToolDropdown(target) {
+  if (!(target instanceof Node)) {
+    return false;
+  }
+  if (inkToolDropdown instanceof HTMLElement && inkToolDropdown.contains(target)) {
+    return true;
+  }
+  if (inkToolDropdownToggle instanceof HTMLElement && inkToolDropdownToggle.contains(target)) {
+    return true;
+  }
+  if (inkToolDropdownMenu instanceof HTMLElement && inkToolDropdownMenu.contains(target)) {
+    return true;
+  }
+  return false;
+}
+
+async function createNoteWidgetFromLassoSelection(payload) {
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.strokes) || payload.strokes.length < 1) {
+    return null;
+  }
+
+  const sourceBounds = payload.bounds && typeof payload.bounds === "object" ? payload.bounds : null;
+  const bounds =
+    sourceBounds &&
+    Number.isFinite(sourceBounds.x) &&
+    Number.isFinite(sourceBounds.y) &&
+    Number.isFinite(sourceBounds.width) &&
+    Number.isFinite(sourceBounds.height)
+      ? {
+          x: sourceBounds.x,
+          y: sourceBounds.y,
+          width: Math.max(1, sourceBounds.width),
+          height: Math.max(1, sourceBounds.height),
+        }
+      : null;
+
+  const anchor = bounds
+    ? {
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2,
+      }
+    : viewportCenterAnchor();
+
+  const widget = await createExpandedAreaWidget(
+    {
+      metadata: {
+        title: "Notes",
+      },
+      size: bounds
+        ? {
+            width: Math.max(LASSO_NOTE_MIN_WIDTH_WORLD, bounds.width + LASSO_NOTE_PADDING_WORLD),
+            height: Math.max(LASSO_NOTE_MIN_HEIGHT_WORLD, bounds.height + LASSO_NOTE_PADDING_WORLD),
+          }
+        : undefined,
+    },
+    createCreationIntent({
+      type: "expanded-area",
+      anchor,
+      sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
+      createdFrom: "lasso-selection",
+    }),
+  );
+  if (!widget) {
+    return null;
+  }
+
+  const committed = restoreWidgetInkSnapshot(payload.strokes, widget.id);
+  runtime.bringWidgetToFront(widget.id);
+  runtime.setFocusedWidgetId(widget.id);
+  runtime.setSelectedWidgetId(widget.id);
+  updateWidgetUi({ coalesceHeavy: true });
+  if (committed > 0) {
+    flushWorkspacePersist();
+  }
+  return widget;
 }
 
 function syncSearchIndexUi(indexedCount = null) {
@@ -5229,6 +5367,7 @@ async function ensureInkFeature() {
     runtime,
     getActiveContextId: () => workspaceScopeId(),
     onStateChange: (state) => updateInkUi(state),
+    onCreateNoteFromLasso: (payload) => createNoteWidgetFromLassoSelection(payload),
   });
   runtime.bumpWidgetRasterEpoch();
 
@@ -5278,13 +5417,27 @@ async function toggleInkTool() {
     return "pen";
   }
 
-  const nextTool = feature.toggleTool();
+  const nextTool = normalizeInkTool(feature.toggleTool());
   updateInkUi({
     activeTool: nextTool,
     enabled: feature.isEnabled?.() !== false,
   });
 
   return nextTool;
+}
+
+async function selectInkTool(nextTool) {
+  const feature = await ensureInkFeature();
+  if (!feature || typeof feature.setTool !== "function") {
+    return "pen";
+  }
+  const normalized = normalizeInkTool(nextTool);
+  const selected = normalizeInkTool(feature.setTool(normalized));
+  updateInkUi({
+    activeTool: selected,
+    enabled: feature.isEnabled?.() !== false,
+  });
+  return selected;
 }
 
 async function executeGestureAction(actionName) {
@@ -6884,6 +7037,10 @@ function wireBaseEventHandlers() {
       return;
     }
 
+    if (isInkToolDropdownOpen() && !isWithinInkToolDropdown(target)) {
+      setInkToolDropdownOpen(false);
+    }
+
     if (toolsPanelOpen) {
       if (
         (controlsPanel instanceof HTMLElement && controlsPanel.contains(target)) ||
@@ -6898,6 +7055,9 @@ function wireBaseEventHandlers() {
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") {
       return;
+    }
+    if (isInkToolDropdownOpen()) {
+      setInkToolDropdownOpen(false);
     }
   });
   window.addEventListener("resize", () => {
@@ -7154,6 +7314,20 @@ function wireBaseEventHandlers() {
 
   toggleInkToolButton?.addEventListener("click", () => {
     void toggleInkTool();
+  });
+  inkToolDropdownToggle?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setInkToolDropdownOpen(!isInkToolDropdownOpen());
+  });
+  inkToolDropdownMenu?.addEventListener("click", (event) => {
+    const target = event.target instanceof HTMLElement ? event.target.closest("button[data-ink-tool]") : null;
+    if (!(target instanceof HTMLButtonElement)) {
+      return;
+    }
+    const tool = normalizeInkTool(target.dataset.inkTool);
+    setInkToolDropdownOpen(false);
+    void selectInkTool(tool);
   });
 
   undoInkButton?.addEventListener("click", () => {

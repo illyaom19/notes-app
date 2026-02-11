@@ -457,6 +457,25 @@ body[data-ui-mode="production"] .topbar h1 {
   font-weight: 600;
 }
 
+.ink-tool-dropdown {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.ink-tool-dropdown .header-create-dropdown {
+  min-width: 8.2rem;
+}
+
+.ink-tool-dropdown #ink-tool-dropdown-toggle[data-open="true"] {
+  background: var(--theme-action-soft);
+}
+
+.ink-tool-dropdown .header-create-dropdown button[data-active="true"] {
+  border-color: var(--theme-action);
+  background: var(--theme-action-soft);
+  color: var(--theme-action-strong);
+}
+
 .documents-panel {
   display: grid;
   gap: 0.6rem;

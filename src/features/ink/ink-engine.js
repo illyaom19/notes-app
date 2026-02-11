@@ -4,6 +4,11 @@ import { StrokeStore } from "./stroke-store.js";
 
 const STROKE_INTERPOLATION_STEP_PX = 4;
 const STROKE_INTERPOLATION_MAX_POINTS = 10;
+const LASSO_HANDLE_RADIUS_PX = 16;
+const LASSO_CHIP_HEIGHT_PX = 28;
+const LASSO_CHIP_PADDING_X_PX = 12;
+const LASSO_CHIP_GAP_PX = 12;
+const LASSO_MIN_SELECTION_DIMENSION_WORLD = 1;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -42,11 +47,93 @@ function distanceToSegment(point, from, to) {
   return Math.hypot(point.x - projectedX, point.y - projectedY);
 }
 
+function pointInPolygon(point, polygon) {
+  if (
+    !point ||
+    !Array.isArray(polygon) ||
+    polygon.length < 3 ||
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y)
+  ) {
+    return false;
+  }
+  let inside = false;
+  for (let index = 0, prevIndex = polygon.length - 1; index < polygon.length; prevIndex = index, index += 1) {
+    const a = polygon[index];
+    const b = polygon[prevIndex];
+    if (!a || !b) {
+      continue;
+    }
+    const intersects =
+      a.y > point.y !== b.y > point.y &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / ((b.y - a.y) || Number.EPSILON) + a.x;
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function orientation(a, b, c) {
+  return (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+}
+
+function onSegment(a, b, c) {
+  return (
+    Math.min(a.x, c.x) <= b.x &&
+    b.x <= Math.max(a.x, c.x) &&
+    Math.min(a.y, c.y) <= b.y &&
+    b.y <= Math.max(a.y, c.y)
+  );
+}
+
+function segmentsIntersect(a1, a2, b1, b2) {
+  const o1 = orientation(a1, a2, b1);
+  const o2 = orientation(a1, a2, b2);
+  const o3 = orientation(b1, b2, a1);
+  const o4 = orientation(b1, b2, a2);
+  if (o1 * o2 < 0 && o3 * o4 < 0) {
+    return true;
+  }
+  if (Math.abs(o1) < 0.000001 && onSegment(a1, b1, a2)) {
+    return true;
+  }
+  if (Math.abs(o2) < 0.000001 && onSegment(a1, b2, a2)) {
+    return true;
+  }
+  if (Math.abs(o3) < 0.000001 && onSegment(b1, a1, b2)) {
+    return true;
+  }
+  if (Math.abs(o4) < 0.000001 && onSegment(b1, a2, b2)) {
+    return true;
+  }
+  return false;
+}
+
+function polylineIntersectsPolygon(polyline, polygon) {
+  if (!Array.isArray(polyline) || polyline.length < 2 || !Array.isArray(polygon) || polygon.length < 3) {
+    return false;
+  }
+  for (let index = 1; index < polyline.length; index += 1) {
+    const from = polyline[index - 1];
+    const to = polyline[index];
+    for (let edgeIndex = 0; edgeIndex < polygon.length; edgeIndex += 1) {
+      const edgeFrom = polygon[edgeIndex];
+      const edgeTo = polygon[(edgeIndex + 1) % polygon.length];
+      if (segmentsIntersect(from, to, edgeFrom, edgeTo)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export class InkEngine {
-  constructor({ runtime, onStateChange, getActiveContextId }) {
+  constructor({ runtime, onStateChange, getActiveContextId, onCreateNoteFromLasso }) {
     this.runtime = runtime;
     this.onStateChange = onStateChange;
     this.getActiveContextId = typeof getActiveContextId === "function" ? getActiveContextId : () => null;
+    this.onCreateNoteFromLasso = typeof onCreateNoteFromLasso === "function" ? onCreateNoteFromLasso : null;
     this.store = new StrokeStore(loadPersistedStrokes());
     this.persistence = new InkPersistence();
     this.activeStrokes = new Map();
@@ -63,6 +150,9 @@ export class InkEngine {
     this._detachInput = null;
     this._detachGlobalLayer = null;
     this._detachAttachedLayer = null;
+    this._lassoPath = null;
+    this._lassoSelection = null;
+    this._lassoMoveState = null;
     this._globalRenderLayer = {
       render: (ctx, camera) => this.renderGlobal(ctx, camera),
     };
@@ -142,13 +232,25 @@ export class InkEngine {
   }
 
   setTool(nextTool) {
-    this.activeTool = nextTool === "eraser" ? "eraser" : "pen";
+    if (nextTool === "eraser") {
+      this.activeTool = "eraser";
+    } else if (nextTool === "lasso") {
+      this.activeTool = "lasso";
+    } else {
+      this.activeTool = "pen";
+    }
+    if (this.activeTool !== "lasso") {
+      this._clearLassoState();
+    }
     this._emitState();
     return this.activeTool;
   }
 
   toggleTool() {
-    return this.setTool(this.activeTool === "pen" ? "eraser" : "pen");
+    if (this.activeTool === "eraser") {
+      return this.setTool("pen");
+    }
+    return this.setTool("eraser");
   }
 
   _activeContextId() {
@@ -796,6 +898,457 @@ export class InkEngine {
     }
   }
 
+  _clearLassoState() {
+    this._lassoPath = null;
+    this._lassoSelection = null;
+    this._lassoMoveState = null;
+  }
+
+  _lassoControlLayout(camera) {
+    if (!this._lassoSelection || !this._lassoSelection.bounds) {
+      return null;
+    }
+    const bounds = this._lassoSelection.bounds;
+    const centerWorldX = bounds.x + bounds.width / 2;
+    const centerWorldY = bounds.y + bounds.height / 2;
+    const centerScreen = camera.worldToScreen(centerWorldX, centerWorldY);
+    const label = "Make note";
+    const baseWidth = 96;
+    const measureCtx = this.runtime?.ctx;
+    let chipWidth = baseWidth;
+    if (measureCtx && typeof measureCtx.measureText === "function") {
+      measureCtx.save();
+      measureCtx.font = "600 13px ui-sans-serif, system-ui, -apple-system";
+      chipWidth = Math.ceil(measureCtx.measureText(label).width + LASSO_CHIP_PADDING_X_PX * 2);
+      measureCtx.restore();
+    }
+    const chipHeight = LASSO_CHIP_HEIGHT_PX;
+    const chipRect = {
+      x: centerScreen.x - chipWidth / 2,
+      y: centerScreen.y - (LASSO_HANDLE_RADIUS_PX + LASSO_CHIP_GAP_PX + chipHeight),
+      width: chipWidth,
+      height: chipHeight,
+    };
+    return {
+      centerScreenX: centerScreen.x,
+      centerScreenY: centerScreen.y,
+      handleRadiusPx: LASSO_HANDLE_RADIUS_PX,
+      chipRect,
+      chipLabel: label,
+    };
+  }
+
+  _pointInLassoMoveHandle(event, camera) {
+    const layout = this._lassoControlLayout(camera);
+    if (!layout) {
+      return false;
+    }
+    const dx = event.offsetX - layout.centerScreenX;
+    const dy = event.offsetY - layout.centerScreenY;
+    return Math.hypot(dx, dy) <= layout.handleRadiusPx;
+  }
+
+  _pointInLassoChip(event, camera) {
+    const layout = this._lassoControlLayout(camera);
+    if (!layout) {
+      return false;
+    }
+    const rect = layout.chipRect;
+    return (
+      event.offsetX >= rect.x &&
+      event.offsetX <= rect.x + rect.width &&
+      event.offsetY >= rect.y &&
+      event.offsetY <= rect.y + rect.height
+    );
+  }
+
+  _appendLassoPoint(event, camera) {
+    if (!this._lassoPath || this._lassoPath.pointerId !== event.pointerId) {
+      return;
+    }
+    const world = camera.screenToWorld(event.offsetX, event.offsetY);
+    const points = this._lassoPath.points;
+    const previous = points[points.length - 1];
+    if (previous) {
+      const prevScreen = camera.worldToScreen(previous.x, previous.y);
+      const distancePx = Math.hypot(event.offsetX - prevScreen.x, event.offsetY - prevScreen.y);
+      if (distancePx < 2) {
+        return;
+      }
+    }
+    points.push({
+      x: world.x,
+      y: world.y,
+      t: Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now(),
+    });
+  }
+
+  _strokeMatchesLassoPolygon(stroke, polygon) {
+    if (!stroke || stroke.layer !== "global" || !Array.isArray(stroke.points) || stroke.points.length < 1) {
+      return false;
+    }
+    const worldPoints = stroke.points
+      .map((point) => ({
+        x: Number(point?.x),
+        y: Number(point?.y),
+      }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (worldPoints.length < 1) {
+      return false;
+    }
+    if (worldPoints.some((point) => pointInPolygon(point, polygon))) {
+      return true;
+    }
+    return polylineIntersectsPolygon(worldPoints, polygon);
+  }
+
+  _computeBoundsForSelection(strokeIds) {
+    const ids = strokeIds instanceof Set ? strokeIds : new Set();
+    if (ids.size < 1) {
+      return null;
+    }
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const stroke of this.store.getCompletedStrokes()) {
+      if (!stroke || stroke.layer !== "global" || !ids.has(stroke.id) || !this._strokeMatchesActiveContext(stroke)) {
+        continue;
+      }
+      for (const point of stroke.points ?? []) {
+        const x = Number(point?.x);
+        const y = Number(point?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          continue;
+        }
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return null;
+    }
+    const width = Math.max(LASSO_MIN_SELECTION_DIMENSION_WORLD, maxX - minX);
+    const height = Math.max(LASSO_MIN_SELECTION_DIMENSION_WORLD, maxY - minY);
+    return { x: minX, y: minY, width, height };
+  }
+
+  _finalizeLassoSelection() {
+    if (!this._lassoPath || !Array.isArray(this._lassoPath.points) || this._lassoPath.points.length < 3) {
+      this._lassoPath = null;
+      return;
+    }
+    const polygon = this._lassoPath.points;
+    const selectedStrokeIds = new Set();
+    for (const stroke of this.store.getCompletedStrokes()) {
+      if (!this._strokeMatchesActiveContext(stroke)) {
+        continue;
+      }
+      if (this._strokeMatchesLassoPolygon(stroke, polygon)) {
+        selectedStrokeIds.add(stroke.id);
+      }
+    }
+    this._lassoPath = null;
+    if (selectedStrokeIds.size < 1) {
+      this._lassoSelection = null;
+      this._lassoMoveState = null;
+      this._requestFastRefresh();
+      return;
+    }
+    const bounds = this._computeBoundsForSelection(selectedStrokeIds);
+    if (!bounds) {
+      this._lassoSelection = null;
+      this._lassoMoveState = null;
+      this._requestFastRefresh();
+      return;
+    }
+    this._lassoSelection = {
+      strokeIds: selectedStrokeIds,
+      bounds,
+    };
+    this._lassoMoveState = null;
+    this._requestFastRefresh();
+  }
+
+  _translateLassoSelection(deltaX, deltaY) {
+    if (
+      !this._lassoSelection ||
+      !this._lassoSelection.strokeIds ||
+      this._lassoSelection.strokeIds.size < 1 ||
+      (Math.abs(deltaX) < 0.000001 && Math.abs(deltaY) < 0.000001)
+    ) {
+      return 0;
+    }
+    const strokeIds = this._lassoSelection.strokeIds;
+    const moved = this.store.transformStrokes(
+      (stroke) => stroke?.layer === "global" && strokeIds.has(stroke.id) && this._strokeMatchesActiveContext(stroke),
+      (stroke) => {
+        if (!Array.isArray(stroke.points) || stroke.points.length < 1) {
+          return stroke;
+        }
+        for (const point of stroke.points) {
+          if (!point) {
+            continue;
+          }
+          point.x = (Number(point.x) || 0) + deltaX;
+          point.y = (Number(point.y) || 0) + deltaY;
+        }
+        return stroke;
+      },
+    );
+    if (moved > 0) {
+      this._lassoSelection.bounds = {
+        ...this._lassoSelection.bounds,
+        x: this._lassoSelection.bounds.x + deltaX,
+        y: this._lassoSelection.bounds.y + deltaY,
+      };
+      this._afterStoreMutation();
+      this._requestFastRefresh();
+    }
+    return moved;
+  }
+
+  _buildLassoSelectionPayload() {
+    if (!this._lassoSelection || !(this._lassoSelection.strokeIds instanceof Set)) {
+      return null;
+    }
+    const bounds = this._lassoSelection.bounds;
+    if (!bounds) {
+      return null;
+    }
+    const strokes = [];
+    for (const stroke of this.store.getCompletedStrokes()) {
+      if (!stroke || stroke.layer !== "global" || !this._lassoSelection.strokeIds.has(stroke.id)) {
+        continue;
+      }
+      if (!this._strokeMatchesActiveContext(stroke)) {
+        continue;
+      }
+      const points = (stroke.points ?? [])
+        .map((point) => {
+          const x = Number(point?.x);
+          const y = Number(point?.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return null;
+          }
+          return {
+            lx: x - bounds.x,
+            ly: y - bounds.y,
+            p: Number.isFinite(point?.p) ? point.p : 0.5,
+            t: Number.isFinite(point?.t) ? point.t : Date.now(),
+          };
+        })
+        .filter(Boolean);
+      if (points.length < 1) {
+        continue;
+      }
+      strokes.push({
+        ...stroke,
+        id: globalThis.crypto?.randomUUID?.() ?? `lasso-${Date.now()}-${strokes.length}`,
+        layer: "widget",
+        sourceWidgetId: null,
+        anchorMode: "local",
+        anchorBounds: {
+          x: 0,
+          y: 0,
+          width: bounds.width,
+          height: bounds.height,
+        },
+        points,
+      });
+    }
+    if (strokes.length < 1) {
+      return null;
+    }
+    return {
+      bounds: {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+      },
+      strokes,
+    };
+  }
+
+  _triggerLassoCreateNote() {
+    if (typeof this.onCreateNoteFromLasso !== "function") {
+      return false;
+    }
+    const payload = this._buildLassoSelectionPayload();
+    if (!payload) {
+      return false;
+    }
+    try {
+      const result = this.onCreateNoteFromLasso(payload);
+      if (result && typeof result.then === "function") {
+        result.catch((error) => {
+          console.error("Lasso make-note callback failed.", error);
+        });
+      }
+    } catch (error) {
+      console.error("Lasso make-note callback failed.", error);
+    }
+    this._clearLassoState();
+    this._requestFastRefresh();
+    return true;
+  }
+
+  _onLassoPointerDown(event, camera) {
+    if (event.button !== 0) {
+      return false;
+    }
+    event.preventDefault();
+
+    if (this._pointInLassoChip(event, camera)) {
+      return this._triggerLassoCreateNote();
+    }
+
+    if (this._pointInLassoMoveHandle(event, camera)) {
+      const world = camera.screenToWorld(event.offsetX, event.offsetY);
+      this._lassoMoveState = {
+        pointerId: event.pointerId,
+        lastWorldX: world.x,
+        lastWorldY: world.y,
+      };
+      return true;
+    }
+
+    this._lassoSelection = null;
+    this._lassoMoveState = null;
+    const world = camera.screenToWorld(event.offsetX, event.offsetY);
+    this._lassoPath = {
+      pointerId: event.pointerId,
+      points: [
+        {
+          x: world.x,
+          y: world.y,
+          t: Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now(),
+        },
+      ],
+    };
+    this._requestFastRefresh();
+    return true;
+  }
+
+  _onLassoPointerMove(event, camera) {
+    if (this._lassoMoveState && this._lassoMoveState.pointerId === event.pointerId) {
+      event.preventDefault();
+      const world = camera.screenToWorld(event.offsetX, event.offsetY);
+      const deltaX = world.x - this._lassoMoveState.lastWorldX;
+      const deltaY = world.y - this._lassoMoveState.lastWorldY;
+      this._lassoMoveState.lastWorldX = world.x;
+      this._lassoMoveState.lastWorldY = world.y;
+      this._translateLassoSelection(deltaX, deltaY);
+      return true;
+    }
+    if (!this._lassoPath || this._lassoPath.pointerId !== event.pointerId) {
+      return false;
+    }
+    event.preventDefault();
+    this._appendLassoPoint(event, camera);
+    this._requestFastRefresh();
+    return true;
+  }
+
+  _onLassoPointerUp(event, camera, { cancelled = false } = {}) {
+    if (this._lassoMoveState && this._lassoMoveState.pointerId === event.pointerId) {
+      event.preventDefault();
+      this._lassoMoveState = null;
+      this._requestFastRefresh();
+      return true;
+    }
+    if (!this._lassoPath || this._lassoPath.pointerId !== event.pointerId) {
+      return false;
+    }
+    event.preventDefault();
+    if (cancelled) {
+      this._lassoPath = null;
+      this._requestFastRefresh();
+      return true;
+    }
+    this._appendLassoPoint(event, camera);
+    this._finalizeLassoSelection();
+    return true;
+  }
+
+  _drawLassoOverlay(ctx, camera) {
+    if (this.activeTool !== "lasso") {
+      return;
+    }
+
+    if (this._lassoPath && Array.isArray(this._lassoPath.points) && this._lassoPath.points.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(37, 147, 191, 0.95)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      for (let index = 0; index < this._lassoPath.points.length; index += 1) {
+        const point = this._lassoPath.points[index];
+        const screen = camera.worldToScreen(point.x, point.y);
+        if (index === 0) {
+          ctx.moveTo(screen.x, screen.y);
+        } else {
+          ctx.lineTo(screen.x, screen.y);
+        }
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (!this._lassoSelection || !this._lassoSelection.bounds) {
+      return;
+    }
+
+    const bounds = this._lassoSelection.bounds;
+    const topLeft = camera.worldToScreen(bounds.x, bounds.y);
+    const widthPx = Math.max(1, bounds.width * camera.zoom);
+    const heightPx = Math.max(1, bounds.height * camera.zoom);
+    const layout = this._lassoControlLayout(camera);
+    if (!layout) {
+      return;
+    }
+
+    ctx.save();
+    ctx.fillStyle = "rgba(28, 159, 208, 0.08)";
+    ctx.strokeStyle = "rgba(28, 159, 208, 0.88)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.fillRect(topLeft.x, topLeft.y, widthPx, heightPx);
+    ctx.strokeRect(topLeft.x, topLeft.y, widthPx, heightPx);
+    ctx.setLineDash([]);
+
+    ctx.beginPath();
+    ctx.arc(layout.centerScreenX, layout.centerScreenY, layout.handleRadiusPx, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(25, 118, 163, 0.95)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(layout.centerScreenX - 7, layout.centerScreenY);
+    ctx.lineTo(layout.centerScreenX + 7, layout.centerScreenY);
+    ctx.moveTo(layout.centerScreenX, layout.centerScreenY - 7);
+    ctx.lineTo(layout.centerScreenX, layout.centerScreenY + 7);
+    ctx.stroke();
+
+    const chipRect = layout.chipRect;
+    ctx.fillStyle = "rgba(19, 123, 168, 0.94)";
+    ctx.strokeStyle = "rgba(163, 227, 255, 0.95)";
+    ctx.lineWidth = 1.4;
+    ctx.fillRect(chipRect.x, chipRect.y, chipRect.width, chipRect.height);
+    ctx.strokeRect(chipRect.x, chipRect.y, chipRect.width, chipRect.height);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "600 13px ui-sans-serif, system-ui, -apple-system";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(layout.chipLabel, chipRect.x + chipRect.width / 2, chipRect.y + chipRect.height / 2 + 0.5);
+    ctx.restore();
+  }
+
   _eraseAtEvent(event, camera) {
     const world = camera.screenToWorld(event.offsetX, event.offsetY);
     const radiusWorld = 16 / Math.max(0.25, camera.zoom);
@@ -848,6 +1401,10 @@ export class InkEngine {
       return false;
     }
 
+    if (this.activeTool === "lasso") {
+      return this._onLassoPointerDown(event, camera);
+    }
+
     event.preventDefault();
     if (this.activeTool === "eraser") {
       this.activeErasers.add(event.pointerId);
@@ -882,6 +1439,10 @@ export class InkEngine {
   }
 
   onPointerMove(event, { camera }) {
+    if (this.activeTool === "lasso") {
+      return this._onLassoPointerMove(event, camera);
+    }
+
     if (this.activeErasers.has(event.pointerId)) {
       event.preventDefault();
       this._eraseAtEvent(event, camera);
@@ -899,10 +1460,16 @@ export class InkEngine {
   }
 
   onPointerUp(event, { camera }) {
+    if (this.activeTool === "lasso") {
+      return this._onLassoPointerUp(event, camera, { cancelled: false });
+    }
     return this._finishStroke(event, camera);
   }
 
   onPointerCancel(event, { camera }) {
+    if (this.activeTool === "lasso") {
+      return this._onLassoPointerUp(event, camera, { cancelled: true });
+    }
     return this._finishStroke(event, camera);
   }
 
@@ -913,6 +1480,7 @@ export class InkEngine {
   renderAttached(ctx, camera) {
     this._drawLayer(ctx, camera, "pdf");
     this._drawLayer(ctx, camera, "widget");
+    this._drawLassoOverlay(ctx, camera);
   }
 
   renderWidgetInkForRaster(ctx, camera, widgetId) {
@@ -966,7 +1534,38 @@ export class InkEngine {
     return true;
   }
 
+  _syncLassoSelectionAfterMutation() {
+    if (!this._lassoSelection || !(this._lassoSelection.strokeIds instanceof Set)) {
+      return;
+    }
+    const existing = new Set();
+    for (const stroke of this.store.getCompletedStrokes()) {
+      if (!stroke || stroke.layer !== "global" || !this._strokeMatchesActiveContext(stroke)) {
+        continue;
+      }
+      if (this._lassoSelection.strokeIds.has(stroke.id)) {
+        existing.add(stroke.id);
+      }
+    }
+    if (existing.size < 1) {
+      this._lassoSelection = null;
+      this._lassoMoveState = null;
+      return;
+    }
+    const bounds = this._computeBoundsForSelection(existing);
+    if (!bounds) {
+      this._lassoSelection = null;
+      this._lassoMoveState = null;
+      return;
+    }
+    this._lassoSelection = {
+      strokeIds: existing,
+      bounds,
+    };
+  }
+
   _afterStoreMutation() {
+    this._syncLassoSelectionAfterMutation();
     this.persistence.scheduleSave(this.store.serialize());
     this._emitState();
   }
@@ -1043,13 +1642,14 @@ export class InkEngine {
     const completedStrokes = this.store
       .getCompletedStrokes()
       .filter((stroke) => this._strokeMatchesActiveContext(stroke)).length;
+    const activeLassoPointers = (this._lassoPath ? 1 : 0) + (this._lassoMoveState ? 1 : 0);
 
     if (typeof this.onStateChange === "function") {
       this.onStateChange({
         completedStrokes,
         undoDepth: this.store.doneCount,
         redoDepth: this.store.undoneCount,
-        activePointers: this.activeStrokes.size + this.activeErasers.size,
+        activePointers: this.activeStrokes.size + this.activeErasers.size + activeLassoPointers,
         activeTool: this.activeTool,
         enabled: this.enabled,
       });

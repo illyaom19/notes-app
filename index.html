@@ -37,6 +37,23 @@
         </div>
         <div id="section-tabs" class="section-tabs" role="tablist" aria-label="Sections"></div>
         <button id="new-section" class="header-icon-btn section-add-btn" type="button" aria-label="Add section" title="Add section">+</button>
+        <div id="ink-tool-dropdown" class="ink-tool-dropdown">
+          <button
+            id="ink-tool-dropdown-toggle"
+            class="header-icon-btn"
+            type="button"
+            aria-label="Ink tool"
+            title="Ink tool"
+            aria-expanded="false"
+          >
+            ✎
+          </button>
+          <div id="ink-tool-dropdown-menu" class="header-create-dropdown" hidden>
+            <button type="button" data-ink-tool="pen">Pen</button>
+            <button type="button" data-ink-tool="eraser">Eraser</button>
+            <button type="button" data-ink-tool="lasso">Lasso</button>
+          </div>
+        </div>
         <button id="undo-ink" class="header-icon-btn" type="button" aria-label="Undo" title="Undo" disabled>
           ↶
         </button>
