@@ -5290,19 +5290,60 @@ async function tryRestorePdfWidgetFromLinkedDocument(widget) {
     typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim()
       ? widget.metadata.sourceDocumentId.trim()
       : null;
-  if (!sourceDocumentId) {
-    return false;
+  let sourceDocument =
+    sourceDocumentId ? notebookDocumentLibraryStore.getDocument(activeContextId, sourceDocumentId) : null;
+
+  if (!sourceDocument || sourceDocument.status === "deleted") {
+    const widgetFileName =
+      typeof widget.fileName === "string" && widget.fileName.trim() ? widget.fileName.trim() : null;
+    const widgetTitle =
+      typeof widget.metadata?.title === "string" && widget.metadata.title.trim()
+        ? widget.metadata.title.trim()
+        : null;
+    const candidates = notebookDocumentLibraryStore
+      .listDocuments(activeContextId)
+      .filter((entry) => entry?.status !== "deleted");
+    sourceDocument =
+      candidates.find(
+        (entry) =>
+          widgetFileName &&
+          typeof entry.fileName === "string" &&
+          entry.fileName.trim() &&
+          entry.fileName.trim() === widgetFileName,
+      ) ??
+      candidates.find(
+        (entry) =>
+          widgetTitle &&
+          typeof entry.title === "string" &&
+          entry.title.trim() &&
+          entry.title.trim() === widgetTitle,
+      ) ??
+      null;
   }
 
-  const sourceDocument = notebookDocumentLibraryStore.getDocument(activeContextId, sourceDocumentId);
   if (!sourceDocument || sourceDocument.status === "deleted") {
     return false;
   }
 
-  const rasterDocument = notebookDocumentLibraryStore.loadDocumentRaster(activeContextId, sourceDocumentId);
-  const bytes = rasterDocument ? null : notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, sourceDocumentId);
+  const resolvedSourceDocumentId =
+    typeof sourceDocument.id === "string" && sourceDocument.id.trim() ? sourceDocument.id.trim() : null;
+  if (!resolvedSourceDocumentId) {
+    return false;
+  }
+
+  const rasterDocument = notebookDocumentLibraryStore.loadDocumentRaster(activeContextId, resolvedSourceDocumentId);
+  const bytes = rasterDocument
+    ? null
+    : notebookDocumentLibraryStore.loadDocumentBytes(activeContextId, resolvedSourceDocumentId);
   if (!rasterDocument && (!(bytes instanceof Uint8Array) || bytes.length < 1)) {
     return false;
+  }
+
+  if (sourceDocumentId !== resolvedSourceDocumentId) {
+    widget.metadata = {
+      ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+      sourceDocumentId: resolvedSourceDocumentId,
+    };
   }
 
   return hydrateExistingPdfWidgetFromBytes(widget, bytes, {

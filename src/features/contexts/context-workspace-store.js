@@ -537,8 +537,11 @@ function canonicalizeWidgetAssets({
         }
         return { widget: nextWidget, changed };
       }
-      nextWidget.dataPayload.pdfRasterAssetId = null;
-      changed = true;
+      // Keep the asset link intact when payload lookup is temporarily unavailable.
+      // Dropping the id here permanently disconnects the widget and can cause false
+      // "missing PDF" states across section switches.
+      appendAssetRef(refsByAssetId, pdfRasterAssetId, ownerRef);
+      return { widget: nextWidget, changed };
     }
 
     const rasterDocument = decodeRasterDocument(nextWidget.dataPayload.rasterDocumentJson);
@@ -571,9 +574,9 @@ function canonicalizeWidgetAssets({
         return { widget: nextWidget, changed };
       }
 
-      // Asset record was stale; fall back to inline bytes when available.
-      nextWidget.dataPayload.pdfAssetId = null;
-      changed = true;
+      // Keep unresolved asset id so widget definitions can still attempt recovery.
+      appendAssetRef(refsByAssetId, pdfAssetId, ownerRef);
+      return { widget: nextWidget, changed };
     }
 
     const bytesBase64 =
@@ -1058,7 +1061,13 @@ function serializeWidget(
       base.dataPayload.pdfAssetId = null;
       base.dataPayload.bytesBase64 = encodeBytes(widget.pdfBytes);
     } else if (!base.dataPayload.pdfRasterAssetId && !base.dataPayload.rasterDocumentJson) {
-      return null;
+      // Persist a recoverable placeholder instead of failing the whole workspace save.
+      base.dataPayload.pdfAssetId = null;
+      base.dataPayload.bytesBase64 = null;
+      base.metadata = {
+        ...base.metadata,
+        missingPdfBytes: true,
+      };
     }
 
     if (typeof widget.getWhitespaceZones === "function") {
