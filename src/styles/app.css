@@ -1099,7 +1099,7 @@ body[data-ui-mode="production"] .topbar h1 {
   pointer-events: none;
   opacity: 0;
   transition: opacity 120ms ease, filter 120ms ease;
-  filter: blur(0px);
+  filter: blur(0px) saturate(1);
 }
 
 .viewport-dock-glow[hidden] {
@@ -1109,8 +1109,8 @@ body[data-ui-mode="production"] .topbar h1 {
 .viewport-dock-glow--left {
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--theme-action) 48%, transparent) 0%,
-    color-mix(in srgb, var(--theme-action-soft) 20%, transparent) 58%,
+    color-mix(in srgb, var(--theme-action) 78%, transparent) 0%,
+    color-mix(in srgb, var(--theme-action-soft) 40%, transparent) 62%,
     transparent 100%
   );
 }
@@ -1118,23 +1118,58 @@ body[data-ui-mode="production"] .topbar h1 {
 .viewport-dock-glow--right {
   background: linear-gradient(
     270deg,
-    color-mix(in srgb, var(--theme-action) 48%, transparent) 0%,
-    color-mix(in srgb, var(--theme-action-soft) 20%, transparent) 58%,
+    color-mix(in srgb, var(--theme-action) 78%, transparent) 0%,
+    color-mix(in srgb, var(--theme-action-soft) 40%, transparent) 62%,
     transparent 100%
   );
 }
 
 .viewport-dock-glow[data-active="true"] {
-  opacity: 0.22;
+  opacity: 0.42;
 }
 
 .viewport-dock-glow[data-over="true"] {
-  opacity: 0.38;
+  opacity: 0.68;
 }
 
 .viewport-dock-glow[data-armed="true"] {
-  opacity: 0.52;
-  filter: blur(1px);
+  opacity: 0.92;
+  filter: blur(2px) saturate(1.15);
+}
+
+.widget-trash-drop-target {
+  position: fixed;
+  z-index: 66;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #ff5b5b 70%, #ffffff);
+  background: linear-gradient(180deg, #ffd3d3 0%, #ff9f9f 100%);
+  color: #9a1b1b;
+  box-shadow: 0 10px 24px color-mix(in srgb, #a41515 35%, transparent);
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  line-height: 1;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 100ms ease, transform 100ms ease, box-shadow 100ms ease;
+}
+
+.widget-trash-drop-target[hidden] {
+  display: none !important;
+}
+
+.widget-trash-drop-target[data-active="true"] {
+  opacity: 0.84;
+  transform: scale(1);
+}
+
+.widget-trash-drop-target[data-over="true"] {
+  opacity: 1;
+  transform: scale(1.12);
+  box-shadow: 0 14px 30px color-mix(in srgb, #a41515 52%, transparent);
 }
 
 .reference-manager-launcher {

@@ -209,6 +209,7 @@ let libraryDropDragState = null;
 let viewportDockDragState = null;
 let viewportDockGlowLeft = null;
 let viewportDockGlowRight = null;
+let viewportTrashDropTarget = null;
 let storageUsageRefreshTimer = null;
 let storageUsageRefreshInFlight = false;
 let storageUsageRefreshQueued = false;
@@ -241,6 +242,14 @@ const VIEWPORT_DOCK_HOLD_MS = 220;
 const VIEWPORT_DOCK_MARGIN_PX = 10;
 const VIEWPORT_DOCK_META_VERSION = 1;
 const VIEWPORT_DOCK_EPSILON_WORLD = 0.001;
+const VIEWPORT_DOCK_WIDTH_RATIO = 0.25;
+const VIEWPORT_DOCK_HEIGHT_RATIO = 1 / 3;
+const VIEWPORT_DOCK_MIN_WIDTH_PX = 120;
+const VIEWPORT_DOCK_MIN_HEIGHT_PX = 120;
+const VIEWPORT_DOCK_MAX_WIDTH_RATIO = 0.45;
+const VIEWPORT_DOCK_MAX_HEIGHT_RATIO = 0.6;
+const WIDGET_TRASH_TARGET_SIZE_PX = 56;
+const WIDGET_TRASH_TARGET_MARGIN_PX = 14;
 const onboardingRuntimeSignals = {
   searchOpened: false,
   peekActivated: false,
@@ -267,6 +276,21 @@ function safeLocalStorageGetItem(key) {
   } catch (_error) {
     return null;
   }
+}
+
+function triggerWidgetHaptic(type = "soft") {
+  if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") {
+    return;
+  }
+  if (type === "delete") {
+    navigator.vibrate([18, 24, 22]);
+    return;
+  }
+  navigator.vibrate(12);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 async function requestPersistentStorageQuota() {
@@ -1017,6 +1041,7 @@ function syncCanvasViewportNow() {
     runtime.requestRender({ continuousMs: 80 });
   }
   syncViewportDockGlowLayout();
+  syncWidgetTrashDropTargetLayout();
   syncReferenceManagerPlacement();
   renderSectionMinimap();
 }
@@ -2831,6 +2856,9 @@ function toggleWidgetPinFromContextMenu(widget) {
   if (!widget) {
     return false;
   }
+  if (isWidgetViewportDocked(widget)) {
+    return false;
+  }
 
   widget.metadata = {
     ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
@@ -2959,13 +2987,21 @@ function normalizeViewportDockMetadata(candidate) {
     return null;
   }
   const offsetTopPx = Math.max(0, Number(candidate.offsetTopPx) || 0);
-  const widthPx = Math.max(40, Number(candidate.widthPx) || 0);
-  const heightPx = Math.max(40, Number(candidate.heightPx) || 0);
+  const widthRatio = clamp(
+    Number(candidate.widthRatio) || VIEWPORT_DOCK_WIDTH_RATIO,
+    VIEWPORT_DOCK_WIDTH_RATIO,
+    VIEWPORT_DOCK_MAX_WIDTH_RATIO,
+  );
+  const heightRatio = clamp(
+    Number(candidate.heightRatio) || VIEWPORT_DOCK_HEIGHT_RATIO,
+    VIEWPORT_DOCK_HEIGHT_RATIO,
+    VIEWPORT_DOCK_MAX_HEIGHT_RATIO,
+  );
   return {
     side,
     offsetTopPx,
-    widthPx,
-    heightPx,
+    widthRatio,
+    heightRatio,
     version: VIEWPORT_DOCK_META_VERSION,
   };
 }
@@ -2985,8 +3021,16 @@ function applyViewportDockToWidget(widget, { camera = runtime.camera, viewportRe
 
   const usableWidth = Math.max(48, viewportRect.width - VIEWPORT_DOCK_MARGIN_PX * 2);
   const usableHeight = Math.max(48, viewportRect.height - VIEWPORT_DOCK_MARGIN_PX * 2);
-  const widthPx = Math.min(dock.widthPx, usableWidth);
-  const heightPx = Math.min(dock.heightPx, usableHeight);
+  const widthPx = clamp(
+    viewportRect.width * dock.widthRatio,
+    VIEWPORT_DOCK_MIN_WIDTH_PX,
+    usableWidth,
+  );
+  const heightPx = clamp(
+    viewportRect.height * dock.heightRatio,
+    VIEWPORT_DOCK_MIN_HEIGHT_PX,
+    usableHeight,
+  );
   const yPx = Math.min(
     Math.max(dock.offsetTopPx, VIEWPORT_DOCK_MARGIN_PX),
     Math.max(VIEWPORT_DOCK_MARGIN_PX, viewportRect.height - heightPx - VIEWPORT_DOCK_MARGIN_PX),
@@ -3034,8 +3078,8 @@ function applyViewportDockToWidget(widget, { camera = runtime.camera, viewportRe
   const normalizedDock = {
     side: dock.side,
     offsetTopPx: yPx,
-    widthPx,
-    heightPx,
+    widthRatio: dock.widthRatio,
+    heightRatio: dock.heightRatio,
     version: VIEWPORT_DOCK_META_VERSION,
   };
   const existingDock = widget.metadata?.viewportDock;
@@ -3043,8 +3087,8 @@ function applyViewportDockToWidget(widget, { camera = runtime.camera, viewportRe
     !existingDock ||
     existingDock.side !== normalizedDock.side ||
     Math.abs((Number(existingDock.offsetTopPx) || 0) - normalizedDock.offsetTopPx) > 0.5 ||
-    Math.abs((Number(existingDock.widthPx) || 0) - normalizedDock.widthPx) > 0.5 ||
-    Math.abs((Number(existingDock.heightPx) || 0) - normalizedDock.heightPx) > 0.5 ||
+    Math.abs((Number(existingDock.widthRatio) || VIEWPORT_DOCK_WIDTH_RATIO) - normalizedDock.widthRatio) > 0.001 ||
+    Math.abs((Number(existingDock.heightRatio) || VIEWPORT_DOCK_HEIGHT_RATIO) - normalizedDock.heightRatio) > 0.001 ||
     Number(existingDock.version) !== VIEWPORT_DOCK_META_VERSION
   ) {
     widget.metadata = {
@@ -3088,12 +3132,16 @@ function dockWidgetToViewportSide(widget, side, pointerClientY = null) {
     return false;
   }
 
-  const interactionBounds =
-    typeof widget.getInteractionBounds === "function"
-      ? widget.getInteractionBounds(camera)
-      : { width: widget.size?.width ?? 240, height: widget.size?.height ?? 160 };
-  const widthPx = Math.max(40, Math.min(viewportRect.width - VIEWPORT_DOCK_MARGIN_PX * 2, interactionBounds.width * camera.zoom));
-  const heightPx = Math.max(40, Math.min(viewportRect.height - VIEWPORT_DOCK_MARGIN_PX * 2, interactionBounds.height * camera.zoom));
+  const widthPx = clamp(
+    viewportRect.width * VIEWPORT_DOCK_WIDTH_RATIO,
+    VIEWPORT_DOCK_MIN_WIDTH_PX,
+    Math.max(VIEWPORT_DOCK_MIN_WIDTH_PX, viewportRect.width - VIEWPORT_DOCK_MARGIN_PX * 2),
+  );
+  const heightPx = clamp(
+    viewportRect.height * VIEWPORT_DOCK_HEIGHT_RATIO,
+    VIEWPORT_DOCK_MIN_HEIGHT_PX,
+    Math.max(VIEWPORT_DOCK_MIN_HEIGHT_PX, viewportRect.height - VIEWPORT_DOCK_MARGIN_PX * 2),
+  );
 
   const currentScreen = camera.worldToScreen(widget.position.x, widget.position.y);
   const fallbackTop = currentScreen.y;
@@ -3105,16 +3153,18 @@ function dockWidgetToViewportSide(widget, side, pointerClientY = null) {
     Math.min(requestedTop, viewportRect.height - heightPx - VIEWPORT_DOCK_MARGIN_PX),
   );
 
-  widget.metadata = {
+  const metadata = {
     ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
-    viewportDock: {
-      side,
-      offsetTopPx,
-      widthPx,
-      heightPx,
-      version: VIEWPORT_DOCK_META_VERSION,
-    },
   };
+  delete metadata.pinned;
+  metadata.viewportDock = {
+    side,
+    offsetTopPx,
+    widthRatio: VIEWPORT_DOCK_WIDTH_RATIO,
+    heightRatio: VIEWPORT_DOCK_HEIGHT_RATIO,
+    version: VIEWPORT_DOCK_META_VERSION,
+  };
+  widget.metadata = metadata;
   runtime.bringWidgetToFront(widget.id);
   runtime.setFocusedWidgetId(widget.id);
   runtime.setSelectedWidgetId(widget.id);
@@ -3260,6 +3310,7 @@ function handleWidgetDragStateForViewportDock(payload) {
   }
   const changed = dockWidgetToViewportSide(widget, dockSide, payload.clientY);
   if (changed) {
+    triggerWidgetHaptic("soft");
     updateWidgetUi({ coalesceHeavy: true });
   }
 }
@@ -3274,6 +3325,64 @@ function setLibraryDropTargetState({ active = false, over = false } = {}) {
   }
   referenceManagerLauncher.dataset.dropActive = active ? "true" : "false";
   referenceManagerLauncher.dataset.dropOver = active && over ? "true" : "false";
+}
+
+function ensureWidgetTrashDropTargetElement() {
+  if (!(document.body instanceof HTMLElement)) {
+    return false;
+  }
+  if (!(viewportTrashDropTarget instanceof HTMLButtonElement)) {
+    viewportTrashDropTarget = document.createElement("button");
+    viewportTrashDropTarget.type = "button";
+    viewportTrashDropTarget.className = "widget-trash-drop-target";
+    viewportTrashDropTarget.hidden = true;
+    viewportTrashDropTarget.tabIndex = -1;
+    viewportTrashDropTarget.setAttribute("aria-hidden", "true");
+    viewportTrashDropTarget.setAttribute("aria-label", "Drop widget to delete");
+    viewportTrashDropTarget.textContent = "X";
+    document.body.append(viewportTrashDropTarget);
+  }
+  return true;
+}
+
+function syncWidgetTrashDropTargetLayout() {
+  if (!ensureWidgetTrashDropTargetElement() || !(viewportTrashDropTarget instanceof HTMLElement)) {
+    return;
+  }
+  const rect = resolveCanvasViewportRect();
+  if (!rect) {
+    return;
+  }
+  const x = rect.left + (rect.width - WIDGET_TRASH_TARGET_SIZE_PX) * 0.5;
+  const y = rect.bottom - WIDGET_TRASH_TARGET_SIZE_PX - WIDGET_TRASH_TARGET_MARGIN_PX;
+  viewportTrashDropTarget.style.left = `${Math.round(x)}px`;
+  viewportTrashDropTarget.style.top = `${Math.round(y)}px`;
+}
+
+function setWidgetTrashDropTargetState({ active = false, over = false } = {}) {
+  if (!ensureWidgetTrashDropTargetElement() || !(viewportTrashDropTarget instanceof HTMLElement)) {
+    return;
+  }
+  syncWidgetTrashDropTargetLayout();
+  viewportTrashDropTarget.hidden = !active;
+  viewportTrashDropTarget.dataset.active = active ? "true" : "false";
+  viewportTrashDropTarget.dataset.over = active && over ? "true" : "false";
+}
+
+function pointerOverWidgetTrashTarget(clientX, clientY) {
+  if (!(viewportTrashDropTarget instanceof HTMLElement)) {
+    return false;
+  }
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return false;
+  }
+  const rect = viewportTrashDropTarget.getBoundingClientRect();
+  return (
+    clientX >= rect.left &&
+    clientX <= rect.right &&
+    clientY >= rect.top &&
+    clientY <= rect.bottom
+  );
 }
 
 function showLibraryDropFeedback({ kind = "deny", message = "" } = {}) {
@@ -3554,7 +3663,8 @@ function handleWidgetDragStateForLibrary(payload) {
     libraryDropDragState = {
       widgetId: payload.widgetId,
       mode: payload.mode,
-      over: payload.mode === "move" && pointerOverLibraryLauncher(payload.clientX, payload.clientY),
+      overLibrary: payload.mode === "move" && pointerOverLibraryLauncher(payload.clientX, payload.clientY),
+      overTrash: payload.mode === "move" && pointerOverWidgetTrashTarget(payload.clientX, payload.clientY),
       originPosition:
         draggedWidget && Number.isFinite(draggedWidget.position?.x) && Number.isFinite(draggedWidget.position?.y)
           ? {
@@ -3565,7 +3675,11 @@ function handleWidgetDragStateForLibrary(payload) {
     };
     setLibraryDropTargetState({
       active: payload.mode === "move",
-      over: payload.mode === "move" && libraryDropDragState.over,
+      over: payload.mode === "move" && libraryDropDragState.overLibrary,
+    });
+    setWidgetTrashDropTargetState({
+      active: payload.mode === "move",
+      over: payload.mode === "move" && libraryDropDragState.overTrash,
     });
     return;
   }
@@ -3575,11 +3689,17 @@ function handleWidgetDragStateForLibrary(payload) {
   }
 
   if (payload.phase === "move") {
-    const over = libraryDropDragState.mode === "move" && pointerOverLibraryLauncher(payload.clientX, payload.clientY);
-    libraryDropDragState.over = over;
+    const overLibrary = libraryDropDragState.mode === "move" && pointerOverLibraryLauncher(payload.clientX, payload.clientY);
+    const overTrash = libraryDropDragState.mode === "move" && pointerOverWidgetTrashTarget(payload.clientX, payload.clientY);
+    libraryDropDragState.overLibrary = overLibrary;
+    libraryDropDragState.overTrash = overTrash;
     setLibraryDropTargetState({
       active: libraryDropDragState.mode === "move",
-      over,
+      over: overLibrary,
+    });
+    setWidgetTrashDropTargetState({
+      active: libraryDropDragState.mode === "move",
+      over: overTrash,
     });
     return;
   }
@@ -3588,11 +3708,30 @@ function handleWidgetDragStateForLibrary(payload) {
     const dragState = { ...libraryDropDragState };
     libraryDropDragState = null;
     setLibraryDropTargetState({ active: false, over: false });
+    setWidgetTrashDropTargetState({ active: false, over: false });
 
     if (dragState.mode !== "move") {
       return;
     }
-    const droppedOverLibrary = dragState.over || pointerOverLibraryLauncher(payload.clientX, payload.clientY);
+    const hasPointerLocation = Number.isFinite(payload.clientX) && Number.isFinite(payload.clientY);
+    const droppedOverTrash = hasPointerLocation
+      ? pointerOverWidgetTrashTarget(payload.clientX, payload.clientY)
+      : Boolean(dragState.overTrash);
+    const droppedOverLibrary = hasPointerLocation
+      ? pointerOverLibraryLauncher(payload.clientX, payload.clientY)
+      : Boolean(dragState.overLibrary);
+    if (droppedOverTrash) {
+      runtime.removeWidgetById(dragState.widgetId, { reason: "drag-trash-delete" });
+      if (runtime.getSelectedWidgetId() === dragState.widgetId) {
+        runtime.setSelectedWidgetId(null);
+      }
+      if (runtime.getFocusedWidgetId() === dragState.widgetId) {
+        runtime.setFocusedWidgetId(null);
+      }
+      triggerWidgetHaptic("delete");
+      updateWidgetUi({ coalesceHeavy: true });
+      return;
+    }
     if (!droppedOverLibrary) {
       return;
     }
@@ -7375,6 +7514,7 @@ function wireWidgetInteractionManager() {
     canvas,
     onWidgetPreviewMutated: () => updateWidgetUi({ deferHeavy: true }),
     onWidgetCommitMutated: () => updateWidgetUi({ coalesceHeavy: true }),
+    onWidgetUndocked: () => triggerWidgetHaptic("soft"),
     onWidgetDragStateChange: (payload) => {
       handleWidgetDragStateForLibrary(payload);
     },

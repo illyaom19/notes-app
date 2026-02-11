@@ -14,8 +14,6 @@ const TAP_MOVE_THRESHOLD_PX = 8;
 const UNAVAILABLE_DOT_PX = 8;
 const MIN_COLLAPSE_ACTION_PX = 10;
 const MIN_RESIZE_ACTION_PX = 16;
-const VIEWPORT_DOCK_UNDOCK_HOLD_MS = 180;
-const VIEWPORT_DOCK_UNDOCK_MOVE_TOLERANCE_PX = 10;
 
 function worldPoint(event, camera) {
   return camera.screenToWorld(event.offsetX, event.offsetY);
@@ -262,6 +260,7 @@ export function createWidgetInteractionManager({
   onWidgetPreviewMutated,
   onWidgetCommitMutated,
   onWidgetTap,
+  onWidgetUndocked,
   onWidgetDragStateChange,
 }) {
   const dragState = {
@@ -278,16 +277,6 @@ export function createWidgetInteractionManager({
     moved: false,
   };
   const activeTouchPointerIds = new Set();
-  const undockHoldState = {
-    pointerId: null,
-    widgetId: null,
-    startClientX: 0,
-    startClientY: 0,
-    lastClientX: 0,
-    lastClientY: 0,
-    pointerType: null,
-    timer: null,
-  };
 
   function pickWidgetByPinControl(event, camera) {
     const world = worldPoint(event, camera);
@@ -311,6 +300,9 @@ export function createWidgetInteractionManager({
         touchPrimary,
       });
       if (!revealActions) {
+        continue;
+      }
+      if (isWidgetViewportDocked(widget)) {
         continue;
       }
 
@@ -351,7 +343,6 @@ export function createWidgetInteractionManager({
     dragState.widgetId = null;
     dragState.mode = null;
     dragState.lastWorld = null;
-    clearUndockHoldState();
   }
 
   function clearTapState() {
@@ -360,84 +351,6 @@ export function createWidgetInteractionManager({
     tapState.startClientX = 0;
     tapState.startClientY = 0;
     tapState.moved = false;
-  }
-
-  function clearUndockHoldState() {
-    if (Number.isFinite(undockHoldState.timer)) {
-      window.clearTimeout(undockHoldState.timer);
-    }
-    undockHoldState.pointerId = null;
-    undockHoldState.widgetId = null;
-    undockHoldState.startClientX = 0;
-    undockHoldState.startClientY = 0;
-    undockHoldState.lastClientX = 0;
-    undockHoldState.lastClientY = 0;
-    undockHoldState.pointerType = null;
-    undockHoldState.timer = null;
-  }
-
-  function beginUndockHold(event, widget) {
-    clearUndockHoldState();
-    undockHoldState.pointerId = event.pointerId;
-    undockHoldState.widgetId = widget.id;
-    undockHoldState.startClientX = event.clientX;
-    undockHoldState.startClientY = event.clientY;
-    undockHoldState.lastClientX = event.clientX;
-    undockHoldState.lastClientY = event.clientY;
-    undockHoldState.pointerType = event.pointerType;
-    undockHoldState.timer = window.setTimeout(() => {
-      if (
-        undockHoldState.pointerId !== event.pointerId ||
-        undockHoldState.widgetId !== widget.id
-      ) {
-        return;
-      }
-      const liveWidget = runtime.getWidgetById(widget.id);
-      const camera = runtime.camera;
-      if (!liveWidget || !camera) {
-        clearUndockHoldState();
-        return;
-      }
-
-      const metadata = liveWidget.metadata && typeof liveWidget.metadata === "object"
-        ? { ...liveWidget.metadata }
-        : {};
-      if (metadata.viewportDock && typeof metadata.viewportDock === "object") {
-        delete metadata.viewportDock;
-        liveWidget.metadata = metadata;
-      }
-
-      runtime.bringWidgetToFront(liveWidget.id);
-      runtime.setFocusedWidgetId(liveWidget.id);
-      runtime.setSelectedWidgetId(liveWidget.id);
-      dragState.pointerId = undockHoldState.pointerId;
-      dragState.widgetId = liveWidget.id;
-      dragState.mode = "move";
-      dragState.lastWorld = worldPointFromClient(
-        canvas,
-        camera,
-        undockHoldState.lastClientX,
-        undockHoldState.lastClientY,
-      );
-      if (typeof runtime.setWidgetTransformState === "function") {
-        runtime.setWidgetTransformState(liveWidget.id, "move");
-      }
-      emitWidgetDragState(
-        "start",
-        {
-          pointerId: undockHoldState.pointerId,
-          pointerType: undockHoldState.pointerType,
-          clientX: undockHoldState.lastClientX,
-          clientY: undockHoldState.lastClientY,
-        },
-        liveWidget.id,
-        "move",
-      );
-      if (typeof onWidgetPreviewMutated === "function") {
-        onWidgetPreviewMutated(liveWidget);
-      }
-      clearUndockHoldState();
-    }, VIEWPORT_DOCK_UNDOCK_HOLD_MS);
   }
 
   function beginTapCandidate(event, widget) {
@@ -575,8 +488,16 @@ export function createWidgetInteractionManager({
         runtime.setFocusedWidgetId(widget.id);
         runtime.setSelectedWidgetId(widget.id);
         if (viewportDocked) {
-          beginUndockHold(event, widget);
-          return true;
+          const metadata = widget.metadata && typeof widget.metadata === "object"
+            ? { ...widget.metadata }
+            : {};
+          if (metadata.viewportDock && typeof metadata.viewportDock === "object") {
+            delete metadata.viewportDock;
+            widget.metadata = metadata;
+            if (typeof onWidgetUndocked === "function") {
+              onWidgetUndocked(widget, event);
+            }
+          }
         }
         dragState.pointerId = event.pointerId;
         dragState.widgetId = widget.id;
@@ -610,23 +531,6 @@ export function createWidgetInteractionManager({
     onPointerMove(event, context) {
       maybeInvalidateTapCandidate(event);
 
-      if (
-        undockHoldState.pointerId === event.pointerId &&
-        undockHoldState.widgetId &&
-        dragState.pointerId !== event.pointerId
-      ) {
-        undockHoldState.lastClientX = event.clientX;
-        undockHoldState.lastClientY = event.clientY;
-        const movedDistance = Math.hypot(
-          event.clientX - undockHoldState.startClientX,
-          event.clientY - undockHoldState.startClientY,
-        );
-        if (movedDistance > VIEWPORT_DOCK_UNDOCK_MOVE_TOLERANCE_PX) {
-          clearUndockHoldState();
-        }
-        return true;
-      }
-
       if (dragState.pointerId !== event.pointerId || !dragState.widgetId || !dragState.mode) {
         return false;
       }
@@ -658,12 +562,6 @@ export function createWidgetInteractionManager({
     onPointerUp(event, context) {
       if (event.pointerType === "touch") {
         activeTouchPointerIds.delete(event.pointerId);
-      }
-
-      if (undockHoldState.pointerId === event.pointerId) {
-        clearUndockHoldState();
-        clearTapState();
-        return true;
       }
 
       if (dragState.pointerId === event.pointerId) {
@@ -707,9 +605,6 @@ export function createWidgetInteractionManager({
       if (event.pointerType === "touch") {
         activeTouchPointerIds.delete(event.pointerId);
       }
-      if (undockHoldState.pointerId === event.pointerId) {
-        clearUndockHoldState();
-      }
       if (dragState.pointerId === event.pointerId) {
         const draggedWidgetId = dragState.widgetId;
         const draggedMode = dragState.mode;
@@ -734,9 +629,6 @@ export function createWidgetInteractionManager({
   const handleRawPointerEnd = (event) => {
     if (event.pointerType === "touch") {
       activeTouchPointerIds.delete(event.pointerId);
-    }
-    if (undockHoldState.pointerId === event.pointerId && dragState.pointerId !== event.pointerId) {
-      clearUndockHoldState();
     }
     if (tapState.pointerId === event.pointerId && dragState.pointerId !== event.pointerId) {
       clearTapState();
@@ -797,27 +689,29 @@ export function createWidgetInteractionManager({
         return;
       }
 
-      const pinScreen = camera.worldToScreen(rects.pin.x, rects.pin.y);
-      const pinW = rects.pin.width * camera.zoom;
-      const pinH = rects.pin.height * camera.zoom;
-      fillPill(
-        ctx,
-        pinScreen.x,
-        pinScreen.y,
-        pinW,
-        pinH,
-        pinned ? WIDGET_THEME.palette.controlBg : WIDGET_THEME.palette.controlBgSoft,
-      );
-      drawControlGlyph(
-        ctx,
-        "pin",
-        {
-          x: pinScreen.x,
-          y: pinScreen.y,
-          size: Math.min(pinW, pinH),
-          color: WIDGET_THEME.palette.controlFg,
-        },
-      );
+      if (!viewportDocked) {
+        const pinScreen = camera.worldToScreen(rects.pin.x, rects.pin.y);
+        const pinW = rects.pin.width * camera.zoom;
+        const pinH = rects.pin.height * camera.zoom;
+        fillPill(
+          ctx,
+          pinScreen.x,
+          pinScreen.y,
+          pinW,
+          pinH,
+          pinned ? WIDGET_THEME.palette.controlBg : WIDGET_THEME.palette.controlBgSoft,
+        );
+        drawControlGlyph(
+          ctx,
+          "pin",
+          {
+            x: pinScreen.x,
+            y: pinScreen.y,
+            size: Math.min(pinW, pinH),
+            color: WIDGET_THEME.palette.controlFg,
+          },
+        );
+      }
 
       if (!pinned && flags.collapsible) {
         const collapseScreen = camera.worldToScreen(rects.collapse.x, rects.collapse.y);

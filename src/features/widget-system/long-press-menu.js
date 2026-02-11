@@ -32,6 +32,14 @@ function isWidgetPinned(widget) {
   return Boolean(widget?.metadata?.pinned);
 }
 
+function isWidgetViewportDocked(widget) {
+  const dock = widget?.metadata?.viewportDock;
+  if (!dock || typeof dock !== "object") {
+    return false;
+  }
+  return dock.side === "left" || dock.side === "right";
+}
+
 export function createWidgetContextMenu({
   canvas,
   menuElement,
@@ -81,7 +89,7 @@ export function createWidgetContextMenu({
   };
 
   const openMenuAt = (screenX, screenY, widget) => {
-    if (!widget) {
+    if (!widget || isWidgetViewportDocked(widget)) {
       closeMenu();
       return;
     }
@@ -158,6 +166,10 @@ export function createWidgetContextMenu({
 
     const targetWidget = runtime.pickWidgetAtScreenPoint(event.offsetX, event.offsetY);
     if (!targetWidget) {
+      clearLongPress();
+      return;
+    }
+    if (isWidgetViewportDocked(targetWidget)) {
       clearLongPress();
       return;
     }
@@ -248,6 +260,10 @@ export function createWidgetContextMenu({
     }
 
     if (!widget) {
+      closeMenu();
+      return;
+    }
+    if (isWidgetViewportDocked(widget)) {
       closeMenu();
       return;
     }
