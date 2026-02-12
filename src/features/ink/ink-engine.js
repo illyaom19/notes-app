@@ -305,6 +305,13 @@ export class InkEngine {
     return stroke.contextId === null || stroke.contextId === activeContextId;
   }
 
+  _strokeMatchesContextId(stroke, contextId = null) {
+    if (!contextId) {
+      return true;
+    }
+    return stroke?.contextId === null || stroke?.contextId === contextId;
+  }
+
   _resolveWidgetBounds(widgetId, camera = this.runtime.camera) {
     if (!widgetId) {
       return null;
@@ -1546,6 +1553,51 @@ export class InkEngine {
       drawCount += 1;
     }
     return drawCount;
+  }
+
+  getRenderableStrokesForExport({ contextId = null, includeLayers = null } = {}) {
+    const layerSet =
+      Array.isArray(includeLayers) && includeLayers.length > 0
+        ? new Set(includeLayers)
+        : null;
+    const scopedContextId = contextId ?? this._activeContextId();
+    const renderable = [];
+    for (const stroke of this.store.getCompletedStrokes()) {
+      if (!stroke || (layerSet && !layerSet.has(stroke.layer))) {
+        continue;
+      }
+      if (!this._strokeMatchesContextId(stroke, scopedContextId)) {
+        continue;
+      }
+      const next = this._toRenderableStroke(stroke);
+      if (!next || !Array.isArray(next.points) || next.points.length < 1) {
+        continue;
+      }
+      renderable.push(next);
+    }
+    return renderable;
+  }
+
+  renderStrokesForExport(ctx, camera, strokes, { includeLayers = null } = {}) {
+    if (!ctx || !camera || !Array.isArray(strokes) || strokes.length < 1) {
+      return 0;
+    }
+    const layerSet =
+      Array.isArray(includeLayers) && includeLayers.length > 0
+        ? new Set(includeLayers)
+        : null;
+    let drawn = 0;
+    for (const stroke of strokes) {
+      if (!stroke || (layerSet && !layerSet.has(stroke.layer))) {
+        continue;
+      }
+      if (!Array.isArray(stroke.points) || stroke.points.length < 1) {
+        continue;
+      }
+      drawStroke(ctx, camera, stroke);
+      drawn += 1;
+    }
+    return drawn;
   }
 
   _finishStroke(event, camera) {

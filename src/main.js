@@ -38,6 +38,7 @@ import { createLibraryReferenceRuntime } from "./features/runtime/library-refere
 import { createKnowledgeRuntime } from "./features/runtime/knowledge-runtime.js";
 import { createOnboardingRuntime } from "./features/runtime/onboarding-runtime.js";
 import { createInkGestureRuntime } from "./features/runtime/ink-gesture-runtime.js";
+import { createSectionPdfShareRuntime } from "./features/share/section-pdf-share-runtime.js";
 import { ALLOWED_CREATION_INTENT_TYPES } from "./features/widget-system/widget-types.js";
 import { createPdfRasterDocumentFromBytes } from "./widgets/pdf/pdf-rasterizer.js";
 
@@ -132,6 +133,7 @@ const gestureDoubleTapBindingSelect = document.querySelector("#gesture-doubletap
 const gestureBarrelTapBindingSelect = document.querySelector("#gesture-barreltap-binding");
 const toggleOnboardingHintsButton = document.querySelector("#toggle-onboarding-hints");
 const resetOnboardingHintsButton = document.querySelector("#reset-onboarding-hints");
+const shareCurrentSectionButton = document.querySelector("#share-current-section");
 const debugOnlyControls = Array.from(document.querySelectorAll('[data-debug-only="true"]'));
 const productionHiddenControls = Array.from(document.querySelectorAll("[data-production-hidden='true']"));
 const uiModeStateOutput = document.querySelector("#ui-mode-state");
@@ -210,6 +212,7 @@ let libraryReferenceRuntime = null;
 let knowledgeRuntime = null;
 let onboardingRuntime = null;
 let inkGestureRuntime = null;
+let sectionPdfShareRuntime = null;
 let sectionsStore = createNotebookSectionsStore();
 const notebookLibraryStore = createNotebookLibraryStore();
 const notebookDocumentLibraryStore = createNotebookDocumentLibraryStore({
@@ -1037,6 +1040,15 @@ inkGestureRuntime = createInkGestureRuntime({
     gestureDoubleTapBindingSelect,
     gestureBarrelTapBindingSelect,
   },
+});
+sectionPdfShareRuntime = createSectionPdfShareRuntime({
+  runtime,
+  getInkFeature: () => inkFeature,
+  getActiveScopeId: () => workspaceScopeId(),
+  getActiveSectionName: () => activeSectionRecord()?.name ?? "Section",
+  showTextPromptDialog,
+  showNoticeDialog,
+  documentObj: document,
 });
 
 viewportDockOverlayController = createViewportDockOverlayController({
@@ -4587,6 +4599,25 @@ function wireBaseEventHandlers() {
       });
     } finally {
       toggleSearchPanelButton.disabled = false;
+    }
+  });
+  shareCurrentSectionButton?.addEventListener("click", async () => {
+    if (!(shareCurrentSectionButton instanceof HTMLButtonElement) || !sectionPdfShareRuntime) {
+      return;
+    }
+    const originalLabel = shareCurrentSectionButton.textContent || "Share";
+    shareCurrentSectionButton.disabled = true;
+    shareCurrentSectionButton.textContent = "Preparing PDF...";
+    try {
+      await sectionPdfShareRuntime.shareCurrentSectionAsPdf();
+    } catch (error) {
+      console.error(error);
+      await showNoticeDialog(`Share failed: ${formatErrorMessage(error)}`, {
+        title: "Share",
+      });
+    } finally {
+      shareCurrentSectionButton.disabled = false;
+      shareCurrentSectionButton.textContent = originalLabel;
     }
   });
   inkGestureRuntime.wireUiBindings();

@@ -30,6 +30,7 @@ export class ExpandedAreaWidget extends WidgetBase {
     const interaction = interactionStateForWidget(this, renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
       interaction,
+      exportMode: renderContext?.exportMode,
       borderRadius: 18,
     });
     drawFloatingWidgetTitle(ctx, camera, {
@@ -38,6 +39,7 @@ export class ExpandedAreaWidget extends WidgetBase {
       focused: interaction.focused,
       visible: interaction.showTitle,
       widget: this,
+      exportMode: renderContext?.exportMode,
     });
   }
 
@@ -45,6 +47,7 @@ export class ExpandedAreaWidget extends WidgetBase {
     const interaction = interactionStateForWidget(this, _renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
       interaction,
+      exportMode: _renderContext?.exportMode,
       borderRadius: 18,
       collapsedScale: 0.22,
     });
@@ -54,6 +57,7 @@ export class ExpandedAreaWidget extends WidgetBase {
       focused: interaction.focused,
       visible: interaction.showTitle,
       widget: this,
+      exportMode: _renderContext?.exportMode,
     });
   }
 }

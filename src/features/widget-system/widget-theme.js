@@ -62,6 +62,7 @@ export function drawUnifiedWidgetFrame(
   widget,
   {
     interaction = null,
+    exportMode = null,
     borderRadius = 16,
     headerWorldHeight = 34,
     frameStrokeWidth = 1.05,
@@ -84,6 +85,16 @@ export function drawUnifiedWidgetFrame(
   const headerHeight = Math.max(8, Math.min(height, headerWorldHeight * camera.zoom));
   const focused = interaction?.focused === true;
   const pinned = Boolean(widget?.metadata?.pinned);
+  const contentOnlyExport = exportMode === "content-only";
+
+  if (contentOnlyExport) {
+    return {
+      screen,
+      width,
+      height,
+      headerHeight,
+    };
+  }
 
   if (pinned) {
     strokeRoundedRect(
@@ -153,9 +164,9 @@ export function drawUnifiedWidgetFrame(
 export function drawFloatingWidgetTitle(
   ctx,
   camera,
-  { title = "", frame = null, focused = false, visible = false, widget = null } = {},
+  { title = "", frame = null, focused = false, visible = false, widget = null, exportMode = null } = {},
 ) {
-  if (!visible || !frame || !title) {
+  if (!visible || !frame || !title || exportMode === "content-only") {
     if (widget && typeof widget === "object") {
       widget._floatingTitleLayout = null;
     }

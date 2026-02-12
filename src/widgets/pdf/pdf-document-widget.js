@@ -880,6 +880,7 @@ export class PdfDocumentWidget extends WidgetBase {
     const interaction = interactionStateForWidget(this, renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
       interaction,
+      exportMode: renderContext?.exportMode,
       borderRadius: 18,
       headerWorldHeight: HEADER_WORLD,
     });
@@ -906,6 +907,7 @@ export class PdfDocumentWidget extends WidgetBase {
       focused: interaction.focused,
       visible: interaction.showTitle,
       widget: this,
+      exportMode: renderContext?.exportMode,
     });
 
     if (this.loading) {
@@ -1188,6 +1190,7 @@ export class PdfDocumentWidget extends WidgetBase {
     const interaction = interactionStateForWidget(this, renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
       interaction,
+      exportMode: renderContext?.exportMode,
       borderRadius: 18,
       headerWorldHeight: HEADER_WORLD,
       collapsedScale: 0.24,
@@ -1198,6 +1201,7 @@ export class PdfDocumentWidget extends WidgetBase {
       focused: interaction.focused,
       visible: interaction.showTitle,
       widget: this,
+      exportMode: renderContext?.exportMode,
     });
 
     const inset = 10;

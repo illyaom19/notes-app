@@ -18,6 +18,9 @@ export function createInkFeature({ runtime, onStateChange, getActiveContextId, o
     cloneStrokesForWidget: (options) => engine.cloneStrokesForWidget(options),
     commitImportedStrokes: (strokes) => engine.commitImportedStrokes(strokes),
     removeStrokesForWidget: (widgetId, options) => engine.removeStrokesForWidget(widgetId, options),
+    getRenderableStrokesForExport: (options) => engine.getRenderableStrokesForExport(options),
+    renderStrokesForExport: (ctx, camera, strokes, options) =>
+      engine.renderStrokesForExport(ctx, camera, strokes, options),
     getWidgetInkRevision: (widgetId) => engine.getWidgetInkRevision(widgetId),
     isWidgetInkActive: (widgetId) => engine.isWidgetInkActive(widgetId),
     hasActiveInkPointers: () => engine.hasActiveInkPointers(),

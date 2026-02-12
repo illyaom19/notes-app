@@ -451,6 +451,7 @@ export class ReferencePopupWidget extends WidgetBase {
 
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
       interaction,
+      exportMode: renderContext?.exportMode,
       borderRadius: 16,
       headerWorldHeight: HEADER_HEIGHT,
     });
@@ -460,6 +461,7 @@ export class ReferencePopupWidget extends WidgetBase {
       focused: interaction.focused,
       visible: interaction.showTitle,
       widget: this,
+      exportMode: renderContext?.exportMode,
     });
 
     const width = frame.width;
@@ -556,6 +558,7 @@ export class ReferencePopupWidget extends WidgetBase {
     const interaction = interactionStateForWidget(this, renderContext);
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
       interaction,
+      exportMode: renderContext?.exportMode,
       borderRadius: 16,
       headerWorldHeight: HEADER_HEIGHT,
       collapsedScale: 0.24,
@@ -566,6 +569,7 @@ export class ReferencePopupWidget extends WidgetBase {
       focused: interaction.focused,
       visible: interaction.showTitle,
       widget: this,
+      exportMode: renderContext?.exportMode,
     });
   }
 }

@@ -694,8 +694,10 @@ export class DiagramWidget extends WidgetBase {
 
   render(ctx, camera, renderContext) {
     const interaction = interactionStateForWidget(this, renderContext);
+    const exportMode = renderContext?.exportMode === "content-only";
     const frame = drawUnifiedWidgetFrame(ctx, camera, this, {
       interaction,
+      exportMode: renderContext?.exportMode,
       borderRadius: 18,
     });
 
@@ -705,6 +707,7 @@ export class DiagramWidget extends WidgetBase {
       focused: interaction.focused,
       visible: interaction.showTitle,
       widget: this,
+      exportMode: renderContext?.exportMode,
     });
 
     if (this.collapsed) {
@@ -728,7 +731,7 @@ export class DiagramWidget extends WidgetBase {
     ctx.fillRect(bodyScreen.x, bodyScreen.y, bodyWidthPx, bodyHeightPx);
 
     const gridStepPx = GRID_STEP_WORLD * viewScaleScreen;
-    if (gridStepPx >= 14 && gridStepPx <= 84) {
+    if (!exportMode && gridStepPx >= 14 && gridStepPx <= 84) {
       ctx.strokeStyle = "rgba(34, 79, 92, 0.07)";
       ctx.lineWidth = 1;
       const minLocalX = -view.offsetXWorld;
@@ -831,7 +834,7 @@ export class DiagramWidget extends WidgetBase {
       ctx.restore();
     }
 
-    if (this.diagramDoc.nodes.length < 1) {
+    if (!exportMode && this.diagramDoc.nodes.length < 1) {
       ctx.save();
       ctx.fillStyle = "rgba(26, 59, 71, 0.5)";
       ctx.font = `${clamp(11 * Math.max(0.85, viewScaleScreen), 10, 14)}px ${WIDGET_THEME.typography.uiFamily}`;
@@ -847,7 +850,7 @@ export class DiagramWidget extends WidgetBase {
 
     ctx.restore();
 
-    const toolbarVisible = interaction.revealActions || interaction.focused;
+    const toolbarVisible = !exportMode && (interaction.revealActions || interaction.focused);
     this._toolbarLayout = toolbarVisible ? this._toolbarItems(camera) : [];
     if (!toolbarVisible || this._toolbarLayout.length < 1) {
       return;
