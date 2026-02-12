@@ -1,0 +1,84 @@
+# Main Orchestration Segmentation Plan
+
+## Objective
+Refactor `src/main.js` to a bootstrap/composition entrypoint while moving runtime orchestration into focused modules.
+
+## Status
+- Plan type: active implementation plan
+- Priority: Medium severity from `docs/CURRENT_STATE.md`
+- Goal state: `main.js` is bootstrap-only
+
+## Completed Work
+- Extracted runtime controllers:
+  - `src/features/runtime/input-routing-controller.js`
+  - `src/features/runtime/library-overlay-controller.js`
+  - `src/features/runtime/viewport-dock-overlay-controller.js`
+  - `src/features/runtime/workspace-persistence-controller.js`
+- Wired `src/main.js` to delegate to these controllers for input routing, dock overlays, library overlays, and persistence scheduling.
+
+## Remaining Slices (Ordered)
+1. Dialog runtime extraction
+- Create `src/features/runtime/dialog-runtime.js`.
+- Move app modal/prompt orchestration (`show*Dialog`, `closeActiveAppDialog`) out of `main.js`.
+
+2. Context/section runtime extraction
+- Create `src/features/runtime/context-section-runtime.js`.
+- Move context/section create/rename/delete/switch orchestration and action menus.
+
+3. Document/PDF runtime extraction
+- Create `src/features/runtime/document-pdf-runtime.js`.
+- Move PDF import/reimport orchestration, document binding/focus orchestration, and hydration coordination.
+
+4. Library/reference runtime extraction
+- Create `src/features/runtime/library-reference-runtime.js`.
+- Move notebook library actions, reference manager orchestration glue, and library spawn action wiring.
+
+5. Knowledge runtime extraction
+- Create `src/features/runtime/knowledge-runtime.js`.
+- Move suggestion scheduling/execution orchestration and search/research runtime glue.
+
+6. Ink/gesture runtime extraction
+- Create `src/features/runtime/ink-gesture-runtime.js`.
+- Move ink tool state orchestration, gesture preference wiring, and cursor pill routing glue.
+
+7. Onboarding runtime extraction
+- Create `src/features/runtime/onboarding-runtime.js`.
+- Move onboarding overlay/hint scheduler and control-state orchestration.
+
+8. Final cleanup pass
+- Remove dead helpers from `main.js`.
+- Keep `main.js` focused on runtime construction + bootstrap wiring only.
+
+## Contracts To Keep Stable
+- Widget drag payload semantics used across interaction and overlay controllers.
+- `widget.metadata.viewportDock` shape and version semantics.
+- Workspace persistence payload schema in `contextWorkspaceStore.saveFromRuntime(...)`.
+- Existing UI behavior and gesture semantics (no UX changes in this refactor).
+
+## Test Matrix
+Run after every slice:
+- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
+
+Recommended targeted additions:
+- Runtime-module tests per extracted slice in `tests/ui/` or `tests/storage/` as applicable.
+- Regression checks for:
+  - viewport docking
+  - library drag/drop + trash target
+  - PDF import/reimport and restore flows
+  - context/section switching persistence
+
+## Definition of Done
+- `main.js` is bootstrap/composition-oriented.
+- Domain orchestration resides in runtime modules under `src/features/runtime/`.
+- All existing storage/UI tests pass.
+- New runtime-module tests cover extracted orchestration boundaries.
+- `docs/CURRENT_STATE.md` updated to reflect completion of the Medium-severity split task.
+
+## Execution Log Template
+- Date:
+- Slice:
+- Files added/updated:
+- Behavior changed: yes/no (should be "no" for this refactor)
+- Tests run:
+- Result:
+- Commit:

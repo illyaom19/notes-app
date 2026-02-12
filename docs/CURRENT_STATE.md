@@ -63,6 +63,17 @@
 - The app correctly warns/fails safely under quota pressure and can request PDF reimport; this preserves integrity but interrupts workflow for heavy notebooks.
 - Impact: reliability is safe, continuity is not ideal under constrained storage.
 
+## Medium Severity Plan Tracking
+- `src/main.js` orchestration split:
+  - Status: in progress
+  - Plan: `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
+  - Completed in current cycle:
+    - Input routing extracted to `src/features/runtime/input-routing-controller.js`
+    - Library overlay orchestration extracted to `src/features/runtime/library-overlay-controller.js`
+    - Viewport dock overlay orchestration extracted to `src/features/runtime/viewport-dock-overlay-controller.js`
+    - Workspace persistence orchestration extracted to `src/features/runtime/workspace-persistence-controller.js`
+  - Remaining slices are documented in the plan and should be implemented in listed order.
+
 ### Low
 1. Live documentation had drifted from implementation.
 - Resolved in this pass by archiving non-core docs and refreshing canonical docs.
@@ -95,5 +106,5 @@ Commands run in this pass:
 ## Recommended Next Steps
 1. Fix `tests/ui/widget-types.test.mjs` to match current widget policy.
 2. Add integration tests for touch/pen/mouse interaction flows (radial create, library drag-spawn, viewport dock/undock, PDF section rehydration).
-3. Split `src/main.js` orchestration into smaller modules (input routing, library+dock overlays, persistence wiring).
+3. Continue executing `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md` until `main.js` is bootstrap/composition-only.
 4. Decide whether graph is coming back soon; if not, archive/remove dormant graph surfaces.
