@@ -7,6 +7,7 @@ const DEFAULT_PREFS = Object.freeze({
   bindings: {
     doubleTap: "none",
     barrelTap: "toggle-ink-tool",
+    barrelHold: "select-lasso-tool",
   },
   thresholds: {
     doubleTapMs: 430,
@@ -20,7 +21,10 @@ const GESTURE_BINDINGS = new Set([
   "toggle-ink-tool",
   "toggle-ink-enabled",
   "toggle-search-panel",
+  "select-lasso-tool",
 ]);
+const BARREL_HOLD_MS = 380;
+const BARREL_HOLD_MOVE_PX = 12;
 
 function toSafeBoolean(value, fallback) {
   return typeof value === "boolean" ? value : fallback;
@@ -55,6 +59,7 @@ export function normalizeGesturePrefs(candidate) {
     bindings: {
       doubleTap: normalizeBinding(bindings.doubleTap, DEFAULT_PREFS.bindings.doubleTap),
       barrelTap: normalizeBinding(bindings.barrelTap, DEFAULT_PREFS.bindings.barrelTap),
+      barrelHold: normalizeBinding(bindings.barrelHold, DEFAULT_PREFS.bindings.barrelHold),
     },
     thresholds: {
       doubleTapMs: toSafeNumber(
@@ -177,8 +182,12 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
     if (gestureName === "barrelTap" && !prefs.gestures.barrelTap) {
       return false;
     }
+    if (gestureName === "barrelHold" && !prefs.gestures.barrelTap) {
+      return false;
+    }
 
-    const binding = prefs.bindings[gestureName] ?? "none";
+    const fallbackBinding = gestureName === "barrelHold" ? "select-lasso-tool" : "none";
+    const binding = prefs.bindings[gestureName] ?? fallbackBinding;
     if (binding === "none") {
       emitStatus({ lastGesture: gestureName, lastBinding: "none" });
       return false;
@@ -210,13 +219,25 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
       start: point,
       last: point,
       moved: false,
+      barrelSignal: false,
+      barrelHeld: false,
+      holdTimer: null,
     });
 
     if (isBarrelSignal(event)) {
-      if (invokeGesture("barrelTap", event)) {
-        swallowedPointers.add(event.pointerId);
-        event.preventDefault();
-        event.stopImmediatePropagation();
+      const state = pointerState.get(event.pointerId);
+      if (state) {
+        state.barrelSignal = true;
+        state.holdTimer = window.setTimeout(() => {
+          const current = pointerState.get(event.pointerId);
+          if (!current || !current.barrelSignal || current.moved) {
+            return;
+          }
+          current.barrelHeld = true;
+          if (invokeGesture("barrelHold", event)) {
+            swallowedPointers.add(event.pointerId);
+          }
+        }, BARREL_HOLD_MS);
       }
       return;
     }
@@ -258,8 +279,15 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
 
     const point = pointForEvent(event, canvas);
     state.last = point;
-    if (distance(state.start, point) > 3) {
+    const moveDistance = distance(state.start, point);
+    if (moveDistance > 3) {
       state.moved = true;
+    }
+    if (state.barrelSignal && !state.barrelHeld && moveDistance > BARREL_HOLD_MOVE_PX) {
+      if (state.holdTimer) {
+        window.clearTimeout(state.holdTimer);
+        state.holdTimer = null;
+      }
     }
 
     if (swallowedPointers.has(event.pointerId)) {
@@ -270,6 +298,10 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
 
   const finalizePointer = (event, cancelled = false) => {
     const state = pointerState.get(event.pointerId);
+    if (state?.holdTimer) {
+      window.clearTimeout(state.holdTimer);
+      state.holdTimer = null;
+    }
     pointerState.delete(event.pointerId);
     hoverBarrelPointers.delete(event.pointerId);
 
@@ -282,6 +314,19 @@ export function createPenGestureController({ canvas, getPrefs, onAction, onStatu
     }
 
     if (cancelled || !state || event.pointerType !== "pen") {
+      return;
+    }
+
+    if (state.barrelSignal) {
+      if (!state.barrelHeld) {
+        const movement = distance(state.start, state.last);
+        if (movement <= BARREL_HOLD_MOVE_PX) {
+          if (invokeGesture("barrelTap", event)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }
+      }
       return;
     }
 

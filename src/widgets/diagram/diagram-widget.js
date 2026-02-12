@@ -13,6 +13,8 @@ const GRID_STEP_WORLD = 28;
 const TOOLBAR_BUTTON_SIZE_PX = 22;
 const TOOLBAR_GAP_PX = 6;
 const TOOLBAR_INSET_PX = 10;
+const DIAGRAM_VIEW_MIN_ZOOM = 0.3;
+const DIAGRAM_VIEW_MAX_ZOOM = 4.5;
 
 const DEFAULT_NODE_WIDTH = 120;
 const DEFAULT_NODE_HEIGHT = 62;
@@ -119,6 +121,16 @@ function normalizeDiagramDoc(candidate) {
 
   const selectedNodeId = text(source.selectedNodeId, "");
   const connectSourceId = text(source.connectSourceId, "");
+  const viewSource = asObject(source.view);
+  const view = {
+    zoom: clamp(
+      Number.isFinite(Number(viewSource.zoom)) ? Number(viewSource.zoom) : 1,
+      DIAGRAM_VIEW_MIN_ZOOM,
+      DIAGRAM_VIEW_MAX_ZOOM,
+    ),
+    offsetXWorld: Number.isFinite(Number(viewSource.offsetXWorld)) ? Number(viewSource.offsetXWorld) : 0,
+    offsetYWorld: Number.isFinite(Number(viewSource.offsetYWorld)) ? Number(viewSource.offsetYWorld) : 0,
+  };
 
   return {
     version: 1,
@@ -127,6 +139,7 @@ function normalizeDiagramDoc(candidate) {
     selectedNodeId: nodeIds.has(selectedNodeId) ? selectedNodeId : null,
     connectMode: Boolean(source.connectMode),
     connectSourceId: nodeIds.has(connectSourceId) ? connectSourceId : null,
+    view,
   };
 }
 
@@ -243,10 +256,100 @@ export class DiagramWidget extends WidgetBase {
 
   _bodyLocalFromWorld(worldX, worldY, camera) {
     const body = this._bodyWorldRect(camera);
+    const view = this._resolveView();
+    const zoom = this._viewWorldZoom(camera, view);
     return {
-      x: worldX - body.x,
-      y: worldY - body.y,
+      x: (worldX - body.x) / zoom - view.offsetXWorld,
+      y: (worldY - body.y) / zoom - view.offsetYWorld,
     };
+  }
+
+  _viewWorldZoom(camera, view = this._resolveView()) {
+    const baseZoom = clamp(Number(view?.zoom) || 1, DIAGRAM_VIEW_MIN_ZOOM, DIAGRAM_VIEW_MAX_ZOOM);
+    if (this._isViewportDocked()) {
+      return baseZoom / Math.max(0.25, camera?.zoom ?? 1);
+    }
+    return baseZoom;
+  }
+
+  _isViewportDocked() {
+    const dock = this.metadata?.viewportDock;
+    return Boolean(dock && typeof dock === "object" && (dock.side === "left" || dock.side === "right"));
+  }
+
+  _resolveView() {
+    if (this._isViewportDocked()) {
+      const dockView = this.metadata?.viewportDock?.view;
+      return {
+        zoom: clamp(Number(dockView?.zoom) || 1, DIAGRAM_VIEW_MIN_ZOOM, DIAGRAM_VIEW_MAX_ZOOM),
+        offsetXWorld: Number.isFinite(Number(dockView?.offsetXWorld)) ? Number(dockView.offsetXWorld) : 0,
+        offsetYWorld: Number.isFinite(Number(dockView?.offsetYWorld)) ? Number(dockView.offsetYWorld) : 0,
+      };
+    }
+    const view = this.diagramDoc?.view;
+    return {
+      zoom: clamp(Number(view?.zoom) || 1, DIAGRAM_VIEW_MIN_ZOOM, DIAGRAM_VIEW_MAX_ZOOM),
+      offsetXWorld: Number.isFinite(Number(view?.offsetXWorld)) ? Number(view.offsetXWorld) : 0,
+      offsetYWorld: Number.isFinite(Number(view?.offsetYWorld)) ? Number(view.offsetYWorld) : 0,
+    };
+  }
+
+  _setView(nextView) {
+    const normalized = {
+      zoom: clamp(Number(nextView?.zoom) || 1, DIAGRAM_VIEW_MIN_ZOOM, DIAGRAM_VIEW_MAX_ZOOM),
+      offsetXWorld: Number.isFinite(Number(nextView?.offsetXWorld)) ? Number(nextView.offsetXWorld) : 0,
+      offsetYWorld: Number.isFinite(Number(nextView?.offsetYWorld)) ? Number(nextView.offsetYWorld) : 0,
+    };
+    if (this._isViewportDocked()) {
+      const metadata = this.metadata && typeof this.metadata === "object" ? { ...this.metadata } : {};
+      const dock = metadata.viewportDock && typeof metadata.viewportDock === "object"
+        ? { ...metadata.viewportDock }
+        : { side: "right" };
+      dock.view = normalized;
+      metadata.viewportDock = dock;
+      this.metadata = metadata;
+      return;
+    }
+    this.diagramDoc.view = normalized;
+  }
+
+  panViewByWorld(dxWorld, dyWorld, camera) {
+    if (!Number.isFinite(dxWorld) || !Number.isFinite(dyWorld)) {
+      return false;
+    }
+    if (Math.abs(dxWorld) < 0.0001 && Math.abs(dyWorld) < 0.0001) {
+      return false;
+    }
+    const view = this._resolveView();
+    const zoom = this._viewWorldZoom(camera, view);
+    view.offsetXWorld += dxWorld / Math.max(0.01, zoom);
+    view.offsetYWorld += dyWorld / Math.max(0.01, zoom);
+    this._setView(view);
+    return true;
+  }
+
+  zoomViewAtWorld(worldX, worldY, factor, camera) {
+    if (!Number.isFinite(worldX) || !Number.isFinite(worldY) || !Number.isFinite(factor) || factor <= 0) {
+      return false;
+    }
+    const body = this._bodyWorldRect(camera);
+    if (!pointInRect(worldX, worldY, body)) {
+      return false;
+    }
+    const view = this._resolveView();
+    const oldBaseZoom = clamp(Number(view.zoom) || 1, DIAGRAM_VIEW_MIN_ZOOM, DIAGRAM_VIEW_MAX_ZOOM);
+    const nextBaseZoom = clamp(oldBaseZoom * factor, DIAGRAM_VIEW_MIN_ZOOM, DIAGRAM_VIEW_MAX_ZOOM);
+    if (Math.abs(nextBaseZoom - oldBaseZoom) < 0.0001) {
+      return false;
+    }
+    const cameraZoom = Math.max(0.25, camera?.zoom ?? 1);
+    const oldWorldZoom = this._isViewportDocked() ? oldBaseZoom / cameraZoom : oldBaseZoom;
+    const nextWorldZoom = this._isViewportDocked() ? nextBaseZoom / cameraZoom : nextBaseZoom;
+    view.offsetXWorld += (worldX - body.x) * (1 / nextWorldZoom - 1 / oldWorldZoom);
+    view.offsetYWorld += (worldY - body.y) * (1 / nextWorldZoom - 1 / oldWorldZoom);
+    view.zoom = nextBaseZoom;
+    this._setView(view);
+    return true;
   }
 
   _clampNodeToBody(node) {
@@ -383,6 +486,22 @@ export class DiagramWidget extends WidgetBase {
     node.x += dx;
     node.y += dy;
     this._clampNodeToBody(node);
+    return true;
+  }
+
+  renameNode(nodeId, label) {
+    const node = this.diagramDoc.nodes.find((entry) => entry.id === nodeId);
+    if (!node) {
+      return false;
+    }
+    const next = text(label, "");
+    if (!next) {
+      return false;
+    }
+    if (node.label === next) {
+      return false;
+    }
+    node.label = next;
     return true;
   }
 
@@ -593,6 +712,9 @@ export class DiagramWidget extends WidgetBase {
     }
 
     const body = this._bodyWorldRect(camera);
+    const view = this._resolveView();
+    const viewZoomWorld = this._viewWorldZoom(camera, view);
+    const viewScaleScreen = Math.max(0.01, viewZoomWorld * Math.max(0.25, camera.zoom));
     const bodyScreen = camera.worldToScreen(body.x, body.y);
     const bodyWidthPx = body.width * camera.zoom;
     const bodyHeightPx = body.height * camera.zoom;
@@ -605,17 +727,33 @@ export class DiagramWidget extends WidgetBase {
     ctx.fillStyle = "#fdfefe";
     ctx.fillRect(bodyScreen.x, bodyScreen.y, bodyWidthPx, bodyHeightPx);
 
-    const gridStepPx = GRID_STEP_WORLD * camera.zoom;
+    const gridStepPx = GRID_STEP_WORLD * viewScaleScreen;
     if (gridStepPx >= 14 && gridStepPx <= 84) {
       ctx.strokeStyle = "rgba(34, 79, 92, 0.07)";
       ctx.lineWidth = 1;
-      for (let x = bodyScreen.x + (body.x % GRID_STEP_WORLD) * camera.zoom; x <= bodyScreen.x + bodyWidthPx; x += gridStepPx) {
+      const minLocalX = -view.offsetXWorld;
+      const maxLocalX = minLocalX + body.width / Math.max(0.01, viewZoomWorld);
+      const minLocalY = -view.offsetYWorld;
+      const maxLocalY = minLocalY + body.height / Math.max(0.01, viewZoomWorld);
+      for (
+        let localX = Math.floor(minLocalX / GRID_STEP_WORLD) * GRID_STEP_WORLD;
+        localX <= maxLocalX + GRID_STEP_WORLD;
+        localX += GRID_STEP_WORLD
+      ) {
+        const worldX = body.x + (localX + view.offsetXWorld) * viewZoomWorld;
+        const x = camera.worldToScreen(worldX, body.y).x;
         ctx.beginPath();
         ctx.moveTo(x, bodyScreen.y);
         ctx.lineTo(x, bodyScreen.y + bodyHeightPx);
         ctx.stroke();
       }
-      for (let y = bodyScreen.y + (body.y % GRID_STEP_WORLD) * camera.zoom; y <= bodyScreen.y + bodyHeightPx; y += gridStepPx) {
+      for (
+        let localY = Math.floor(minLocalY / GRID_STEP_WORLD) * GRID_STEP_WORLD;
+        localY <= maxLocalY + GRID_STEP_WORLD;
+        localY += GRID_STEP_WORLD
+      ) {
+        const worldY = body.y + (localY + view.offsetYWorld) * viewZoomWorld;
+        const y = camera.worldToScreen(body.x, worldY).y;
         ctx.beginPath();
         ctx.moveTo(bodyScreen.x, y);
         ctx.lineTo(bodyScreen.x + bodyWidthPx, y);
@@ -624,7 +762,7 @@ export class DiagramWidget extends WidgetBase {
     }
 
     const nodesById = new Map(this.diagramDoc.nodes.map((node) => [node.id, node]));
-    ctx.lineWidth = Math.max(1.2, 1.5 * camera.zoom);
+    ctx.lineWidth = 1.5;
     ctx.strokeStyle = "#2f7f88";
     ctx.fillStyle = "#2f7f88";
     for (const edge of this.diagramDoc.edges) {
@@ -635,21 +773,30 @@ export class DiagramWidget extends WidgetBase {
       }
       const fromCenter = nodeCenter(fromNode);
       const toCenter = nodeCenter(toNode);
-      const fromWorld = camera.worldToScreen(body.x + fromCenter.x, body.y + fromCenter.y);
-      const toWorld = camera.worldToScreen(body.x + toCenter.x, body.y + toCenter.y);
+      const fromWorld = camera.worldToScreen(
+        body.x + (fromCenter.x + view.offsetXWorld) * viewZoomWorld,
+        body.y + (fromCenter.y + view.offsetYWorld) * viewZoomWorld,
+      );
+      const toWorld = camera.worldToScreen(
+        body.x + (toCenter.x + view.offsetXWorld) * viewZoomWorld,
+        body.y + (toCenter.y + view.offsetYWorld) * viewZoomWorld,
+      );
 
       ctx.beginPath();
       ctx.moveTo(fromWorld.x, fromWorld.y);
       ctx.lineTo(toWorld.x, toWorld.y);
       ctx.stroke();
-      drawArrowHead(ctx, fromWorld.x, fromWorld.y, toWorld.x, toWorld.y, Math.max(5, 7 * camera.zoom));
+      drawArrowHead(ctx, fromWorld.x, fromWorld.y, toWorld.x, toWorld.y, Math.max(5, 7 * viewScaleScreen));
     }
 
     for (const node of this.diagramDoc.nodes) {
-      const x = bodyScreen.x + node.x * camera.zoom;
-      const y = bodyScreen.y + node.y * camera.zoom;
-      const width = node.width * camera.zoom;
-      const height = node.height * camera.zoom;
+      const nodeWorldX = body.x + (node.x + view.offsetXWorld) * viewZoomWorld;
+      const nodeWorldY = body.y + (node.y + view.offsetYWorld) * viewZoomWorld;
+      const nodeScreen = camera.worldToScreen(nodeWorldX, nodeWorldY);
+      const x = nodeScreen.x;
+      const y = nodeScreen.y;
+      const width = node.width * viewScaleScreen;
+      const height = node.height * viewScaleScreen;
       const selected = this.diagramDoc.selectedNodeId === node.id;
       const connectSource = this.diagramDoc.connectMode && this.diagramDoc.connectSourceId === node.id;
 
@@ -657,7 +804,7 @@ export class DiagramWidget extends WidgetBase {
       drawNodeShape(ctx, node.shape, x, y, width, height);
       ctx.fillStyle = selected ? "rgba(223, 244, 247, 0.96)" : "rgba(243, 249, 251, 0.96)";
       ctx.strokeStyle = connectSource ? "#18535a" : "#2f7f88";
-      ctx.lineWidth = connectSource ? Math.max(1.4, 2.2 * camera.zoom) : Math.max(1.2, 1.7 * camera.zoom);
+      ctx.lineWidth = connectSource ? 2.2 : 1.7;
       ctx.fill();
       ctx.stroke();
       if (selected) {
@@ -669,7 +816,7 @@ export class DiagramWidget extends WidgetBase {
           height + 3,
           12,
           "rgba(31, 103, 113, 0.34)",
-          Math.max(1, 1.1 * camera.zoom),
+          1.1,
         );
       }
       ctx.restore();
@@ -678,7 +825,7 @@ export class DiagramWidget extends WidgetBase {
       ctx.fillStyle = WIDGET_THEME.palette.title;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      const fontPx = clamp(10 * Math.max(0.85, camera.zoom), 9, 15);
+      const fontPx = clamp(10 * Math.max(0.85, viewScaleScreen), 9, 15);
       ctx.font = `${fontPx}px ${WIDGET_THEME.typography.uiFamily}`;
       ctx.fillText(text(node.label, "Node"), x + width * 0.5, y + height * 0.5, Math.max(24, width - 10));
       ctx.restore();
@@ -687,7 +834,7 @@ export class DiagramWidget extends WidgetBase {
     if (this.diagramDoc.nodes.length < 1) {
       ctx.save();
       ctx.fillStyle = "rgba(26, 59, 71, 0.5)";
-      ctx.font = `${clamp(11 * Math.max(0.85, camera.zoom), 10, 14)}px ${WIDGET_THEME.typography.uiFamily}`;
+      ctx.font = `${clamp(11 * Math.max(0.85, viewScaleScreen), 10, 14)}px ${WIDGET_THEME.typography.uiFamily}`;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
       ctx.fillText(

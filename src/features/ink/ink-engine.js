@@ -14,12 +14,13 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function createStroke(pointerId, { layer, contextId, sourceWidgetId, anchorBounds }, point) {
+function createStroke(pointerId, { layer, contextId, sourceWidgetId, anchorBounds, penColor, penThickness }, point) {
+  const baseWidth = Number.isFinite(Number(penThickness)) ? clamp(Number(penThickness), 1, 12) : 3;
   return {
     id: globalThis.crypto?.randomUUID?.() ?? `stroke-${pointerId}-${Date.now()}`,
     createdAt: Date.now(),
-    baseWidth: 3,
-    color: "#103f78",
+    baseWidth,
+    color: typeof penColor === "string" && penColor.trim() ? penColor : "#103f78",
     tool: "pen",
     layer,
     contextId: contextId ?? null,
@@ -140,6 +141,8 @@ export class InkEngine {
     this.activeErasers = new Set();
     this.enabled = true;
     this.activeTool = "pen";
+    this.penColor = "#103f78";
+    this.penThickness = 3;
     this._completedLayerCache = new Map();
     this._completedLayerCacheRevision = this.store.revision;
     this._widgetInkRevisionCache = new Map();
@@ -219,6 +222,43 @@ export class InkEngine {
 
   getTool() {
     return this.activeTool;
+  }
+
+  getPenStyle() {
+    return {
+      penColor: this.penColor,
+      penThickness: this.penThickness,
+    };
+  }
+
+  setPenColor(nextColor) {
+    if (typeof nextColor !== "string") {
+      return this.penColor;
+    }
+    const normalized = nextColor.trim().toLowerCase();
+    if (!/^#[0-9a-f]{6}$/i.test(normalized)) {
+      return this.penColor;
+    }
+    if (normalized === this.penColor) {
+      return this.penColor;
+    }
+    this.penColor = normalized;
+    this._emitState();
+    return this.penColor;
+  }
+
+  setPenThickness(nextThickness) {
+    const numeric = Number(nextThickness);
+    if (!Number.isFinite(numeric)) {
+      return this.penThickness;
+    }
+    const normalized = clamp(numeric, 1, 12);
+    if (Math.abs(normalized - this.penThickness) < 0.0001) {
+      return this.penThickness;
+    }
+    this.penThickness = normalized;
+    this._emitState();
+    return this.penThickness;
   }
 
   isEnabled() {
@@ -1425,7 +1465,7 @@ export class InkEngine {
 
     const seedStroke = createStroke(
       event.pointerId,
-      { layer, contextId, sourceWidgetId, anchorBounds },
+      { layer, contextId, sourceWidgetId, anchorBounds, penColor: this.penColor, penThickness: this.penThickness },
       layer === "global"
         ? this._buildWorldPoint(event, camera)
         : anchorMode === "local"
@@ -1651,6 +1691,8 @@ export class InkEngine {
         redoDepth: this.store.undoneCount,
         activePointers: this.activeStrokes.size + this.activeErasers.size + activeLassoPointers,
         activeTool: this.activeTool,
+        penColor: this.penColor,
+        penThickness: this.penThickness,
         enabled: this.enabled,
       });
     }
