@@ -14,7 +14,6 @@ import {
   saveUiModeState,
   toggleUiMode,
 } from "./features/ui/ui-mode-store.js";
-import { createOnboardingStateService } from "./features/onboarding/onboarding-state-service.js";
 import { createWidgetContextMenu } from "./features/widget-system/long-press-menu.js";
 import { createWidgetCreationController } from "./features/widget-system/widget-creation-controller.js";
 import { createWidgetInteractionManager } from "./features/widget-system/widget-interaction-manager.js";
@@ -37,6 +36,7 @@ import { createContextSectionRuntime } from "./features/runtime/context-section-
 import { createDocumentPdfRuntime } from "./features/runtime/document-pdf-runtime.js";
 import { createLibraryReferenceRuntime } from "./features/runtime/library-reference-runtime.js";
 import { createKnowledgeRuntime } from "./features/runtime/knowledge-runtime.js";
+import { createOnboardingRuntime } from "./features/runtime/onboarding-runtime.js";
 import { ALLOWED_CREATION_INTENT_TYPES } from "./features/widget-system/widget-types.js";
 import { createPdfRasterDocumentFromBytes } from "./widgets/pdf/pdf-rasterizer.js";
 
@@ -208,6 +208,7 @@ let dialogRuntime = null;
 let documentPdfRuntime = null;
 let libraryReferenceRuntime = null;
 let knowledgeRuntime = null;
+let onboardingRuntime = null;
 let sectionsStore = createNotebookSectionsStore();
 const notebookLibraryStore = createNotebookLibraryStore();
 const notebookDocumentLibraryStore = createNotebookDocumentLibraryStore({
@@ -245,10 +246,6 @@ let researchCaptures = [];
 let restoringContext = false;
 let widgetHeavySyncTimer = null;
 let hasShownWorkspaceStorageWarning = false;
-let onboardingStateService = createOnboardingStateService();
-let onboardingOverlay = null;
-let onboardingRefreshTimer = null;
-let onboardingHintVisibleId = null;
 const failedLocalStorageKeys = new Set();
 const VIEWPORT_DOCK_EDGE_ZONE_PX = 48;
 const VIEWPORT_DOCK_HOLD_MS = 220;
@@ -938,6 +935,33 @@ knowledgeRuntime = createKnowledgeRuntime({
   researchPanelElement: researchPanel,
   researchToggleButtonElement: toggleResearchPanelButton,
   createReferencePopupFromResearchCapture,
+});
+onboardingRuntime = createOnboardingRuntime({
+  runtime,
+  runtimeSignals: onboardingRuntimeSignals,
+  getScopeId: () => (typeof activeContextId === "string" && activeContextId.trim() ? activeContextId : null),
+  isProductionUi,
+  loadedModules,
+  onLoadedModulesChanged: () => {
+    if (loadedModulesOutput) {
+      loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
+    }
+  },
+  hintElements: {
+    rootElement: onboardingHintRoot,
+    titleElement: onboardingHintTitle,
+    bodyElement: onboardingHintBody,
+    progressElement: onboardingHintProgress,
+    actionButton: onboardingHintActionButton,
+    dismissButton: onboardingHintDismissButton,
+    toggleHintsButton: onboardingHintToggleButton,
+    resetButton: onboardingHintResetButton,
+    toggleOnboardingHintsButton,
+  },
+  executeCreationIntent,
+  createCreationIntent,
+  viewportCenterAnchor,
+  ensureSearchFeatures,
 });
 
 viewportDockOverlayController = createViewportDockOverlayController({
@@ -1789,13 +1813,6 @@ function activeSectionRecord() {
     .find((entry) => entry.id === activeSectionId) ?? null;
 }
 
-function onboardingScopeId() {
-  if (typeof activeContextId === "string" && activeContextId.trim()) {
-    return activeContextId;
-  }
-  return null;
-}
-
 function isScopeInNotebook(scopeId, notebookId) {
   if (typeof scopeId !== "string" || !scopeId.trim() || typeof notebookId !== "string" || !notebookId.trim()) {
     return false;
@@ -2185,225 +2202,39 @@ function syncToolsUi() {
 }
 
 function onboardingHintsCatalog() {
-  const widgets = runtime.listWidgets();
-  const hasPdf = widgets.some((widget) => widget.type === "pdf-document");
-  const hasCreatedWidget = widgets.some((widget) => widget.type !== "pdf-document");
-
-  return [
-    {
-      id: "import-pdf",
-      title: "Start With A PDF",
-      body: "Import your source document into this section to start writing immediately.",
-      actionLabel: "Import PDF",
-      shouldShow: () => !hasPdf,
-      completeWhen: () => hasPdf,
-      onAction: () => {
-        void executeCreationIntent(
-          createCreationIntent({
-            type: "pdf-document",
-            anchor: viewportCenterAnchor(),
-            sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
-            createdFrom: "manual",
-          }),
-        );
-      },
-    },
-    {
-      id: "radial-create",
-      title: "Use Hold Radial Create",
-      body: "Touch-and-hold with your finger on the canvas, then drag to a radial option and release to create.",
-      actionLabel: "Got It",
-      shouldShow: () => hasPdf && !hasCreatedWidget,
-      completeWhen: () => hasCreatedWidget,
-      onAction: () => {
-        onboardingRuntimeSignals.gestureUsed = true;
-      },
-    },
-    {
-      id: "peek-search-gesture",
-      title: "Use Fast Navigation",
-      body: "Use Search with Ctrl/Cmd+F and keep navigating with touch gestures. Gesture bindings are enabled by default.",
-      actionLabel: "Open Search",
-      shouldShow: () => widgets.length > 1,
-      completeWhen: () =>
-        onboardingRuntimeSignals.searchOpened ||
-        onboardingRuntimeSignals.peekActivated ||
-        onboardingRuntimeSignals.gestureUsed,
-      onAction: async () => {
-        const panel = await ensureSearchFeatures();
-        panel.open();
-        onboardingRuntimeSignals.searchOpened = true;
-      },
-    },
-  ];
+  return onboardingRuntime?.onboardingHintsCatalog?.() ?? [];
 }
 
 async function ensureOnboardingOverlay() {
-  if (onboardingOverlay) {
-    return onboardingOverlay;
-  }
-
-  const module = await import("./features/onboarding/hint-overlay.js");
-  loadedModules.add("onboarding-hints");
-  if (loadedModulesOutput) {
-    loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
-  }
-
-  onboardingOverlay = module.createHintOverlay({
-    rootElement: onboardingHintRoot,
-    titleElement: onboardingHintTitle,
-    bodyElement: onboardingHintBody,
-    progressElement: onboardingHintProgress,
-    actionButton: onboardingHintActionButton,
-    dismissButton: onboardingHintDismissButton,
-    toggleHintsButton: onboardingHintToggleButton,
-    resetButton: onboardingHintResetButton,
-    onAction: (hintId) => {
-      void handleOnboardingAction(hintId);
-    },
-    onDismiss: (hintId) => {
-      dismissOnboardingHint(hintId);
-    },
-    onToggleHints: () => {
-      toggleOnboardingHints();
-    },
-    onReset: () => {
-      resetOnboardingHints();
-    },
-  });
-
-  return onboardingOverlay;
+  return onboardingRuntime?.ensureOnboardingOverlay?.() ?? null;
 }
 
 async function refreshOnboardingHints() {
-  const scopeId = onboardingScopeId();
-  if (!scopeId) {
-    return;
-  }
-
-  const overlay = await ensureOnboardingOverlay();
-  if (!overlay) {
-    return;
-  }
-
-  const hintsEnabled = onboardingStateService.isHintsEnabled(scopeId);
-  overlay.setHintsEnabled(hintsEnabled);
-
-  if (!isProductionUi() || !hintsEnabled) {
-    overlay.hide();
-    onboardingHintVisibleId = null;
-    return;
-  }
-
-  const hints = onboardingHintsCatalog();
-  for (let index = 0; index < hints.length; index += 1) {
-    const hint = hints[index];
-    const state = onboardingStateService.getHintState(scopeId, hint.id);
-    if (state?.completionState === "dismissed") {
-      continue;
-    }
-
-    if (hint.completeWhen()) {
-      if (state?.completionState !== "completed") {
-        onboardingStateService.markCompleted(scopeId, hint.id);
-      }
-      continue;
-    }
-
-    if (!hint.shouldShow()) {
-      continue;
-    }
-
-    onboardingHintVisibleId = hint.id;
-    overlay.show({
-      hintId: hint.id,
-      title: hint.title,
-      body: hint.body,
-      actionLabel: hint.actionLabel,
-      progressText: `Hint ${index + 1} of ${hints.length}`,
-      hintsEnabled,
-    });
-    return;
-  }
-
-  onboardingHintVisibleId = null;
-  overlay.hide();
+  return onboardingRuntime?.refreshOnboardingHints?.();
 }
 
 function scheduleOnboardingRefresh(delayMs = 50) {
-  if (onboardingRefreshTimer) {
-    window.clearTimeout(onboardingRefreshTimer);
-  }
-
-  onboardingRefreshTimer = window.setTimeout(() => {
-    onboardingRefreshTimer = null;
-    void refreshOnboardingHints();
-  }, delayMs);
+  onboardingRuntime?.scheduleOnboardingRefresh?.(delayMs);
 }
 
 async function handleOnboardingAction(hintId) {
-  if (!onboardingScopeId()) {
-    return;
-  }
-
-  const hint = onboardingHintsCatalog().find((entry) => entry.id === hintId);
-  if (!hint || typeof hint.onAction !== "function") {
-    return;
-  }
-
-  try {
-    await hint.onAction();
-  } catch (error) {
-    console.error(error);
-  }
-
-  scheduleOnboardingRefresh(30);
+  return onboardingRuntime?.handleOnboardingAction?.(hintId);
 }
 
 function dismissOnboardingHint(hintId) {
-  const scopeId = onboardingScopeId();
-  if (!scopeId || !hintId) {
-    return;
-  }
-  onboardingStateService.markDismissed(scopeId, hintId);
-  scheduleOnboardingRefresh(0);
+  onboardingRuntime?.dismissOnboardingHint?.(hintId);
 }
 
 function toggleOnboardingHints() {
-  const scopeId = onboardingScopeId();
-  if (!scopeId) {
-    return;
-  }
-  const current = onboardingStateService.isHintsEnabled(scopeId);
-  onboardingStateService.setHintsEnabled(scopeId, !current);
-  scheduleOnboardingRefresh(0);
+  onboardingRuntime?.toggleOnboardingHints?.();
 }
 
 function resetOnboardingHints() {
-  const scopeId = onboardingScopeId();
-  if (!scopeId) {
-    return;
-  }
-  onboardingStateService.resetContext(scopeId);
-  onboardingRuntimeSignals.searchOpened = false;
-  onboardingRuntimeSignals.peekActivated = false;
-  onboardingRuntimeSignals.gestureUsed = false;
-  scheduleOnboardingRefresh(0);
+  onboardingRuntime?.resetOnboardingHints?.();
 }
 
 function updateOnboardingControlsUi() {
-  const scopeId = onboardingScopeId();
-  if (!scopeId) {
-    return;
-  }
-
-  const hintsEnabled = onboardingStateService.isHintsEnabled(scopeId);
-  if (toggleOnboardingHintsButton instanceof HTMLButtonElement) {
-    toggleOnboardingHintsButton.textContent = hintsEnabled ? "Disable Hints" : "Enable Hints";
-  }
-  if (onboardingOverlay) {
-    onboardingOverlay.setHintsEnabled(hintsEnabled);
-  }
+  onboardingRuntime?.updateOnboardingControlsUi?.();
 }
 
 function setWhitespaceState(value) {
@@ -5768,9 +5599,7 @@ async function setupContextFeatures() {
     updateOnboardingControlsUi,
     scheduleOnboardingRefresh,
     resetOnboardingSignals: () => {
-      onboardingRuntimeSignals.searchOpened = false;
-      onboardingRuntimeSignals.peekActivated = false;
-      onboardingRuntimeSignals.gestureUsed = false;
+      onboardingRuntime?.resetRuntimeSignals?.();
     },
     setContextStore: (nextStore) => {
       contextStore = nextStore;

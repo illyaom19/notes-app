@@ -29,17 +29,16 @@ Refactor `src/main.js` to a bootstrap/composition entrypoint while moving runtim
 - Extracted knowledge orchestration runtime:
   - `src/features/runtime/knowledge-runtime.js`
 - Wired `src/main.js` to delegate suggestion scheduling/execution/state transitions and search/research panel runtime glue.
+- Extracted onboarding orchestration runtime:
+  - `src/features/runtime/onboarding-runtime.js`
+- Wired `src/main.js` to delegate onboarding hint overlay scheduling, catalog actions, and hint controls runtime glue.
 
 ## Remaining Slices (Ordered)
 1. Ink/gesture runtime extraction
 - Create `src/features/runtime/ink-gesture-runtime.js`.
 - Move ink tool state orchestration, gesture preference wiring, and cursor pill routing glue.
 
-2. Onboarding runtime extraction
-- Create `src/features/runtime/onboarding-runtime.js`.
-- Move onboarding overlay/hint scheduler and control-state orchestration.
-
-3. Final cleanup pass
+2. Final cleanup pass
 - Remove dead helpers from `main.js`.
 - Keep `main.js` focused on runtime construction + bootstrap wiring only.
 
@@ -116,6 +115,17 @@ Recommended targeted additions:
 - Slice: Knowledge runtime extraction
 - Files added/updated:
   - `src/features/runtime/knowledge-runtime.js`
+  - `src/main.js`
+  - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
+- Behavior changed: no (refactor-only target)
+- Tests run: `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
+- Result: pass (16/16)
+- Commit: pending
+
+- Date: 2026-02-12
+- Slice: Onboarding runtime extraction
+- Files added/updated:
+  - `src/features/runtime/onboarding-runtime.js`
   - `src/main.js`
   - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
 - Behavior changed: no (refactor-only target)
