@@ -15,37 +15,34 @@ Refactor `src/main.js` to a bootstrap/composition entrypoint while moving runtim
   - `src/features/runtime/viewport-dock-overlay-controller.js`
   - `src/features/runtime/workspace-persistence-controller.js`
 - Wired `src/main.js` to delegate to these controllers for input routing, dock overlays, library overlays, and persistence scheduling.
+- Extracted dialog orchestration runtime:
+  - `src/features/runtime/dialog-runtime.js`
+- Extracted context/section orchestration runtime:
+  - `src/features/runtime/context-section-runtime.js`
+- Wired `src/main.js` to delegate dialog + context/section orchestration to runtime modules.
 
 ## Remaining Slices (Ordered)
-1. Dialog runtime extraction
-- Create `src/features/runtime/dialog-runtime.js`.
-- Move app modal/prompt orchestration (`show*Dialog`, `closeActiveAppDialog`) out of `main.js`.
-
-2. Context/section runtime extraction
-- Create `src/features/runtime/context-section-runtime.js`.
-- Move context/section create/rename/delete/switch orchestration and action menus.
-
-3. Document/PDF runtime extraction
+1. Document/PDF runtime extraction
 - Create `src/features/runtime/document-pdf-runtime.js`.
 - Move PDF import/reimport orchestration, document binding/focus orchestration, and hydration coordination.
 
-4. Library/reference runtime extraction
+2. Library/reference runtime extraction
 - Create `src/features/runtime/library-reference-runtime.js`.
 - Move notebook library actions, reference manager orchestration glue, and library spawn action wiring.
 
-5. Knowledge runtime extraction
+3. Knowledge runtime extraction
 - Create `src/features/runtime/knowledge-runtime.js`.
 - Move suggestion scheduling/execution orchestration and search/research runtime glue.
 
-6. Ink/gesture runtime extraction
+4. Ink/gesture runtime extraction
 - Create `src/features/runtime/ink-gesture-runtime.js`.
 - Move ink tool state orchestration, gesture preference wiring, and cursor pill routing glue.
 
-7. Onboarding runtime extraction
+5. Onboarding runtime extraction
 - Create `src/features/runtime/onboarding-runtime.js`.
 - Move onboarding overlay/hint scheduler and control-state orchestration.
 
-8. Final cleanup pass
+6. Final cleanup pass
 - Remove dead helpers from `main.js`.
 - Keep `main.js` focused on runtime construction + bootstrap wiring only.
 
@@ -82,3 +79,16 @@ Recommended targeted additions:
 - Tests run:
 - Result:
 - Commit:
+
+## Execution Log
+- Date: 2026-02-12
+- Slice: Dialog runtime extraction + Context/section runtime extraction
+- Files added/updated:
+  - `src/features/runtime/dialog-runtime.js`
+  - `src/features/runtime/context-section-runtime.js`
+  - `src/main.js`
+  - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
+- Behavior changed: no (refactor-only target)
+- Tests run: `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
+- Result: pass (16/16)
+- Commit: pending

@@ -37,6 +37,8 @@ import { createInputRoutingController } from "./features/runtime/input-routing-c
 import { createLibraryOverlayController } from "./features/runtime/library-overlay-controller.js";
 import { createViewportDockOverlayController } from "./features/runtime/viewport-dock-overlay-controller.js";
 import { createWorkspacePersistenceController } from "./features/runtime/workspace-persistence-controller.js";
+import { createDialogRuntime } from "./features/runtime/dialog-runtime.js";
+import { createContextSectionRuntime } from "./features/runtime/context-section-runtime.js";
 import { ALLOWED_CREATION_INTENT_TYPES } from "./features/widget-system/widget-types.js";
 import { createPdfRasterDocumentFromBytes } from "./widgets/pdf/pdf-rasterizer.js";
 
@@ -206,6 +208,7 @@ let contextStore = null;
 let contextWorkspaceStore = null;
 let contextUiController = null;
 let sectionUiController = null;
+let dialogRuntime = null;
 let sectionsStore = createNotebookSectionsStore();
 const notebookLibraryStore = createNotebookLibraryStore();
 const notebookDocumentLibraryStore = createNotebookDocumentLibraryStore({
@@ -665,13 +668,8 @@ function registerPwaServiceWorker() {
   });
 }
 
-let activeAppDialog = null;
-
 function closeActiveAppDialog() {
-  if (activeAppDialog instanceof HTMLDialogElement && activeAppDialog.open) {
-    activeAppDialog.close("cancel");
-  }
-  activeAppDialog = null;
+  dialogRuntime?.closeActiveAppDialog?.();
 }
 
 function showAppDialog({
@@ -681,92 +679,17 @@ function showAppDialog({
   buildBody = null,
   closeOnCancel = true,
 } = {}) {
-  return new Promise((resolve) => {
-    closeActiveAppDialog();
-
-    const dialog = document.createElement("dialog");
-    dialog.className = "app-modal";
-    activeAppDialog = dialog;
-
-    const form = document.createElement("form");
-    form.method = "dialog";
-    form.className = "app-modal__body";
-
-    if (title) {
-      const titleElement = document.createElement("h2");
-      titleElement.className = "app-modal__title";
-      titleElement.textContent = title;
-      form.append(titleElement);
-    }
-
-    if (message) {
-      const messageElement = document.createElement("p");
-      messageElement.className = "app-modal__message";
-      messageElement.textContent = message;
-      form.append(messageElement);
-    }
-
-    if (typeof buildBody === "function") {
-      buildBody(form);
-    }
-
-    const actionsRow = document.createElement("div");
-    actionsRow.className = "app-modal__actions";
-
-    const normalizedActions = actions.length > 0
-      ? actions
-      : [{ id: "ok", label: "OK", variant: "primary" }];
-
-    for (const action of normalizedActions) {
-      const button = document.createElement("button");
-      button.type = "submit";
-      button.className = "app-modal__button";
-      if (action.variant === "primary") {
-        button.classList.add("app-modal__button--primary");
-      } else if (action.variant === "danger") {
-        button.classList.add("app-modal__button--danger");
-      }
-      button.value = action.id;
-      button.textContent = action.label;
-      actionsRow.append(button);
-    }
-
-    form.append(actionsRow);
-    dialog.append(form);
-
-    const cleanup = (result = null) => {
-      dialog.removeEventListener("cancel", onCancel);
-      dialog.removeEventListener("close", onClose);
-      dialog.remove();
-      if (activeAppDialog === dialog) {
-        activeAppDialog = null;
-      }
-      resolve(result);
-    };
-
-    const onCancel = (event) => {
-      if (!closeOnCancel) {
-        event.preventDefault();
-      }
-    };
-
-    const onClose = () => {
-      cleanup(dialog.returnValue || null);
-    };
-
-    dialog.addEventListener("cancel", onCancel);
-    dialog.addEventListener("close", onClose);
-    document.body.append(dialog);
-    dialog.showModal();
+  return dialogRuntime.showAppDialog({
+    title,
+    message,
+    actions,
+    buildBody,
+    closeOnCancel,
   });
 }
 
 async function showNoticeDialog(message, { title = "Notice", buttonLabel = "OK" } = {}) {
-  await showAppDialog({
-    title,
-    message,
-    actions: [{ id: "ok", label: buttonLabel, variant: "primary" }],
-  });
+  await dialogRuntime.showNoticeDialog(message, { title, buttonLabel });
 }
 
 async function showConfirmDialog({
@@ -776,15 +699,13 @@ async function showConfirmDialog({
   cancelLabel = "Cancel",
   danger = false,
 } = {}) {
-  const result = await showAppDialog({
+  return dialogRuntime.showConfirmDialog({
     title,
     message,
-    actions: [
-      { id: "cancel", label: cancelLabel },
-      { id: "confirm", label: confirmLabel, variant: danger ? "danger" : "primary" },
-    ],
+    confirmLabel,
+    cancelLabel,
+    danger,
   });
-  return result === "confirm";
 }
 
 async function showTextPromptDialog({
@@ -795,44 +716,14 @@ async function showTextPromptDialog({
   placeholder = "",
   confirmLabel = "Save",
 } = {}) {
-  let input = null;
-  const result = await showAppDialog({
+  return dialogRuntime.showTextPromptDialog({
     title,
     message,
-    actions: [
-      { id: "cancel", label: "Cancel" },
-      { id: "confirm", label: confirmLabel, variant: "primary" },
-    ],
-    buildBody: (root) => {
-      const field = document.createElement("label");
-      field.className = "app-modal__field";
-
-      const fieldLabel = document.createElement("span");
-      fieldLabel.className = "app-modal__field-label";
-      fieldLabel.textContent = label;
-
-      input = document.createElement("input");
-      input.type = "text";
-      input.className = "app-modal__field-input";
-      input.value = defaultValue;
-      input.placeholder = placeholder;
-      input.autocomplete = "off";
-
-      field.append(fieldLabel, input);
-      root.append(field);
-
-      queueMicrotask(() => {
-        input?.focus();
-        input?.select();
-      });
-    },
+    label,
+    defaultValue,
+    placeholder,
+    confirmLabel,
   });
-
-  if (result !== "confirm" || !(input instanceof HTMLInputElement)) {
-    return null;
-  }
-  const value = input.value.trim();
-  return value || null;
 }
 
 async function showActionDialog({
@@ -841,22 +732,12 @@ async function showActionDialog({
   actions = [],
   cancelLabel = "Cancel",
 } = {}) {
-  if (!Array.isArray(actions) || actions.length < 1) {
-    return null;
-  }
-  const normalizedActions = actions.map((action) => ({
-    id: action.id,
-    label: action.label,
-    variant: action.variant ?? "primary",
-  }));
-  normalizedActions.push({ id: "cancel", label: cancelLabel });
-
-  const result = await showAppDialog({
+  return dialogRuntime.showActionDialog({
     title,
     message,
-    actions: normalizedActions,
+    actions,
+    cancelLabel,
   });
-  return result === "cancel" ? null : result;
 }
 
 async function showSelectDialog({
@@ -867,54 +748,14 @@ async function showSelectDialog({
   confirmLabel = "Select",
   defaultOptionId = null,
 } = {}) {
-  if (!Array.isArray(options) || options.length < 1) {
-    return null;
-  }
-
-  let select = null;
-  const result = await showAppDialog({
+  return dialogRuntime.showSelectDialog({
     title,
     message,
-    actions: [
-      { id: "cancel", label: "Cancel" },
-      { id: "confirm", label: confirmLabel, variant: "primary" },
-    ],
-    buildBody: (root) => {
-      const field = document.createElement("label");
-      field.className = "app-modal__field";
-
-      const fieldLabel = document.createElement("span");
-      fieldLabel.className = "app-modal__field-label";
-      fieldLabel.textContent = label;
-
-      select = document.createElement("select");
-      select.className = "app-modal__field-select";
-
-      for (const option of options) {
-        const element = document.createElement("option");
-        element.value = option.id;
-        element.textContent = option.label;
-        select.append(element);
-      }
-
-      if (typeof defaultOptionId === "string" && defaultOptionId.trim()) {
-        select.value = defaultOptionId;
-      }
-
-      field.append(fieldLabel, select);
-      root.append(field);
-
-      queueMicrotask(() => {
-        select?.focus();
-      });
-    },
+    label,
+    options,
+    confirmLabel,
+    defaultOptionId,
   });
-
-  if (result !== "confirm" || !(select instanceof HTMLSelectElement)) {
-    return null;
-  }
-
-  return options.find((option) => option.id === select.value) ?? null;
 }
 
 async function showMultiSelectDialog({
@@ -923,52 +764,12 @@ async function showMultiSelectDialog({
   options = [],
   confirmLabel = "Apply",
 } = {}) {
-  if (!Array.isArray(options) || options.length < 1) {
-    return [];
-  }
-
-  const checkedById = new Map(options.map((option) => [option.id, false]));
-  const result = await showAppDialog({
+  return dialogRuntime.showMultiSelectDialog({
     title,
     message,
-    actions: [
-      { id: "cancel", label: "Cancel" },
-      { id: "confirm", label: confirmLabel, variant: "primary" },
-    ],
-    buildBody: (root) => {
-      const list = document.createElement("div");
-      list.className = "app-modal__choice-list";
-
-      for (const option of options) {
-        const label = document.createElement("label");
-        label.className = "app-modal__choice-item";
-
-        const input = document.createElement("input");
-        input.type = "checkbox";
-        input.className = "app-modal__choice-input";
-        input.addEventListener("change", () => {
-          checkedById.set(option.id, input.checked);
-        });
-
-        const text = document.createElement("span");
-        text.className = "app-modal__choice-label";
-        text.textContent = option.label;
-
-        label.append(input, text);
-        list.append(label);
-      }
-
-      root.append(list);
-    },
+    options,
+    confirmLabel,
   });
-
-  if (result !== "confirm") {
-    return [];
-  }
-
-  return options
-    .map((option) => option.id)
-    .filter((id) => checkedById.get(id) === true);
 }
 
 function formatErrorMessage(error, fallback = "Unknown error.") {
@@ -1029,6 +830,8 @@ if (typeof runtime.registerFrameListener === "function") {
     }
   });
 }
+
+dialogRuntime = createDialogRuntime({ documentObj: document });
 
 viewportDockOverlayController = createViewportDockOverlayController({
   runtime,
@@ -7563,30 +7366,72 @@ function wireWidgetRemovalSuggestionSync() {
 }
 
 async function setupContextFeatures() {
-  const [
-    contextStoreModule,
-    contextWorkspaceModule,
-    contextUiModule,
-  ] = await Promise.all([
-    import("./features/contexts/context-store.js"),
-    import("./features/contexts/context-workspace-store.js"),
-    import("./features/contexts/context-management-ui.js"),
-  ]);
-
-  contextStore = contextStoreModule.createContextStore();
-  contextWorkspaceStore = contextWorkspaceModule.createContextWorkspaceStore({
-    assetManagerOptions: {
-      allowLocalStoragePayloadFallback: false,
+  const contextSectionRuntime = createContextSectionRuntime({
+    sectionsStore,
+    notebookLibraryStore,
+    notebookDocumentLibraryStore,
+    documentManager,
+    createSectionManagementUi,
+    workspaceScopeId,
+    contextUiElements: {
+      selectElement: contextSelect,
+      selectorContainerElement: contextPickerPill,
+      selectorToggleElement: contextDropdownToggle,
+      selectorLabelElement: contextDropdownLabel,
+      selectorMenuElement: contextDropdownMenu,
+      selectorListElement: contextDropdownList,
+      activeContextOutput,
+      newContextButton,
+      importContextWidgetButton,
     },
-    allowInlinePdfBase64Fallback: false,
+    sectionUiElements: {
+      tabsElement: sectionTabs,
+      activeSectionOutput,
+      newSectionButton,
+    },
+    showTextPromptDialog,
+    showNoticeDialog,
+    showConfirmDialog,
+    showActionDialog,
+    switchContext,
+    switchSection,
+    importWidgetsFromAnotherContext,
+    flushWorkspacePersist,
+    scheduleWorkspacePersist,
+    updateContextUi,
+    restoreWorkspaceForActiveContext,
+    updateOnboardingControlsUi,
+    scheduleOnboardingRefresh,
+    resetOnboardingSignals: () => {
+      onboardingRuntimeSignals.searchOpened = false;
+      onboardingRuntimeSignals.peekActivated = false;
+      onboardingRuntimeSignals.gestureUsed = false;
+    },
+    setContextStore: (nextStore) => {
+      contextStore = nextStore;
+    },
+    setContextWorkspaceStore: (nextStore) => {
+      contextWorkspaceStore = nextStore;
+    },
+    setContextUiController: (nextController) => {
+      contextUiController = nextController;
+    },
+    setSectionUiController: (nextController) => {
+      sectionUiController = nextController;
+    },
+    setActiveContextId: (nextId) => {
+      activeContextId = nextId;
+    },
+    setActiveSectionId: (nextId) => {
+      activeSectionId = nextId;
+    },
+    getActiveContextId: () => activeContextId,
+    getActiveSectionId: () => activeSectionId,
   });
-  if (typeof contextWorkspaceStore.prepare === "function") {
-    await contextWorkspaceStore.prepare();
-  }
-  activeContextId = contextStore.getActiveContextId();
-  sectionsStore.ensureNotebook(activeContextId);
-  activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
-  documentManager.setContextId(workspaceScopeId());
+
+  const setupResult = await contextSectionRuntime.setup();
+  contextStore = setupResult?.contextStore ?? contextStore;
+  contextWorkspaceStore = setupResult?.contextWorkspaceStore ?? contextWorkspaceStore;
 
   workspacePersistenceController = createWorkspacePersistenceController({
     contextWorkspaceStore,
@@ -7616,339 +7461,6 @@ async function setupContextFeatures() {
       );
     },
   });
-
-  const createContextHandler = async () => {
-    const name = await showTextPromptDialog({
-      title: "Create Notebook",
-      label: "Notebook name",
-      defaultValue: "New Notebook",
-      confirmLabel: "Create",
-    });
-    if (!name) {
-      return;
-    }
-
-    flushWorkspacePersist();
-
-    const created = contextStore.createContext(name, "notebook");
-    if (!created) {
-      await showNoticeDialog("Notebook name cannot be empty.", { title: "Notebook" });
-      return;
-    }
-
-    activeContextId = created.id;
-    sectionsStore.ensureNotebook(activeContextId);
-    activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
-    onboardingRuntimeSignals.searchOpened = false;
-    onboardingRuntimeSignals.peekActivated = false;
-    onboardingRuntimeSignals.gestureUsed = false;
-    documentManager.setContextId(workspaceScopeId());
-    updateContextUi();
-    await restoreWorkspaceForActiveContext();
-    updateOnboardingControlsUi();
-    scheduleOnboardingRefresh(0);
-  };
-
-  const renameContextHandler = async (contextId = activeContextId) => {
-    if (!contextStore || !contextId) {
-      return;
-    }
-
-    const target = contextStore.getContextById(contextId);
-    if (!target) {
-      return;
-    }
-
-    const nextName = await showTextPromptDialog({
-      title: "Rename Notebook",
-      label: "Notebook name",
-      defaultValue: target.name,
-      confirmLabel: "Rename",
-    });
-    if (!nextName) {
-      return;
-    }
-
-    const renamed = contextStore.renameContext(target.id, nextName);
-    if (!renamed) {
-      await showNoticeDialog("Notebook name cannot be empty.", { title: "Notebook" });
-      return;
-    }
-
-    updateContextUi();
-    scheduleWorkspacePersist();
-  };
-
-  const deleteContextHandler = async (contextId = activeContextId) => {
-    if (!contextStore || !contextWorkspaceStore || !contextId) {
-      return;
-    }
-
-    const target = contextStore.getContextById(contextId);
-    if (!target) {
-      return;
-    }
-
-    const confirmed = await showConfirmDialog({
-      title: "Delete Notebook",
-      message: `Delete notebook "${target.name}"?`,
-      confirmLabel: "Delete",
-      danger: true,
-    });
-    if (!confirmed) {
-      return;
-    }
-
-    flushWorkspacePersist();
-    const targetSections = sectionsStore.listSections(target.id);
-    const deletingActiveContext = target.id === activeContextId;
-
-    const result = contextStore.deleteContext(target.id);
-    if (!result) {
-      await showNoticeDialog("At least one notebook must remain.", { title: "Notebook" });
-      return;
-    }
-
-    for (const section of targetSections) {
-      contextWorkspaceStore.deleteWorkspace(workspaceScopeId(result.deletedContextId, section.id));
-    }
-    sectionsStore.deleteNotebook(result.deletedContextId);
-    notebookLibraryStore.deleteNotebook(result.deletedContextId);
-    notebookDocumentLibraryStore.deleteNotebook(result.deletedContextId);
-
-    if (deletingActiveContext) {
-      activeContextId = result.activeContextId;
-      sectionsStore.ensureNotebook(activeContextId);
-      activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
-      onboardingRuntimeSignals.searchOpened = false;
-      onboardingRuntimeSignals.peekActivated = false;
-      onboardingRuntimeSignals.gestureUsed = false;
-      documentManager.setContextId(workspaceScopeId());
-      updateContextUi();
-      await restoreWorkspaceForActiveContext();
-      updateOnboardingControlsUi();
-      scheduleOnboardingRefresh(0);
-      return;
-    }
-
-    updateContextUi();
-    scheduleWorkspacePersist();
-  };
-
-  const createSectionHandler = async () => {
-    if (!activeContextId) {
-      return;
-    }
-
-    const defaultName = `Section ${sectionsStore.listSections(activeContextId).length + 1}`;
-    const name = await showTextPromptDialog({
-      title: "Create Section",
-      label: "Section name",
-      defaultValue: defaultName,
-      confirmLabel: "Create",
-    });
-    if (!name) {
-      return;
-    }
-
-    flushWorkspacePersist();
-    const created = sectionsStore.createSection(activeContextId, name);
-    if (!created) {
-      await showNoticeDialog("Section name cannot be empty.", { title: "Section" });
-      return;
-    }
-
-    activeSectionId = created.id;
-    onboardingRuntimeSignals.searchOpened = false;
-    onboardingRuntimeSignals.peekActivated = false;
-    onboardingRuntimeSignals.gestureUsed = false;
-    documentManager.setContextId(workspaceScopeId());
-    updateContextUi();
-    await restoreWorkspaceForActiveContext();
-    updateOnboardingControlsUi();
-    scheduleOnboardingRefresh(0);
-  };
-
-  const renameSectionHandler = async (sectionId = activeSectionId) => {
-    if (!activeContextId || !sectionId) {
-      return;
-    }
-
-    const section = sectionsStore.listSections(activeContextId).find((entry) => entry.id === sectionId);
-    if (!section) {
-      return;
-    }
-
-    const nextName = await showTextPromptDialog({
-      title: "Rename Section",
-      label: "Section name",
-      defaultValue: section.name,
-      confirmLabel: "Rename",
-    });
-    if (!nextName) {
-      return;
-    }
-
-    const renamed = sectionsStore.renameSection(activeContextId, section.id, nextName);
-    if (!renamed) {
-      await showNoticeDialog("Section name cannot be empty.", { title: "Section" });
-      return;
-    }
-
-    updateContextUi();
-  };
-
-  const deleteSectionHandler = async (sectionId = activeSectionId) => {
-    if (!activeContextId || !sectionId || !contextWorkspaceStore) {
-      return;
-    }
-
-    const section = sectionsStore.listSections(activeContextId).find((entry) => entry.id === sectionId);
-    if (!section) {
-      return;
-    }
-
-    const confirmed = await showConfirmDialog({
-      title: "Delete Section",
-      message: `Delete section "${section.name}"?`,
-      confirmLabel: "Delete",
-      danger: true,
-    });
-    if (!confirmed) {
-      return;
-    }
-
-    flushWorkspacePersist();
-    const deletingActiveSection = section.id === activeSectionId;
-    const result = sectionsStore.deleteSection(activeContextId, section.id);
-    if (!result) {
-      await showNoticeDialog("At least one section must remain.", { title: "Section" });
-      return;
-    }
-
-    contextWorkspaceStore.deleteWorkspace(workspaceScopeId(activeContextId, result.deletedSectionId));
-    if (deletingActiveSection) {
-      activeSectionId = result.activeSectionId;
-      onboardingRuntimeSignals.searchOpened = false;
-      onboardingRuntimeSignals.peekActivated = false;
-      onboardingRuntimeSignals.gestureUsed = false;
-      documentManager.setContextId(workspaceScopeId());
-      updateContextUi();
-      await restoreWorkspaceForActiveContext();
-      updateOnboardingControlsUi();
-      scheduleOnboardingRefresh(0);
-      return;
-    }
-
-    updateContextUi();
-    scheduleWorkspacePersist();
-  };
-
-  const openContextActions = async (contextId) => {
-    if (!contextStore) {
-      return;
-    }
-
-    const target = contextStore.getContextById(contextId);
-    if (!target) {
-      return;
-    }
-
-    const action = await showActionDialog({
-      title: `Notebook: ${target.name}`,
-      message: "Choose an action.",
-      actions: [
-        { id: "rename", label: "Rename Notebook", variant: "primary" },
-        { id: "delete", label: "Delete Notebook", variant: "danger" },
-      ],
-    });
-    if (!action) {
-      return;
-    }
-
-    if (action === "rename") {
-      await renameContextHandler(target.id);
-      return;
-    }
-
-    if (action === "delete") {
-      await deleteContextHandler(target.id);
-    }
-  };
-
-  const openSectionActions = async (sectionId) => {
-    if (!activeContextId) {
-      return;
-    }
-
-    const target = sectionsStore.listSections(activeContextId).find((entry) => entry.id === sectionId);
-    if (!target) {
-      return;
-    }
-
-    const action = await showActionDialog({
-      title: `Section: ${target.name}`,
-      message: "Choose an action.",
-      actions: [
-        { id: "rename", label: "Rename Section", variant: "primary" },
-        { id: "delete", label: "Delete Section", variant: "danger" },
-      ],
-    });
-    if (!action) {
-      return;
-    }
-
-    if (action === "rename") {
-      await renameSectionHandler(target.id);
-      return;
-    }
-
-    if (action === "delete") {
-      await deleteSectionHandler(target.id);
-    }
-  };
-
-  contextUiController = contextUiModule.createContextManagementUi({
-    selectElement: contextSelect,
-    selectorContainerElement: contextPickerPill,
-    selectorToggleElement: contextDropdownToggle,
-    selectorLabelElement: contextDropdownLabel,
-    selectorMenuElement: contextDropdownMenu,
-    selectorListElement: contextDropdownList,
-    activeContextOutput,
-    newContextButton,
-    importContextWidgetButton,
-    onSwitchContext: (nextContextId) => {
-      void switchContext(nextContextId);
-    },
-    onCreateContext: () => {
-      void createContextHandler();
-    },
-    onOpenContextActions: (contextId) => {
-      void openContextActions(contextId);
-    },
-    onImportContextWidgets: () => {
-      void importWidgetsFromAnotherContext();
-    },
-  });
-
-  sectionUiController = createSectionManagementUi({
-    tabsElement: sectionTabs,
-    activeSectionOutput,
-    newSectionButton,
-    onSwitchSection: (nextSectionId) => {
-      void switchSection(nextSectionId);
-    },
-    onCreateSection: () => {
-      void createSectionHandler();
-    },
-    onOpenSectionActions: (sectionId) => {
-      void openSectionActions(sectionId);
-    },
-  });
-
-  updateContextUi();
-  await restoreWorkspaceForActiveContext();
 }
 
 async function bootstrap() {
