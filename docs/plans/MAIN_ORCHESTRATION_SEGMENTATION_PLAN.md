@@ -19,30 +19,29 @@ Refactor `src/main.js` to a bootstrap/composition entrypoint while moving runtim
   - `src/features/runtime/dialog-runtime.js`
 - Extracted context/section orchestration runtime:
   - `src/features/runtime/context-section-runtime.js`
+- Extracted document/PDF orchestration runtime:
+  - `src/features/runtime/document-pdf-runtime.js`
 - Wired `src/main.js` to delegate dialog + context/section orchestration to runtime modules.
+- Wired `src/main.js` to delegate document/PDF import, reimport, hydration, and document-binding/focus orchestration.
 
 ## Remaining Slices (Ordered)
-1. Document/PDF runtime extraction
-- Create `src/features/runtime/document-pdf-runtime.js`.
-- Move PDF import/reimport orchestration, document binding/focus orchestration, and hydration coordination.
-
-2. Library/reference runtime extraction
+1. Library/reference runtime extraction
 - Create `src/features/runtime/library-reference-runtime.js`.
 - Move notebook library actions, reference manager orchestration glue, and library spawn action wiring.
 
-3. Knowledge runtime extraction
+2. Knowledge runtime extraction
 - Create `src/features/runtime/knowledge-runtime.js`.
 - Move suggestion scheduling/execution orchestration and search/research runtime glue.
 
-4. Ink/gesture runtime extraction
+3. Ink/gesture runtime extraction
 - Create `src/features/runtime/ink-gesture-runtime.js`.
 - Move ink tool state orchestration, gesture preference wiring, and cursor pill routing glue.
 
-5. Onboarding runtime extraction
+4. Onboarding runtime extraction
 - Create `src/features/runtime/onboarding-runtime.js`.
 - Move onboarding overlay/hint scheduler and control-state orchestration.
 
-6. Final cleanup pass
+5. Final cleanup pass
 - Remove dead helpers from `main.js`.
 - Keep `main.js` focused on runtime construction + bootstrap wiring only.
 
@@ -86,6 +85,17 @@ Recommended targeted additions:
 - Files added/updated:
   - `src/features/runtime/dialog-runtime.js`
   - `src/features/runtime/context-section-runtime.js`
+  - `src/main.js`
+  - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
+- Behavior changed: no (refactor-only target)
+- Tests run: `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
+- Result: pass (16/16)
+- Commit: pending
+
+- Date: 2026-02-12
+- Slice: Document/PDF runtime extraction
+- Files added/updated:
+  - `src/features/runtime/document-pdf-runtime.js`
   - `src/main.js`
   - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
 - Behavior changed: no (refactor-only target)
