@@ -162,6 +162,9 @@ function kindLabel(item) {
   if (item.kind === "document") {
     return "PDF";
   }
+  if (item.kind === "note" && item.raw?.metadata?.widgetType === "diagram") {
+    return "Diagram";
+  }
   if (item.kind === "note") {
     return "Notes";
   }
@@ -196,7 +199,7 @@ function toShelfItems({ references = [], notes = [], documents = [] } = {}) {
       title: text(entry.title, "Notes"),
       updatedAt: timestamp(entry.updatedAt || entry.createdAt),
       lastUsedAt: timestamp(entry.lastUsedAt),
-      contentType: "note",
+      contentType: entry?.metadata?.widgetType === "diagram" ? "diagram" : "note",
       raw: entry,
     });
   }
@@ -763,22 +766,84 @@ export function createReferenceManagerUi({
     });
   }
 
-  function renderNoteThumbnail(container, item) {
-    const previewWrap = document.createElement("div");
-    previewWrap.className = "library-thumbnail library-thumbnail--note";
-    const width = 196;
-    const height = 118;
-    const page = makeThumbCanvas(width, height);
-    const ctx = page.getContext("2d");
-    if (ctx) {
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, width, height);
+function renderNoteThumbnail(container, item) {
+  const previewWrap = document.createElement("div");
+  previewWrap.className = "library-thumbnail library-thumbnail--note";
+  const width = 196;
+  const height = 118;
+  const page = makeThumbCanvas(width, height);
+  const ctx = page.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+  }
+  if (item?.raw?.metadata?.widgetType === "diagram") {
+    const diagramDoc = item.raw?.metadata?.diagramDoc;
+    if (diagramDoc && Array.isArray(diagramDoc.nodes)) {
+      const baseWidth = Math.max(1, Number(item.raw?.size?.width) || width);
+      const baseHeight = Math.max(1, Number(item.raw?.size?.height) || height);
+      const bodyHeight = Math.max(1, baseHeight - 34);
+      const scaleX = width / baseWidth;
+      const scaleY = height / bodyHeight;
+      if (ctx) {
+        const step = 18;
+        ctx.save();
+        ctx.strokeStyle = "rgba(38, 85, 95, 0.08)";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= width; x += step) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= height; y += step) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
+          ctx.stroke();
+        }
+
+        const nodeById = new Map(diagramDoc.nodes.map((node) => [node.id, node]));
+        ctx.strokeStyle = "#2f7f88";
+        ctx.fillStyle = "#2f7f88";
+        ctx.lineWidth = 1.2;
+        for (const edge of Array.isArray(diagramDoc.edges) ? diagramDoc.edges : []) {
+          const from = nodeById.get(edge.fromId);
+          const to = nodeById.get(edge.toId);
+          if (!from || !to) {
+            continue;
+          }
+          const fromX = (from.x + from.width * 0.5) * scaleX;
+          const fromY = (from.y + from.height * 0.5) * scaleY;
+          const toX = (to.x + to.width * 0.5) * scaleX;
+          const toY = (to.y + to.height * 0.5) * scaleY;
+          ctx.beginPath();
+          ctx.moveTo(fromX, fromY);
+          ctx.lineTo(toX, toY);
+          ctx.stroke();
+        }
+
+        for (const node of diagramDoc.nodes) {
+          const x = node.x * scaleX;
+          const y = node.y * scaleY;
+          const nodeWidth = Math.max(10, node.width * scaleX);
+          const nodeHeight = Math.max(8, node.height * scaleY);
+          ctx.fillStyle = "rgba(240, 249, 251, 0.96)";
+          ctx.strokeStyle = "#2f7f88";
+          ctx.beginPath();
+          ctx.roundRect(x, y, nodeWidth, nodeHeight, 8);
+          ctx.fill();
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
     }
-    drawInkStrokes(page, item.raw?.inkStrokes ?? [], {
-      width: item.raw?.size?.width ?? width,
-      height: item.raw?.size?.height ?? height,
-    });
-    previewWrap.append(page);
+  }
+  drawInkStrokes(page, item.raw?.inkStrokes ?? [], {
+    width: item.raw?.size?.width ?? width,
+    height: item.raw?.size?.height ?? height,
+  });
+  previewWrap.append(page);
     container.append(previewWrap);
   }
 

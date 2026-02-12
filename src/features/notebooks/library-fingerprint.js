@@ -120,17 +120,25 @@ export function fingerprintNoteEntry(entry) {
   if (!entry || typeof entry !== "object") {
     return "note:invalid";
   }
+  const widgetType =
+    entry.metadata?.widgetType === "diagram" || entry.widgetType === "diagram"
+      ? "diagram"
+      : "note";
   const payload = {
-    kind: "note",
+    kind: widgetType,
     note:
       typeof entry.metadata?.note === "string"
         ? entry.metadata.note
         : typeof entry.note === "string"
           ? entry.note
           : "",
+    diagramDoc:
+      widgetType === "diagram" && entry.metadata?.diagramDoc && typeof entry.metadata.diagramDoc === "object"
+        ? entry.metadata.diagramDoc
+        : null,
     ink: normalizeInk(entry.inkStrokes),
   };
-  return `note:${hashPayload(payload)}`;
+  return `${widgetType}:${hashPayload(payload)}`;
 }
 
 export function fingerprintDocumentEntry(entry, { pdfBytes = null, pdfRasterDocument = null } = {}) {

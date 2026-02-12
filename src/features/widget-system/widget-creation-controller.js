@@ -6,9 +6,10 @@ const RADIAL_SNAP_DISTANCE_PX = 60;
 const RADIAL_LAYOUT_PRESET_ID = "default";
 const RADIAL_LAYOUTS = {
   default: [
-    { id: "notes", type: "expanded-area", label: "Notes", icon: "notes", angleDeg: -90 },
-    { id: "snip", type: "snip", label: "Snip", icon: "snip", angleDeg: 30 },
-    { id: "pdf", type: "pdf-document", label: "PDF", icon: "pdf", angleDeg: 150 },
+    { id: "notes", type: "expanded-area", label: "Notes", icon: "notes", angleDeg: -112 },
+    { id: "snip", type: "snip", label: "Snip", icon: "snip", angleDeg: -22 },
+    { id: "pdf", type: "pdf-document", label: "PDF", icon: "pdf", angleDeg: 68 },
+    { id: "diagram", type: "diagram", label: "Diagram", icon: "diagram", angleDeg: 158 },
   ],
 };
 
@@ -47,6 +48,16 @@ function iconMarkup(iconId) {
       '<path d="M7 4h7l4 4v12H7z" fill="none" stroke="currentColor" stroke-width="1.7"/>',
       '<path d="M14 4v4h4" fill="none" stroke="currentColor" stroke-width="1.7"/>',
       '<path d="M9 14h6M9 17h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+      "</svg>",
+    ].join("");
+  }
+  if (iconId === "diagram") {
+    return [
+      '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">',
+      '<rect x="3.8" y="6.3" width="6.8" height="4.8" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+      '<rect x="13.4" y="4.8" width="6.8" height="4.8" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+      '<rect x="13.4" y="13.6" width="6.8" height="4.8" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+      '<path d="M10.6 8.7h2.8M16.8 9.6v3.8M10.6 8.7v0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
       "</svg>",
     ].join("");
   }

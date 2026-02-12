@@ -804,6 +804,8 @@ function sanitizeSerializedWidget(candidate, contextId) {
     return widget;
   }
 
+  widget.dataPayload = { ...asPlainObject(candidate.dataPayload) };
+  widget.runtimeState = { ...asPlainObject(candidate.runtimeState) };
   return widget;
 }
 
@@ -1113,6 +1115,8 @@ function serializeWidget(
     return sanitizeSerializedWidget(base, contextId);
   }
 
+  base.dataPayload = { ...asPlainObject(state.dataPayload) };
+  base.runtimeState = { ...asPlainObject(state.runtimeState) };
   return sanitizeSerializedWidget(base, contextId);
 }
 

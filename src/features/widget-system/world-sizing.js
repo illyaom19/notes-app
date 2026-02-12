@@ -23,6 +23,14 @@ const DEFAULT_WORLD_SIZE_CONFIG = Object.freeze({
     maxWidth: 980,
     maxHeight: 780,
   },
+  diagram: {
+    width: 520,
+    height: 340,
+    minWidth: 260,
+    minHeight: 180,
+    maxWidth: 1400,
+    maxHeight: 1000,
+  },
 });
 
 const STORAGE_KEY = "notes-app.world-size-config.v1";
@@ -61,6 +69,7 @@ export function defaultWorldSizeConfig() {
     "expanded-area": { ...DEFAULT_WORLD_SIZE_CONFIG["expanded-area"] },
     "pdf-document": { ...DEFAULT_WORLD_SIZE_CONFIG["pdf-document"] },
     "reference-popup": { ...DEFAULT_WORLD_SIZE_CONFIG["reference-popup"] },
+    diagram: { ...DEFAULT_WORLD_SIZE_CONFIG.diagram },
   };
 }
 

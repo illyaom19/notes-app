@@ -5,7 +5,12 @@ function isLibraryEligible(widget) {
   if (!widget) {
     return false;
   }
-  return widget.type === "reference-popup" || widget.type === "pdf-document" || widget.type === "expanded-area";
+  return (
+    widget.type === "reference-popup" ||
+    widget.type === "pdf-document" ||
+    widget.type === "expanded-area" ||
+    widget.type === "diagram"
+  );
 }
 
 function isWidgetInLibrary(widget) {
@@ -21,7 +26,7 @@ function isWidgetInLibrary(widget) {
     return typeof widget.metadata?.sourceDocumentId === "string" && widget.metadata.sourceDocumentId.trim();
   }
 
-  if (widget.type === "expanded-area") {
+  if (widget.type === "expanded-area" || widget.type === "diagram") {
     return typeof widget.metadata?.libraryNoteId === "string" && widget.metadata.libraryNoteId.trim();
   }
 

@@ -151,6 +151,7 @@ const canvasViewportContainer = canvas.closest(".canvas-wrap");
 const loadedModules = new Set();
 let inkFeature = null;
 let popupInteractions = null;
+let diagramInteractions = null;
 let snipTool = null;
 let whitespaceManager = null;
 let researchPanelController = null;
@@ -974,6 +975,7 @@ const registry = new WidgetRegistry();
 registry.register("expanded-area", () => import("./widgets/expanded-area/index.js"));
 registry.register("pdf-document", () => import("./widgets/pdf/index.js"));
 registry.register("reference-popup", () => import("./widgets/reference-popup/index.js"));
+registry.register("diagram", () => import("./widgets/diagram/index.js"));
 registry.onModuleLoaded((type) => {
   loadedModules.add(type);
   if (loadedModulesOutput) {
@@ -1441,6 +1443,14 @@ function anchorFromScreenPoint(screenPoint) {
   const localX = screenPoint.x - rect.left;
   const localY = screenPoint.y - rect.top;
   return runtime.camera.screenToWorld(localX, localY);
+}
+
+function cloneJsonValue(value, fallback = null) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_error) {
+    return fallback;
+  }
 }
 
 function uniqueTags(values) {
@@ -2740,12 +2750,49 @@ function noteLibraryEntryFromWidget(widget) {
   };
 }
 
+function diagramLibraryEntryFromWidget(widget) {
+  if (!widget || widget.type !== "diagram") {
+    return null;
+  }
+  const sourceId =
+    typeof widget.metadata?.libraryNoteId === "string" && widget.metadata.libraryNoteId.trim()
+      ? widget.metadata.libraryNoteId.trim()
+      : null;
+  const title =
+    typeof widget.metadata?.title === "string" && widget.metadata.title.trim()
+      ? widget.metadata.title.trim()
+      : "Diagram";
+  const diagramDoc =
+    typeof widget.getDiagramDoc === "function"
+      ? widget.getDiagramDoc()
+      : cloneJsonValue(widget.diagramDoc, null);
+
+  return {
+    id: sourceId ?? makeId("lib-note"),
+    title,
+    metadata: {
+      title,
+      note: "",
+      widgetType: "diagram",
+      ...(diagramDoc && typeof diagramDoc === "object" ? { diagramDoc } : {}),
+    },
+    size: {
+      width: widget.size.width,
+      height: widget.size.height,
+    },
+    inkStrokes: captureWidgetInkSnapshot(widget.id),
+  };
+}
+
 async function saveNoteWidgetToNotebookLibrary(widget) {
-  if (!widget || widget.type !== "expanded-area" || !activeContextId) {
+  if (!widget || (widget.type !== "expanded-area" && widget.type !== "diagram") || !activeContextId) {
     return false;
   }
 
-  const entry = noteLibraryEntryFromWidget(widget);
+  const entry =
+    widget.type === "diagram"
+      ? diagramLibraryEntryFromWidget(widget)
+      : noteLibraryEntryFromWidget(widget);
   if (!entry) {
     return false;
   }
@@ -2758,9 +2805,11 @@ async function saveNoteWidgetToNotebookLibrary(widget) {
   widget.metadata = {
     ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
     title: saved.title,
-    note: saved.metadata?.note ?? "",
     libraryNoteId: saved.id,
   };
+  if (widget.type === "expanded-area") {
+    widget.metadata.note = saved.metadata?.note ?? "";
+  }
   return true;
 }
 
@@ -2781,6 +2830,30 @@ async function copyWidgetFromContextMenu(widget) {
       },
       createCreationIntent({
         type: "expanded-area",
+        anchor: baseAnchor,
+        sourceWidgetId: widget.id,
+        createdFrom: "manual",
+      }),
+    );
+    return true;
+  }
+
+  if (widget.type === "diagram") {
+    await createDiagramWidget(
+      {
+        metadata: {
+          title: widget.metadata?.title ?? "Diagram",
+          libraryNoteId: widget.metadata?.libraryNoteId ?? null,
+        },
+        dataPayload: {
+          diagramDoc:
+            typeof widget.getDiagramDoc === "function"
+              ? widget.getDiagramDoc()
+              : cloneJsonValue(widget.diagramDoc, null),
+        },
+      },
+      createCreationIntent({
+        type: "diagram",
         anchor: baseAnchor,
         sourceWidgetId: widget.id,
         createdFrom: "manual",
@@ -2879,6 +2952,8 @@ async function renameWidgetFromContextMenu(widget) {
       ? widget.metadata.title.trim()
       : widget.type === "expanded-area"
         ? "Notes"
+        : widget.type === "diagram"
+          ? "Diagram"
         : widget.type === "reference-popup"
           ? "Reference"
           : "Document";
@@ -2914,7 +2989,7 @@ async function renameWidgetFromContextMenu(widget) {
     return true;
   }
 
-  if (widget.type === "expanded-area") {
+  if (widget.type === "expanded-area" || widget.type === "diagram") {
     const sourceId =
       typeof widget.metadata?.libraryNoteId === "string" && widget.metadata.libraryNoteId.trim()
         ? widget.metadata.libraryNoteId
@@ -2969,6 +3044,8 @@ function formatWidgetInfo(widget) {
   const kind =
     widget.type === "pdf-document"
       ? "Document"
+      : widget.type === "diagram"
+        ? "Diagram"
       : widget.type === "reference-popup"
         ? "Reference"
         : "Notes";
@@ -3722,7 +3799,7 @@ function isWidgetDuplicateInNotebookLibrary(widget) {
     return existing.some((entry) => fingerprintReferenceEntry(entry) === candidateFingerprint);
   }
 
-  if (widget.type === "expanded-area") {
+  if (widget.type === "expanded-area" || widget.type === "diagram") {
     const sourceId =
       typeof widget.metadata?.libraryNoteId === "string" && widget.metadata.libraryNoteId.trim()
         ? widget.metadata.libraryNoteId.trim()
@@ -3731,7 +3808,10 @@ function isWidgetDuplicateInNotebookLibrary(widget) {
       return true;
     }
 
-    const candidate = noteLibraryEntryFromWidget(widget);
+    const candidate =
+      widget.type === "diagram"
+        ? diagramLibraryEntryFromWidget(widget)
+        : noteLibraryEntryFromWidget(widget);
     if (!candidate) {
       return false;
     }
@@ -3778,6 +3858,7 @@ async function addWidgetToNotebookLibraryFromDrag(widget) {
   if (
     widget.type !== "reference-popup" &&
     widget.type !== "expanded-area" &&
+    widget.type !== "diagram" &&
     widget.type !== "pdf-document"
   ) {
     return { ok: false, reason: "unsupported" };
@@ -3796,7 +3877,7 @@ async function addWidgetToNotebookLibraryFromDrag(widget) {
     return { ok: true };
   }
 
-  if (widget.type === "expanded-area") {
+  if (widget.type === "expanded-area" || widget.type === "diagram") {
     const saved = await saveNoteWidgetToNotebookLibrary(widget);
     if (!saved) {
       return { ok: false, reason: "failed" };
@@ -3980,7 +4061,7 @@ async function toggleWidgetLibraryFromContextMenu(widget) {
     return true;
   }
 
-  if (widget.type === "expanded-area") {
+  if (widget.type === "expanded-area" || widget.type === "diagram") {
     const sourceId =
       typeof widget.metadata?.libraryNoteId === "string" && widget.metadata.libraryNoteId.trim()
         ? widget.metadata.libraryNoteId
@@ -4064,7 +4145,7 @@ function syncLinkedLibraryMetadata() {
   }
 
   for (const widget of runtime.listWidgets()) {
-    if (!widget || widget.type !== "expanded-area") {
+    if (!widget || (widget.type !== "expanded-area" && widget.type !== "diagram")) {
       continue;
     }
 
@@ -4082,9 +4163,38 @@ function syncLinkedLibraryMetadata() {
     }
 
     const sourceNote = source.metadata?.note ?? "";
+    const sourceWidgetType = source.metadata?.widgetType === "diagram" ? "diagram" : "expanded-area";
     const currentTitle = typeof widget.metadata?.title === "string" ? widget.metadata.title : "";
     const currentNote = typeof widget.metadata?.note === "string" ? widget.metadata.note : "";
-    if (currentTitle === source.title && currentNote === sourceNote) {
+    const sameNotePayload = currentTitle === source.title && currentNote === sourceNote;
+
+    if (widget.type === "diagram") {
+      let diagramChanged = false;
+      if (sourceWidgetType === "diagram" && source.metadata?.diagramDoc && typeof widget.setDiagramDoc === "function") {
+        const currentDiagram = typeof widget.getDiagramDoc === "function" ? widget.getDiagramDoc() : null;
+        const nextDiagram = source.metadata.diagramDoc;
+        const currentSerialized = JSON.stringify(currentDiagram ?? null);
+        const nextSerialized = JSON.stringify(nextDiagram ?? null);
+        if (currentSerialized !== nextSerialized) {
+          widget.setDiagramDoc(nextDiagram);
+          diagramChanged = true;
+        }
+      }
+
+      if (sameNotePayload && !diagramChanged) {
+        continue;
+      }
+
+      widget.metadata = {
+        ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
+        title: source.title,
+        libraryNoteId: source.id,
+      };
+      changed = true;
+      continue;
+    }
+
+    if (sameNotePayload) {
       continue;
     }
 
@@ -4136,7 +4246,7 @@ function syncWidgetsToLibrarySnapshots() {
       continue;
     }
 
-    if (widget.type === "expanded-area") {
+    if (widget.type === "expanded-area" || widget.type === "diagram") {
       const sourceId =
         typeof widget.metadata?.libraryNoteId === "string" && widget.metadata.libraryNoteId.trim()
           ? widget.metadata.libraryNoteId
@@ -4144,7 +4254,10 @@ function syncWidgetsToLibrarySnapshots() {
       if (!sourceId) {
         continue;
       }
-      const entry = noteLibraryEntryFromWidget(widget);
+      const entry =
+        widget.type === "diagram"
+          ? diagramLibraryEntryFromWidget(widget)
+          : noteLibraryEntryFromWidget(widget);
       if (entry) {
         notebookLibraryStore.upsertNote(activeContextId, {
           ...entry,
@@ -4269,17 +4382,35 @@ async function createNoteWidgetFromLibraryEntry(noteEntry, intent = null) {
   if (!noteEntry || typeof noteEntry !== "object") {
     return null;
   }
-  const widget = await createExpandedAreaWidget(
-    {
-      metadata: {
-        title: noteEntry.title ?? "Notes",
-        note: typeof noteEntry.metadata?.note === "string" ? noteEntry.metadata.note : "",
-        libraryNoteId: noteEntry.id ?? null,
+  const isDiagram = noteEntry.metadata?.widgetType === "diagram";
+  const widget = isDiagram
+    ? await createDiagramWidget(
+      {
+        metadata: {
+          title: noteEntry.title ?? "Diagram",
+          libraryNoteId: noteEntry.id ?? null,
+        },
+        size: noteEntry.size,
+        dataPayload: {
+          diagramDoc:
+            noteEntry.metadata?.diagramDoc && typeof noteEntry.metadata.diagramDoc === "object"
+              ? cloneJsonValue(noteEntry.metadata.diagramDoc, null)
+              : null,
+        },
       },
-      size: noteEntry.size,
-    },
-    normalizeCreationIntent(intent),
-  );
+      normalizeCreationIntent(intent),
+    )
+    : await createExpandedAreaWidget(
+      {
+        metadata: {
+          title: noteEntry.title ?? "Notes",
+          note: typeof noteEntry.metadata?.note === "string" ? noteEntry.metadata.note : "",
+          libraryNoteId: noteEntry.id ?? null,
+        },
+        size: noteEntry.size,
+      },
+      normalizeCreationIntent(intent),
+    );
   if (!widget) {
     return null;
   }
@@ -4469,9 +4600,10 @@ async function showNotebookNoteInfo(entry) {
   if (!entry) {
     return;
   }
+  const isDiagram = entry.metadata?.widgetType === "diagram";
   const lines = [
-    "Type: Notes",
-    `Title: ${entry.title ?? "Notes"}`,
+    `Type: ${isDiagram ? "Diagram" : "Notes"}`,
+    `Title: ${entry.title ?? (isDiagram ? "Diagram" : "Notes")}`,
     `Size: ${Math.round(Number(entry.size?.width) || 0)} x ${Math.round(Number(entry.size?.height) || 0)}`,
     `Updated: ${entry.updatedAt ?? "unknown"}`,
     `Created: ${entry.createdAt ?? "unknown"}`,
@@ -4545,6 +4677,9 @@ function widgetDisplayLabel(widget) {
 
   if (widget.type === "expanded-area") {
     return widget.metadata?.title ?? "Notes";
+  }
+  if (widget.type === "diagram") {
+    return widget.metadata?.title ?? "Diagram";
   }
 
   return widget.metadata?.title ?? "Document";
@@ -5509,6 +5644,25 @@ async function ensureReferencePopupInteractions() {
   return popupInteractions;
 }
 
+async function ensureDiagramInteractions() {
+  if (diagramInteractions) {
+    return diagramInteractions;
+  }
+
+  const diagramModule = await import("./features/diagram/diagram-interactions.js");
+  diagramInteractions = diagramModule.createDiagramInteractions({
+    runtime,
+    onDiagramMutated: ({ preview = false } = {}) => {
+      if (preview) {
+        runtime.requestRender({ continuousMs: 120 });
+        return;
+      }
+      updateWidgetUi({ coalesceHeavy: true });
+    },
+  });
+  return diagramInteractions;
+}
+
 async function ensureSnipTool() {
   if (snipTool) {
     return snipTool;
@@ -5639,6 +5793,47 @@ async function ensureResearchPanel() {
   });
 
   return researchPanelController;
+}
+
+async function createDiagramWidget(definition = {}, intent = null) {
+  const normalizedIntent = normalizeCreationIntent(intent);
+  const placement = resolvePlacementForCreation({
+    type: "diagram",
+    intent: normalizedIntent,
+    requestedSize: definition.size,
+    fallbackPlacement: defaultPlacement(-170, -110, 34, 28),
+  });
+  const finalPosition = definition.position ?? placement.position;
+  const finalPlacement = { ...placement, position: finalPosition };
+
+  await ensureDiagramInteractions();
+
+  const widget = await registry.instantiate("diagram", {
+    id: definition.id ?? makeId("diagram"),
+    position: finalPosition,
+    size: placement.size,
+    metadata: withCreationProvenance(
+      {
+        title: definition.metadata?.title ?? "Diagram",
+        ...(definition.metadata ?? {}),
+      },
+      normalizedIntent,
+      finalPlacement,
+      "diagram",
+    ),
+    dataPayload: {
+      diagramDoc:
+        definition.dataPayload?.diagramDoc && typeof definition.dataPayload.diagramDoc === "object"
+          ? cloneJsonValue(definition.dataPayload.diagramDoc, null)
+          : null,
+    },
+    collapsed: definition.collapsed,
+  });
+
+  runtime.addWidget(widget);
+  updateWidgetUi();
+  flushWorkspacePersist();
+  return widget;
 }
 
 async function createExpandedAreaWidget(definition = {}, intent = null) {
@@ -6341,6 +6536,11 @@ async function executeCreationIntent(intent) {
     return true;
   }
 
+  if (normalizedIntent.type === "diagram") {
+    await createDiagramWidget({}, normalizedIntent);
+    return true;
+  }
+
   if (normalizedIntent.type === "reference-popup") {
     await createReferencePopupWidget({
       intent: normalizedIntent,
@@ -6514,6 +6714,9 @@ async function restoreWorkspaceForActiveContext() {
 
     if (widgetTypes.has("reference-popup")) {
       await ensureReferencePopupInteractions();
+    }
+    if (widgetTypes.has("diagram")) {
+      await ensureDiagramInteractions();
     }
     if (hasStoredWhitespaceZones) {
       await ensureWhitespaceManager();
@@ -6796,6 +6999,9 @@ async function importWidgetsFromAnotherContext() {
 
   if (selectedTypes.has("reference-popup")) {
     await ensureReferencePopupInteractions();
+  }
+  if (selectedTypes.has("diagram")) {
+    await ensureDiagramInteractions();
   }
 
   const idMap = new Map();

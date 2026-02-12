@@ -25,5 +25,8 @@ export function widgetTypeTitle(widgetType) {
   if (widgetType === "expanded-area") {
     return "Note";
   }
+  if (widgetType === "diagram") {
+    return "Diagram";
+  }
   return "Widget";
 }

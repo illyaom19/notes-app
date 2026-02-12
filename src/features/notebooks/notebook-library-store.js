@@ -103,6 +103,14 @@ function normalizeInkSnapshot(candidate) {
     }));
 }
 
+function cloneJson(value, fallback = null) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_error) {
+    return fallback;
+  }
+}
+
 function normalizeNote(candidate) {
   if (!candidate || typeof candidate !== "object") {
     return null;
@@ -111,6 +119,11 @@ function normalizeNote(candidate) {
   const title =
     typeof candidate.title === "string" && candidate.title.trim() ? candidate.title.trim() : "Notes";
   const metadata = asObject(candidate.metadata);
+  const widgetType = metadata.widgetType === "diagram" ? "diagram" : "expanded-area";
+  const diagramDoc =
+    widgetType === "diagram" && metadata.diagramDoc && typeof metadata.diagramDoc === "object"
+      ? cloneJson(metadata.diagramDoc, null)
+      : null;
 
   return {
     id:
@@ -119,6 +132,8 @@ function normalizeNote(candidate) {
     metadata: {
       title,
       note: typeof metadata.note === "string" ? metadata.note : "",
+      widgetType,
+      ...(diagramDoc ? { diagramDoc } : {}),
     },
     size: {
       width: Math.max(120, Number(candidate.size?.width) || 420),
@@ -225,6 +240,9 @@ function cloneNote(entry) {
     title: entry.title,
     metadata: {
       ...entry.metadata,
+      ...(entry.metadata?.diagramDoc && typeof entry.metadata.diagramDoc === "object"
+        ? { diagramDoc: cloneJson(entry.metadata.diagramDoc, null) }
+        : {}),
     },
     size: {
       ...entry.size,
