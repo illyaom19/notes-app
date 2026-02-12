@@ -48,6 +48,7 @@ Refactor `src/main.js` to a bootstrap/composition entrypoint while moving runtim
   - removed dead onboarding proxy helpers no longer referenced
   - removed dead ink/dropdown cursor proxy helpers and routed input controller directly to runtime methods
   - removed onboarding runtime proxy wrappers and switched callsites to direct `onboardingRuntime` invocation
+  - removed tiny ink dropdown proxy helpers and inlined direct runtime calls in ink UI state updates
 
 ## Contracts To Keep Stable
 - Widget drag payload semantics used across interaction and overlay controllers.
@@ -174,6 +175,16 @@ Recommended targeted additions:
 
 - Date: 2026-02-12
 - Slice: Final cleanup pass (phase 2)
+- Files added/updated:
+  - `src/main.js`
+  - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
+- Behavior changed: no (refactor-only target)
+- Tests run: `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
+- Result: pass (16/16)
+- Commit: pending
+
+- Date: 2026-02-12
+- Slice: Final cleanup pass (phase 3)
 - Files added/updated:
   - `src/main.js`
   - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`

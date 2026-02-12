@@ -1930,8 +1930,8 @@ function updateInkUi(state) {
     toggleInkToolButton.textContent =
       activeTool === "eraser" ? "Ink Tool: Eraser" : activeTool === "lasso" ? "Ink Tool: Lasso" : "Ink Tool: Pen";
   }
-  syncInkToolDropdownUi(activeTool, enabled);
-  syncInkStyleDropdownUi(penColor, penThickness, enabled);
+  inkGestureRuntime.syncInkToolDropdownUi(activeTool, enabled);
+  inkGestureRuntime.syncInkStyleDropdownUi(penColor, penThickness, enabled);
   if (activeTool !== "eraser" && activeTool !== "lasso") {
     inkGestureRuntime.hideInkCursorPill();
   }
@@ -1966,10 +1966,6 @@ function currentInkTool() {
   return normalizeInkTool(inkFeature.getTool());
 }
 
-function syncInkToolDropdownUi(activeTool = "pen", enabled = true) {
-  inkGestureRuntime.syncInkToolDropdownUi(activeTool, enabled);
-}
-
 function normalizeInkColor(value) {
   if (typeof value !== "string") {
     return "#103f78";
@@ -1984,10 +1980,6 @@ function normalizeInkThickness(value) {
     return 3;
   }
   return Math.max(1, Math.min(12, numeric));
-}
-
-function syncInkStyleDropdownUi(penColor = "#103f78", penThickness = 3, enabled = true) {
-  inkGestureRuntime.syncInkStyleDropdownUi(penColor, penThickness, enabled);
 }
 
 async function createNoteWidgetFromLassoSelection(payload) {
