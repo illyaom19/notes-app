@@ -42,6 +42,7 @@ export function createInkGestureRuntime({
   const inkUi = inkUiElements && typeof inkUiElements === "object" ? inkUiElements : {};
   const gestureUi = gestureUiElements && typeof gestureUiElements === "object" ? gestureUiElements : {};
   let inkStyleMenuCloseTimer = null;
+  let inkStylePinnedOpen = false;
   let uiBindingsWired = false;
 
   function isInkToolDropdownOpen() {
@@ -84,6 +85,9 @@ export function createInkGestureRuntime({
     inkUi.inkStyleDropdownToggle.setAttribute("aria-expanded", open ? "true" : "false");
     inkUi.inkStyleDropdownToggle.dataset.open = open ? "true" : "false";
     inkUi.inkStyleDropdownMenu.hidden = !open;
+    if (!open) {
+      inkStylePinnedOpen = false;
+    }
     return open;
   }
 
@@ -120,6 +124,9 @@ export function createInkGestureRuntime({
   }
 
   function scheduleInkStyleMenuClose(delayMs = 90) {
+    if (inkStylePinnedOpen) {
+      return;
+    }
     if (inkStyleMenuCloseTimer) {
       window.clearTimeout(inkStyleMenuCloseTimer);
     }
@@ -320,7 +327,9 @@ export function createInkGestureRuntime({
       event.preventDefault();
       event.stopPropagation();
       cancelInkStyleMenuClose();
-      setInkStyleDropdownOpen(!isInkStyleDropdownOpen());
+      const nextOpen = !isInkStyleDropdownOpen();
+      inkStylePinnedOpen = nextOpen;
+      setInkStyleDropdownOpen(nextOpen);
     });
 
     inkUi.inkStyleDropdownToggle?.addEventListener("pointerenter", () => {
@@ -329,6 +338,9 @@ export function createInkGestureRuntime({
     });
 
     inkUi.inkStyleDropdownToggle?.addEventListener("pointerleave", () => {
+      if (inkStylePinnedOpen) {
+        return;
+      }
       scheduleInkStyleMenuClose(120);
     });
 
@@ -338,6 +350,9 @@ export function createInkGestureRuntime({
     });
 
     inkUi.inkStyleDropdownMenu?.addEventListener("pointerleave", () => {
+      if (inkStylePinnedOpen) {
+        return;
+      }
       scheduleInkStyleMenuClose(120);
     });
 
