@@ -6,8 +6,8 @@ This repository uses `docs/` as the canonical location for project documentation
 
 Read in this order before making changes:
 1. `docs/PROJECT_SUMMARY.md`
-2. `docs/SPRINTS_SUMMARY.md`
-3. `docs/CURRENT_STATE.md`
+2. `docs/CURRENT_STATE.md`
+3. `docs/MISSING_FROM_VISION.md`
 
 ## Mandatory Documentation Rule
 

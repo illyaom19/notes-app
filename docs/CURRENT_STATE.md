@@ -1,222 +1,99 @@
 # CURRENT_STATE
 
-## Current Sprint
-- Sprint 18 (`docs/SPRINT_18_Production_UI_Minimalism_and_Onboarding.md`) has now been implemented onto current `main`.
-- Sprint 10 and Sprint 12 remain implemented; Sprint 11 remains skipped per directive.
-- UX flow refactor pass (Notebook + Section composition, radial creation, grouped search, notebook library linking, suggestions rail, reference manager overlay) has been integrated on top of Sprint 18.
+## Snapshot
+- Date: 2026-02-12
+- Branch reviewed: `main`
+- Scope of this pass:
+  - Comprehensive codebase/app-state review (performance, storage, reliability)
+  - Documentation normalization and archive
 
-## What Exists Today
-- Core runtime and modular widget architecture:
-  - `src/core/canvas/`
-  - `src/core/widgets/`
-- Implemented widgets:
-  - Expanded area ("Notes Sheet"): `src/widgets/expanded-area/`
-  - PDF document (stacked pages + tile virtualization + snapshots): `src/widgets/pdf/`
-  - Reference popup: `src/widgets/reference-popup/`
-- Implemented feature modules:
-  - Ink engine: `src/features/ink/`
-  - Document manager: `src/features/documents/document-manager.js`
-  - Widget long-press menu: `src/features/widget-system/`
-  - Widget creation controller: `src/features/widget-system/widget-creation-controller.js`
-  - Universal widget interaction manager: `src/features/widget-system/widget-interaction-manager.js`
-  - Reference popup interactions + snip tool: `src/features/reference-popups/`
-  - Whitespace analyzer/manager: `src/features/whitespace/`
-  - Research panel capture flow (lazy-loaded): `src/features/research/research-panel.js`
-  - Search index pipeline + search panel (lazy-loaded): `src/features/search/`
-  - Pen gesture recognizer + bindings: `src/features/gestures/pen-gestures.js`
-  - World-size normalization utilities: `src/features/widget-system/world-sizing.js`
-  - Context metadata store: `src/features/contexts/context-store.js`
-  - Context-scoped workspace persistence: `src/features/contexts/context-workspace-store.js`
-  - Context management UI controller (lazy-loaded): `src/features/contexts/context-management-ui.js`
-  - Notebook document source library store: `src/features/notebooks/notebook-document-library-store.js`
-  - Suggestions: store + heuristic engine + rail UI (`src/features/suggestions/`)
-  - Reference Manager overlay + draggable preview cards (`src/features/references/reference-manager-ui.js`)
+## Current App Surface (Implemented)
 
-## In Progress
-- No active blocker.
-- Sprint 18 production UI and onboarding flow is now active:
-  - UI mode (`debug` / `production`) is persisted and switchable from top-bar controls.
-  - Production mode hides debug-heavy chrome (status + advanced controls) and keeps an intent-first quick action surface.
-  - A lazy-loaded onboarding hint overlay now guides first-run flows and persists per-context dismissal/completion state.
+### Core runtime
+- Canvas runtime, camera pan/zoom/pinch: `src/core/canvas/`, `src/main.js`
+- Modular widget architecture and lazy registration: `src/core/widgets/`, `src/main.js`
 
-## Recent Fixes (2026-02-07)
-- Snip flow:
-  - Snip mode now auto-exits after one successful capture.
-  - Added explicit top-left snip notifier with `Exit snip mode` control (`#snip-mode-notifier`, `#snip-exit`).
-- Suggestion UX:
-  - Suggestion chips are now anchored per-suggestion (vertical alignment follows each suggestion source anchor), rather than a single stacked rail origin.
-- Context menu accessibility:
-  - Keyboard-triggered context menus are now supported for focused/selected widgets.
-  - Canvas creation context menu remains touch/pen-safe while allowing keyboard/open-center fallback on empty canvas.
-- Storage/quota resilience:
-  - Added guarded persistence (`try/catch`) for context store, notebook sections store, notebook library store, UI mode store, and world-size config store.
-  - Notebook document upsert now rolls back notebook asset references when notebook document state fails to persist, preventing leaked owner refs.
-  - Workspace canonicalization/legacy migration save failures are now surfaced with warnings and user-visible storage warning where applicable.
-- Terminology cleanup:
-  - Replaced remaining `Notes Sheet` UI labels/defaults with `Notes`.
-  - Removed stale onboarding copy referencing `Hold Peek`.
+### Active widget types
+- Notes widget (`expanded-area`): `src/widgets/expanded-area/`
+- PDF widget (`pdf-document`): `src/widgets/pdf/`
+- Reference/Snip widget (`reference-popup`): `src/widgets/reference-popup/`
+- Diagram widget (`diagram`): `src/widgets/diagram/`
 
-## Blockers
-- None.
+### Key user-facing systems
+- Ink engine with pen/eraser/lasso and lasso-to-note flow: `src/features/ink/`
+- Pen gestures including barrel handling/bindings: `src/features/gestures/pen-gestures.js`
+- Radial widget creation: `src/features/widget-system/widget-creation-controller.js`
+- Unified widget interactions (move/resize/collapse/docked-body interactions):
+  - `src/features/widget-system/widget-interaction-manager.js`
+- Viewport docking with edge glows and unsnap: `src/main.js`
+- Notebook/section scoped persistence and switching:
+  - `src/features/contexts/`
+  - `src/features/sections/`
+  - `src/features/notebooks/`
+- Library UI and drag-to-spawn workflows: `src/features/references/reference-manager-ui.js`, `src/main.js`
+- PDF raster/import/storage + missing-PDF reimport path:
+  - `src/widgets/pdf/pdf-document-widget.js`
+  - `src/features/documents/document-manager.js`
+  - `src/main.js`
+- PWA service worker and offline shell caching: `sw.js`, `src/main.js`
 
-## Decisions Made
-- All heavy paths remain lazy-loaded via dynamic import/registry.
-- Sprint 8 persistence will be partitioned by context id to satisfy scope isolation.
-- Active context will be resolved before restoring workspace widgets at boot.
-- Legacy/missing context metadata will be normalized into the default context during load.
-- Context-scoped widget/document state is persisted via `notes-app.context.workspace.v1.<contextId>`.
-- Cross-context import regenerates widget ids to avoid conflicts and preserves document bindings where possible.
-- Sprint 9 interaction model will standardize move/resize/collapse affordances across widget types via one shared manager.
-- Stylus will remain ink-only; widget manipulation will be touch/mouse driven.
-- Runtime pointer routing now dispatches touch events to widget handlers before camera pan/pinch fallback.
-- Shared move/resize/collapse is centralized in `WidgetInteractionManager`; specialized handlers keep only widget-specific actions.
-- Widget serializable state now carries `interactionFlags` capability contract.
-- Canvas runtime now renders ink layers after widgets so stylus strokes remain visible on expanded-space, reference popup, and PDF widget surfaces.
-- PDF whitespace collapse now uses segment-based tile mapping so only collapsed whitespace regions compress while surrounding PDF content remains unscaled.
-- Ink now persists with layer semantics:
-  - Global layer strokes stay in world space.
-  - PDF layer strokes stay attached to PDF widgets.
-  - Widget layer strokes stay attached to widgets and collapse with collapsed widget bounds.
-- Document registry is now independent from runtime widgets and persisted with explicit bindings:
-  - `DocumentEntry`: `{ id, contextId, title, sourceType, widgetId, openedAt, pinned, sourceDocumentId?, linkStatus, sourceSnapshot? }`
-  - `DocumentBindings`: `{ documentId, defaultReferenceIds, formulaSheetIds }`
-- Active document focus brings the document widget plus its bound references/formula widgets to front.
-- Workspace schema now persists `documentBindings` with backward compatibility migration from legacy `referenceWidgetIds`.
-- UI now includes:
-  - Document settings panel for reference/formula binding assignment.
-  - Pin/unpin and focus-bound-widget actions.
-  - Open-document strip internals remain wired, but strip visibility is now suppressed in UX (`.documents-strip { display: none; }`).
-- Creation intents now carry provenance metadata (`createdFrom`, source/context fields) across manual, suggestion-accepted, and imported paths.
-- Whitespace-driven expanded-space creation now records `createdFrom: suggestion-accepted`.
-- Popup metadata now follows:
-  - `PopupMetadata`: `{ id, title, type, sourceDocumentId, tags[], createdAt }`
-- Popup behavior preferences now follow:
-  - `PopupBehaviorPrefs`: `{ avoidStylus, motionReduced }` (stored at `notes-app.popup.behavior.v1`)
-- Research capture and citation model now follows:
-  - `Citation`: `{ sourceTitle, url, accessedAt, author?, publisher?, snippetType, attributionText }`
-  - `ResearchCapture`: `{ id, contextId, contentType, content, citation }`
-  - Workspace schema now persists `researchCaptures[]` alongside widget state.
-- Gesture and search models now follow:
-  - `GesturePrefs`: enable flags + per-gesture bindings (`doubleTap`, `barrelTap`)
-  - `SearchIndexEntry`: `{ id, contextId, widgetId, fields, updatedAt }`
-  - Search indexing remains in-memory, context-aware, and debounced on widget mutations.
-- World sizing and placement now follow:
-  - Optional world-size config by type loaded from `notes-app.world-size-config.v1`.
-  - Creator defaults are normalized in world units per widget type.
-  - Placement metadata is attached to created widgets under `metadata.placementMetadata`.
-- Storage migration and asset lifecycle now follow:
-  - Persisted envelope shape: `{ schemaVersion, data }`.
-  - Migration runner utilities live in `src/features/storage/schema-migrations.js`.
-  - Asset catalog model: `{ id, type, sizeBytes, refs, createdAt, lastAccessedAt, derivedFrom?, hash? }`.
-  - Workspace serialization now stores `pdfAssetId` / `imageAssetId` with inline payload fallback repair for stale assets.
-  - Unreferenced assets are garbage-collected on context/widget ref updates and on maintenance passes.
-- Production UI and onboarding now follow:
-  - `UiModeState`: `{ mode: "debug" | "production" }` stored at `notes-app.ui-mode.v1`.
-  - Production mode defaults to minimal persistent chrome and compact document controls.
-  - Onboarding state is stored per profile/context with hint entries:
-    - `{ hintId, dismissedAt, completionState }`
-  - Onboarding hint overlays are lazy-loaded and non-blocking.
-  - Users can disable/re-enable or reset hints without leaving the canvas workflow.
-- Notebook/Section composition now follows:
-  - Existing context model is treated as notebook scope in UX.
-  - New section state is stored per notebook at `notes-app.notebook.sections.v1`.
-  - Active workspace persistence uses scope key composition `<notebookId>::<sectionId>`.
-  - Legacy notebook-only workspace payloads are migrated lazily into the active section on first load.
-- Creation UX now follows:
-  - Touch-and-hold radial creation is primary (`src/features/widget-system/widget-creation-controller.js`).
-  - Creation menu supports drag-to-highlight and release-to-select.
-  - Creation menu includes notebook-library insertion (`library-reference`).
-  - Production creation catalog is limited to `expanded-area`, `reference-popup`, `library-reference`, and `pdf-document`.
-- Notebook library now follows:
-  - Shared notebook reference library store at `notes-app.notebook.library.v1`.
-  - Shared notebook document source library store at `notes-app.notebook.documents.v1`.
-  - Reference and document library entries now support rename/delete APIs.
-  - Widget context menu supports `Copy`, `Rename`, `Add/Remove Library`, `Info`, and `Delete`.
-  - Linked instances carry `metadata.librarySourceId` and sync metadata-only from the notebook library.
-  - PDF creation flow now offers:
-    - Import new PDF into notebook source library, then instantiate in current section.
-    - Instantiate linked section instance from notebook source.
-    - Instantiate frozen section instance from notebook source.
-  - Linked section instances reconcile at restore time; missing/deleted sources auto-freeze.
-  - Notebook deletion now clears associated reference-library, document-library, and section metadata records.
-- Suggestion system now follows:
-  - Heuristic suggestions are generated from:
-    - PDF whitespace zones (expanded-area suggestions).
-    - PDF text-layer keyword hits (`Example`, `Definition`, `Theorem`, `Lemma`, `Proof`, `Corollary`) without OCR.
-  - Suggestion lifecycle uses states: `proposed`, `ghosted`, `restored`, `accepted`, `discarded`.
-  - Suggestion rail UI renders active + ghost suggestions with `Accept`, `Ghost`, `Restore`, `Discard`, and `Locate` actions.
-  - Suggestions persist in workspace payloads as `workspace.suggestions[]`.
-- Reference manager UI now follows:
-  - Persistent floating `Library` launcher opens notebook library overlay.
-  - Overlay exposes references/documents lists with rename/delete/import actions.
-  - Selecting entries opens draggable UI-layer preview cards; multiple previews are supported simultaneously.
-  - Preview cards support stylus-avoidance nudging and linked/frozen import actions.
-  - Preview cards are ephemeral UI-only and are not persisted to workspace storage.
-- Touch/selection UX hardening now follows:
-  - Touch-origin `contextmenu` is globally suppressed for non-editable targets to prevent native long-press action sheets.
-  - UI text selection/callout is disabled by default, with explicit allow-list for text entry controls (`input`, `textarea`, `select`, contenteditable).
-  - `selectstart` is prevented globally for non-editable targets to avoid accidental UI text selection while gesturing.
-- Camera navigation behavior now follows:
-  - Touch/mouse drags that start on widget body content (including PDFs) keep camera pan/pinch behavior active.
-  - Widget movement remains header-drag driven; resize/collapse controls remain explicit.
-- Radial creation intent recognition now follows:
-  - Touch radial menu opens only from a long stationary single-touch press.
-  - Multi-touch immediately cancels hold-to-open, preventing pinch/pan false positives.
-  - Raw touch pointer movement now cancels pending hold-open even when runtime is handling camera pan/pinch, preventing false positives during navigation.
-  - Desktop right-click opens radial creation on empty canvas and opens widget context actions when clicking an existing widget.
-  - Radial creation now has release-to-select fallback to nearest option, avoiding secondary-tap requirements.
-- Search UX now follows:
-  - Search results are grouped by current section and other sections in the active notebook.
-  - Search panel supports non-selectable group headers.
-  - Result navigation routes across notebook/section scope before focusing target widget.
-- Production-shell adjustments now follow:
-  - Section strip is the persistent interaction rail in production.
-  - Notebook management and gesture settings are exposed via the menu panel (hamburger-like `Menu` button).
-  - Onboarding hint catalog is reduced to three task hints (PDF import, radial create, search/peek).
-- Popup clutter handling now follows:
-  - Reference popup overflow (>3) is auto-minimized and dock-stacked along the viewport edge.
-- PDF rendering/persistence now follows:
-  - PDF widget bounds now expand to full document layout height so multi-page documents remain visible when page 1 is off-screen.
-  - PDF page layout reflows when width changes, preventing stale page placement during resize/zoom workflows.
-  - Workspace persistence now flushes on `beforeunload`, `pagehide`, and `visibilitychange(hidden)` for better refresh/background reliability.
-  - Widget creation paths now flush workspace persistence immediately after successful creation.
-- Suggestions UX now follows:
-  - The previous full-width suggestion panel is replaced by a compact floating rail.
-  - Suggestions rail is shown only for the currently focused PDF and stays positioned beside that PDF.
-  - Active suggestions expose minimal `✓` (accept) and `✕` (ghost) controls.
-  - Ghost suggestions render as translucent chips and restore to active state on tap.
-- Research flow policy (current):
-  - Research panel code remains present for compatibility, but active UX emphasis has shifted to notebook/section/radial/search flows and research remains deferred for future re-introduction.
+## Comprehensive Review Findings (Severity Ordered)
 
-## Next Actions
-1. Run tablet-first UX QA on radial hold creation (hold threshold, accidental activation, drag-release selection confidence).
-2. Run usability QA on suggestion signal quality (false positives/negatives) and tune thresholds for whitespace + keyword heuristics.
-3. Validate section migration behavior from legacy context-only payloads across multi-notebook workspaces.
-4. Decide whether to fully remove hidden/deferred research panel wiring or retain compatibility mode.
+### High
+1. Test suite is not fully green on `main`.
+- Failing test: `tests/ui/widget-types.test.mjs`
+- Root issue: test expectations still reflect pre-diagram policy while `diagram` is now in `SUPPORTED_WIDGET_TYPES` and `USER_CREATION_TYPES`.
+- Impact: weak CI signal and reduced confidence in regression detection.
+
+2. No integration tests for highest-risk pointer/render flows.
+- Current tests are predominantly storage/UI-unit tests.
+- Missing automated coverage for drag/dock/library-spawn/radial + touch/pen interaction sequences and PDF section-switch rendering reliability.
+- Impact: user-visible regressions can ship while unit tests remain green.
+
+### Medium
+1. Runtime orchestration is highly centralized.
+- `src/main.js` currently ~8.7k LOC and owns many concern boundaries.
+- Impact: elevated change risk and slower safe iteration.
+
+2. Partially dead/legacy feature surfaces remain.
+- Graph feature code remains in tree (`src/features/graph/`, `src/widgets/graph/`) while current supported widget policy is centered on notes/pdf/reference/diagram.
+- Impact: maintenance and onboarding complexity.
+
+3. Storage-pressure UX is resilient but still disruptive.
+- The app correctly warns/fails safely under quota pressure and can request PDF reimport; this preserves integrity but interrupts workflow for heavy notebooks.
+- Impact: reliability is safe, continuity is not ideal under constrained storage.
+
+### Low
+1. Live documentation had drifted from implementation.
+- Resolved in this pass by archiving non-core docs and refreshing canonical docs.
+
+## Documentation State (After This Pass)
+
+### Live canonical docs (exactly 4)
+- `docs/README.md`
+- `docs/CURRENT_STATE.md`
+- `docs/PROJECT_SUMMARY.md`
+- `docs/MISSING_FROM_VISION.md`
+
+### Archived docs
+- Non-core top-level docs moved to `docs/done/`, including:
+  - `FINAL_DESIGN.md`
+  - `SPRINTS_SUMMARY.md` (archived as `SPRINTS_SUMMARY_active_2026-02-12.md` due filename collision)
+  - `SPRINT_8` through `SPRINT_18` specs
 
 ## Verification Status
-- `for f in $(git status --short | awk '{print $2}' | rg '\\.(js|mjs)$'); do node --check "$f" || exit 1; done` passed.
-- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (12/12), including new:
-  - `tests/ui/context-store.test.mjs`
-  - `tests/ui/world-sizing.test.mjs`
-  - storage failure-path coverage updates in:
-    - `tests/ui/notebook-document-library-store.test.mjs`
-    - `tests/ui/notebook-library-store.test.mjs`
-    - `tests/ui/notebook-sections-store.test.mjs`
-    - `tests/ui/ui-mode-store.test.mjs`
-- `for f in /home/illya/io_dev/notes-app/src/main.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-interaction-manager.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-creation-controller.js /home/illya/io_dev/notes-app/src/widgets/pdf/pdf-document-widget.js /home/illya/io_dev/notes-app/src/features/suggestions/suggestion-ui-controller.js /home/illya/io_dev/notes-app/tests/storage/context-workspace-store-assets.test.mjs; do node --check "$f" || exit 1; done` passed.
-- `node --test /home/illya/io_dev/notes-app/tests` passed (including new PDF persistence round-trip coverage in `tests/storage/context-workspace-store-assets.test.mjs`).
-- `node --check /home/illya/io_dev/notes-app/src/main.js /home/illya/io_dev/notes-app/src/features/widget-system/long-press-menu.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-creation-controller.js /home/illya/io_dev/notes-app/src/features/contexts/context-workspace-store.js` passed.
-- `node --test /home/illya/io_dev/notes-app/tests` passed (including updated `tests/storage/context-workspace-store-assets.test.mjs`).
-- `for f in $(rg --files /home/illya/io_dev/notes-app/src | rg '\\.js$'); do node --check \"$f\"; done` passed.
-- `node --test tests/storage/*.test.mjs` passed.
-- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed.
-- `for f in $(rg --files /home/illya/io_dev/notes-app/src /home/illya/io_dev/notes-app/tests | rg '\\.(js|mjs)$'); do node --check \"$f\" || exit 1; done` passed.
-- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (including new `tests/ui/notebook-sections-store.test.mjs` and `tests/ui/notebook-library-store.test.mjs`).
-- `for f in src/main.js src/features/notebooks/notebook-document-library-store.js src/features/documents/document-manager.js src/features/contexts/context-workspace-store.js tests/ui/notebook-document-library-store.test.mjs tests/ui/document-manager.test.mjs; do node --check \"$f\"; done` passed.
-- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (including new `tests/ui/notebook-document-library-store.test.mjs` and `tests/ui/document-manager.test.mjs`).
-- `for f in /home/illya/io_dev/notes-app/src/main.js /home/illya/io_dev/notes-app/src/features/contexts/context-workspace-store.js /home/illya/io_dev/notes-app/src/features/widget-system/widget-creation-controller.js /home/illya/io_dev/notes-app/src/widgets/pdf/pdf-document-widget.js /home/illya/io_dev/notes-app/src/features/suggestions/suggestion-store.js /home/illya/io_dev/notes-app/src/features/suggestions/suggestion-engine.js /home/illya/io_dev/notes-app/src/features/suggestions/suggestion-ui-controller.js /home/illya/io_dev/notes-app/src/features/references/reference-manager-ui.js /home/illya/io_dev/notes-app/src/features/notebooks/notebook-library-store.js /home/illya/io_dev/notes-app/src/features/notebooks/notebook-document-library-store.js /home/illya/io_dev/notes-app/tests/ui/suggestion-store.test.mjs /home/illya/io_dev/notes-app/tests/storage/context-workspace-store-assets.test.mjs /home/illya/io_dev/notes-app/tests/ui/notebook-library-store.test.mjs /home/illya/io_dev/notes-app/tests/ui/notebook-document-library-store.test.mjs; do node --check \"$f\" || exit 1; done` passed.
-- `cd /home/illya/io_dev/notes-app && node --test tests/storage/*.test.mjs tests/ui/*.test.mjs` passed (including new `tests/ui/suggestion-store.test.mjs` and updated `tests/storage/context-workspace-store-assets.test.mjs`).
 
-## Last Updated
-- 2026-02-07 (local environment time)
+Commands run in this pass:
+- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
+  - Result: 15 passed, 1 failed (`tests/ui/widget-types.test.mjs`).
+- `node tests/ui/widget-types.test.mjs`
+  - Confirmed assertion mismatch caused by diagram support being added to widget policy.
+- Static scan:
+  - `rg -n "TODO|FIXME|HACK|XXX|BUG" src tests docs`
+  - No active TODO/FIXME markers found in core runtime paths.
+
+## Recommended Next Steps
+1. Fix `tests/ui/widget-types.test.mjs` to match current widget policy.
+2. Add integration tests for touch/pen/mouse interaction flows (radial create, library drag-spawn, viewport dock/undock, PDF section rehydration).
+3. Split `src/main.js` orchestration into smaller modules (input routing, library+dock overlays, persistence wiring).
+4. Decide whether graph is coming back soon; if not, archive/remove dormant graph surfaces.

@@ -1,55 +1,53 @@
 # PROJECT_SUMMARY
 
-## Phase 2 Focus
+## Product Direction
 
-This roadmap continues from the completed foundation sprints (0, 1, 2, 3, 4, 5, 7) and targets the missing capabilities captured in `docs/MISSING_FROM_VISION.md`.
+`notes-app` is a tablet/stylus-first, local-first canvas workspace where documents and notes are organized as movable widgets.
 
-The goal is to evolve the prototype into a production-shaped modular notes system without breaking the current performance-first architecture.
+Primary goals:
+- Keep drawing and navigation latency low in dense canvases.
+- Keep storage reliable for document-heavy notebooks.
+- Keep widget interactions predictable across touch, pen, and mouse.
+- Keep UI minimal while still discoverable.
 
-## Current Baseline
+## Current Architecture Shape
 
-Implemented already:
-- Canvas runtime with pan/zoom and touch pinch support
-- Lazy widget registry and modular loading
-- Ink engine with persistence
-- PDF widget with tiled rendering and whitespace collapse
-- Reference popup and snip flow
-- Graph widget with persistence
+- Runtime orchestration: `src/main.js`
+- Canvas + camera core: `src/core/canvas/`
+- Widget base + rendering contracts: `src/core/widgets/`
+- Widget types currently active:
+  - Notes (`expanded-area`)
+  - PDF (`pdf-document`)
+  - Reference/Snip (`reference-popup`)
+  - Diagram (`diagram`)
+- Key feature modules:
+  - Ink + lasso: `src/features/ink/`
+  - Widget interactions + creation: `src/features/widget-system/`
+  - Notebook/section/library stores: `src/features/notebooks/`, `src/features/sections/`, `src/features/contexts/`
+  - Suggestions + references/library UI: `src/features/suggestions/`, `src/features/references/`
+  - PDF/document lifecycle: `src/features/documents/`, `src/widgets/pdf/`
+  - Gestures and minimap: `src/features/gestures/`, `src/features/minimap/`
 
-Archived specs are in `docs/done/`.
+## Execution Priorities (Current)
 
-## Non-Negotiable Principles
+1. Reliability first:
+- eliminate state-loss edge cases across section/notebook switches
+- keep PDF/library rehydration stable under storage pressure
 
-1. All features stay modular and lazily loaded.
-2. Interaction latency remains first priority.
-3. UI stays minimal and context-driven.
-4. Data models must support safe schema evolution.
+2. Performance under load:
+- maintain smooth ink while canvases are widget/PDF heavy
+- reduce interaction jank during drag/resize/dock operations
 
-## Phase 2 Workstreams
+3. Input consistency:
+- ensure parity for touch, pen, and mouse in all primary flows
+- avoid modality-specific regressions in creation/selection/drag/drop
 
-1. Contexts and scoped workspaces
-2. Universal widget interaction system
-3. Intent-driven widget creation UX
-4. Suggestion system with recoverable ghosts
-5. Multi-document management and bindings
-6. Advanced popup semantics
-7. Research and citation workflows
-8. Ink gestures and searchable metadata
-9. Peek mode and world-scale semantics
-10. Schema migrations and asset lifecycle
-11. Production UI minimalism and onboarding
+4. Maintainability:
+- reduce orchestration coupling in `src/main.js`
+- increase integration tests for gesture- and render-heavy flows
 
 ## Out of Scope (Still Deferred)
 
-- Collaboration
-- Cloud sync and accounts
-- OCR
-- Simulation engines
-
-## Success Criteria
-
-- Users can work in multiple scoped contexts without cross-contamination.
-- Widget interactions are consistent across all widget types.
-- Suggestion flows are recoverable and non-destructive.
-- Search and metadata allow fast retrieval of created material.
-- Documentation and schema strategy support ongoing iteration without data loss.
+- Multi-user collaboration
+- Cloud sync/accounts
+- OCR pipelines
