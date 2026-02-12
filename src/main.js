@@ -196,7 +196,6 @@ let inkStateSnapshot = {
   penThickness: 3,
   enabled: false,
 };
-let inkStyleMenuCloseTimer = null;
 let minimapVisible = false;
 let minimapRenderFrame = null;
 let minimapRenderQueued = false;
@@ -991,6 +990,7 @@ inkGestureRuntime = createInkGestureRuntime({
   setLastGestureStatus: (status) => {
     lastGestureStatus = status;
   },
+  getInkStateSnapshot: () => inkStateSnapshot,
   defaultGesturePrefs,
   normalizeGesturePrefs,
   normalizeInkTool,
@@ -999,6 +999,9 @@ inkGestureRuntime = createInkGestureRuntime({
   currentInkTool,
   updateInkUi,
   updateGestureUi,
+  applyGesturePrefs: (prefs) => {
+    setGesturePrefs(prefs);
+  },
   ensureSearchFeatures,
   executeCreationFromLasso: (payload) => {
     void createNoteWidgetFromLassoSelection(payload);
@@ -1015,6 +1018,23 @@ inkGestureRuntime = createInkGestureRuntime({
     }
   },
   scheduleOnboardingRefresh,
+  inkUiElements: {
+    inkToolDropdown,
+    inkToolDropdownToggle,
+    inkToolDropdownMenu,
+    inkStyleDropdown,
+    inkStyleDropdownToggle,
+    inkStyleDropdownMenu,
+    inkThicknessRange,
+    inkCursorPill,
+  },
+  gestureUiElements: {
+    gestureEnabledToggle,
+    gestureDoubleTapToggle,
+    gestureBarrelTapToggle,
+    gestureDoubleTapBindingSelect,
+    gestureBarrelTapBindingSelect,
+  },
 });
 
 viewportDockOverlayController = createViewportDockOverlayController({
@@ -1947,26 +1967,7 @@ function currentInkTool() {
 }
 
 function syncInkToolDropdownUi(activeTool = "pen", enabled = true) {
-  if (!(inkToolDropdownToggle instanceof HTMLButtonElement) || !(inkToolDropdownMenu instanceof HTMLElement)) {
-    return;
-  }
-  const nextTool = normalizeInkTool(activeTool);
-  const icon = nextTool === "eraser" ? "⌫" : nextTool === "lasso" ? "◌" : "✎";
-  const label = nextTool === "eraser" ? "Eraser" : nextTool === "lasso" ? "Lasso" : "Pen";
-  inkToolDropdownToggle.textContent = icon;
-  inkToolDropdownToggle.title = `Ink tool: ${label}`;
-  inkToolDropdownToggle.setAttribute("aria-label", `Ink tool: ${label}`);
-  inkToolDropdownToggle.disabled = !inkFeature || !enabled;
-  for (const button of inkToolDropdownMenu.querySelectorAll("button[data-ink-tool]")) {
-    const target = button instanceof HTMLButtonElement ? button : null;
-    if (!target) {
-      continue;
-    }
-    target.dataset.active = normalizeInkTool(target.dataset.inkTool) === nextTool ? "true" : "false";
-  }
-  if (inkToolDropdownToggle.disabled) {
-    setInkToolDropdownOpen(false);
-  }
+  inkGestureRuntime.syncInkToolDropdownUi(activeTool, enabled);
 }
 
 function normalizeInkColor(value) {
@@ -1986,151 +1987,39 @@ function normalizeInkThickness(value) {
 }
 
 function syncInkStyleDropdownUi(penColor = "#103f78", penThickness = 3, enabled = true) {
-  if (!(inkStyleDropdownToggle instanceof HTMLButtonElement) || !(inkStyleDropdownMenu instanceof HTMLElement)) {
-    return;
-  }
-  const color = normalizeInkColor(penColor);
-  const thickness = normalizeInkThickness(penThickness);
-  inkStyleDropdownToggle.style.color = color;
-  inkStyleDropdownToggle.disabled = !inkFeature || !enabled;
-  inkStyleDropdownToggle.dataset.open =
-    inkStyleDropdownToggle.getAttribute("aria-expanded") === "true" ? "true" : "false";
-
-  for (const button of inkStyleDropdownMenu.querySelectorAll("button[data-ink-color]")) {
-    const target = button instanceof HTMLButtonElement ? button : null;
-    if (!target) {
-      continue;
-    }
-    const buttonColor = normalizeInkColor(target.dataset.inkColor);
-    target.dataset.active = buttonColor === color ? "true" : "false";
-  }
-  if (inkThicknessRange instanceof HTMLInputElement) {
-    inkThicknessRange.value = String(thickness);
-    inkThicknessRange.disabled = inkStyleDropdownToggle.disabled;
-  }
-  if (inkStyleDropdownToggle.disabled) {
-    setInkStyleDropdownOpen(false);
-  }
+  inkGestureRuntime.syncInkStyleDropdownUi(penColor, penThickness, enabled);
 }
 
 function isInkToolDropdownOpen() {
-  return (
-    inkToolDropdownToggle instanceof HTMLButtonElement &&
-    inkToolDropdownMenu instanceof HTMLElement &&
-    inkToolDropdownToggle.getAttribute("aria-expanded") === "true" &&
-    !inkToolDropdownMenu.hidden
-  );
+  return inkGestureRuntime.isInkToolDropdownOpen();
 }
 
 function setInkToolDropdownOpen(nextOpen) {
-  if (!(inkToolDropdownToggle instanceof HTMLButtonElement) || !(inkToolDropdownMenu instanceof HTMLElement)) {
-    return false;
-  }
-  const open = Boolean(nextOpen) && !inkToolDropdownToggle.disabled;
-  inkToolDropdownToggle.setAttribute("aria-expanded", open ? "true" : "false");
-  inkToolDropdownToggle.dataset.open = open ? "true" : "false";
-  inkToolDropdownMenu.hidden = !open;
-  return open;
+  return inkGestureRuntime.setInkToolDropdownOpen(nextOpen);
 }
 
 function isInkStyleDropdownOpen() {
-  return (
-    inkStyleDropdownToggle instanceof HTMLButtonElement &&
-    inkStyleDropdownMenu instanceof HTMLElement &&
-    inkStyleDropdownToggle.getAttribute("aria-expanded") === "true" &&
-    !inkStyleDropdownMenu.hidden
-  );
+  return inkGestureRuntime.isInkStyleDropdownOpen();
 }
 
 function setInkStyleDropdownOpen(nextOpen) {
-  if (!(inkStyleDropdownToggle instanceof HTMLButtonElement) || !(inkStyleDropdownMenu instanceof HTMLElement)) {
-    return false;
-  }
-  const open = Boolean(nextOpen) && !inkStyleDropdownToggle.disabled;
-  inkStyleDropdownToggle.setAttribute("aria-expanded", open ? "true" : "false");
-  inkStyleDropdownToggle.dataset.open = open ? "true" : "false";
-  inkStyleDropdownMenu.hidden = !open;
-  return open;
+  return inkGestureRuntime.setInkStyleDropdownOpen(nextOpen);
 }
 
 function isWithinInkToolDropdown(target) {
-  if (!(target instanceof Node)) {
-    return false;
-  }
-  if (inkToolDropdown instanceof HTMLElement && inkToolDropdown.contains(target)) {
-    return true;
-  }
-  if (inkToolDropdownToggle instanceof HTMLElement && inkToolDropdownToggle.contains(target)) {
-    return true;
-  }
-  if (inkToolDropdownMenu instanceof HTMLElement && inkToolDropdownMenu.contains(target)) {
-    return true;
-  }
-  return false;
+  return inkGestureRuntime.isWithinInkToolDropdown(target);
 }
 
 function isWithinInkStyleDropdown(target) {
-  if (!(target instanceof Node)) {
-    return false;
-  }
-  if (inkStyleDropdown instanceof HTMLElement && inkStyleDropdown.contains(target)) {
-    return true;
-  }
-  if (inkStyleDropdownToggle instanceof HTMLElement && inkStyleDropdownToggle.contains(target)) {
-    return true;
-  }
-  if (inkStyleDropdownMenu instanceof HTMLElement && inkStyleDropdownMenu.contains(target)) {
-    return true;
-  }
-  return false;
-}
-
-function scheduleInkStyleMenuClose(delayMs = 90) {
-  if (inkStyleMenuCloseTimer) {
-    window.clearTimeout(inkStyleMenuCloseTimer);
-  }
-  inkStyleMenuCloseTimer = window.setTimeout(() => {
-    inkStyleMenuCloseTimer = null;
-    setInkStyleDropdownOpen(false);
-  }, delayMs);
-}
-
-function cancelInkStyleMenuClose() {
-  if (!inkStyleMenuCloseTimer) {
-    return;
-  }
-  window.clearTimeout(inkStyleMenuCloseTimer);
-  inkStyleMenuCloseTimer = null;
+  return inkGestureRuntime.isWithinInkStyleDropdown(target);
 }
 
 function hideInkCursorPill() {
-  if (!(inkCursorPill instanceof HTMLElement)) {
-    return;
-  }
-  inkCursorPill.hidden = true;
+  inkGestureRuntime.hideInkCursorPill();
 }
 
 function syncInkCursorPill(event = null) {
-  if (!(inkCursorPill instanceof HTMLElement)) {
-    return;
-  }
-  const tool = normalizeInkTool(inkStateSnapshot.activeTool);
-  const enabled = inkStateSnapshot.enabled !== false;
-  const shouldShow = enabled && (tool === "eraser" || tool === "lasso");
-  if (!shouldShow || !event) {
-    inkCursorPill.hidden = true;
-    return;
-  }
-  const pointerType = event.pointerType ?? "mouse";
-  if (pointerType === "touch") {
-    inkCursorPill.hidden = true;
-    return;
-  }
-  const icon = tool === "eraser" ? "⌫" : "◌";
-  inkCursorPill.textContent = icon;
-  inkCursorPill.style.left = `${event.clientX + 14}px`;
-  inkCursorPill.style.top = `${event.clientY - 14}px`;
-  inkCursorPill.hidden = false;
+  inkGestureRuntime.syncInkCursorPill(event);
 }
 
 async function createNoteWidgetFromLassoSelection(payload) {
@@ -4759,78 +4648,7 @@ function wireBaseEventHandlers() {
       toggleSearchPanelButton.disabled = false;
     }
   });
-
-  gestureEnabledToggle?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement)) {
-      return;
-    }
-
-    setGesturePrefs({
-      ...gesturePrefs,
-      enabled: target.checked,
-    });
-  });
-
-  gestureDoubleTapToggle?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement)) {
-      return;
-    }
-
-    setGesturePrefs({
-      ...gesturePrefs,
-      gestures: {
-        ...(gesturePrefs?.gestures ?? {}),
-        doubleTap: target.checked,
-      },
-    });
-  });
-
-  gestureBarrelTapToggle?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement)) {
-      return;
-    }
-
-    setGesturePrefs({
-      ...gesturePrefs,
-      gestures: {
-        ...(gesturePrefs?.gestures ?? {}),
-        barrelTap: target.checked,
-      },
-    });
-  });
-
-  gestureDoubleTapBindingSelect?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLSelectElement)) {
-      return;
-    }
-
-    setGesturePrefs({
-      ...gesturePrefs,
-      bindings: {
-        ...(gesturePrefs?.bindings ?? {}),
-        doubleTap: target.value,
-      },
-    });
-  });
-
-  gestureBarrelTapBindingSelect?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLSelectElement)) {
-      return;
-    }
-
-    setGesturePrefs({
-      ...gesturePrefs,
-      bindings: {
-        ...(gesturePrefs?.bindings ?? {}),
-        barrelTap: target.value,
-      },
-    });
-  });
+  inkGestureRuntime.wireUiBindings();
 
   pdfFileInput?.addEventListener("change", async (event) => {
     if (!(event.target instanceof HTMLInputElement)) {
@@ -4950,56 +4768,6 @@ function wireBaseEventHandlers() {
 
   toggleInkToolButton?.addEventListener("click", () => {
     void toggleInkTool();
-  });
-  inkToolDropdownToggle?.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setInkToolDropdownOpen(!isInkToolDropdownOpen());
-  });
-  inkToolDropdownMenu?.addEventListener("click", (event) => {
-    const target = event.target instanceof HTMLElement ? event.target.closest("button[data-ink-tool]") : null;
-    if (!(target instanceof HTMLButtonElement)) {
-      return;
-    }
-    const tool = normalizeInkTool(target.dataset.inkTool);
-    setInkToolDropdownOpen(false);
-    void selectInkTool(tool);
-  });
-  inkStyleDropdownToggle?.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    cancelInkStyleMenuClose();
-    setInkStyleDropdownOpen(!isInkStyleDropdownOpen());
-  });
-  inkStyleDropdownToggle?.addEventListener("pointerenter", () => {
-    cancelInkStyleMenuClose();
-    setInkStyleDropdownOpen(true);
-  });
-  inkStyleDropdownToggle?.addEventListener("pointerleave", () => {
-    scheduleInkStyleMenuClose(120);
-  });
-  inkStyleDropdownMenu?.addEventListener("pointerenter", () => {
-    cancelInkStyleMenuClose();
-    setInkStyleDropdownOpen(true);
-  });
-  inkStyleDropdownMenu?.addEventListener("pointerleave", () => {
-    scheduleInkStyleMenuClose(120);
-  });
-  inkStyleDropdownMenu?.addEventListener("click", (event) => {
-    const target = event.target instanceof HTMLElement ? event.target.closest("button[data-ink-color]") : null;
-    if (!(target instanceof HTMLButtonElement)) {
-      return;
-    }
-    event.preventDefault();
-    const color = normalizeInkColor(target.dataset.inkColor);
-    void updatePenStyle({ color });
-  });
-  inkThicknessRange?.addEventListener("input", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement)) {
-      return;
-    }
-    void updatePenStyle({ thickness: Number(target.value) });
   });
 
   undoInkButton?.addEventListener("click", () => {
