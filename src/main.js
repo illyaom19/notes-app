@@ -1235,7 +1235,7 @@ function parseWorkspaceScopeId(scopeId) {
 }
 
 function currentSuggestionScope() {
-  return knowledgeRuntime.currentSuggestionScope();
+  return knowledgeRuntime?.currentSuggestionScope?.() ?? null;
 }
 
 function defaultPlacement(baseX, baseY, stepX, stepY) {
@@ -3169,11 +3169,11 @@ function updateContextUi() {
 }
 
 function renderSuggestionRailNow() {
-  knowledgeRuntime.renderSuggestionRail({ immediate: true });
+  knowledgeRuntime?.renderSuggestionRail?.({ immediate: true });
 }
 
 function renderSuggestionRail({ immediate = false } = {}) {
-  knowledgeRuntime.renderSuggestionRail({ immediate });
+  knowledgeRuntime?.renderSuggestionRail?.({ immediate });
 }
 
 function updateReferenceManagerUi() {
@@ -3196,11 +3196,14 @@ function syncReferenceManagerPlacement() {
 }
 
 async function runSuggestionAnalysis() {
+  if (!knowledgeRuntime || typeof knowledgeRuntime.runSuggestionAnalysis !== "function") {
+    return;
+  }
   await knowledgeRuntime.runSuggestionAnalysis();
 }
 
 function scheduleSuggestionAnalysis({ immediate = false } = {}) {
-  knowledgeRuntime.scheduleSuggestionAnalysis({ immediate });
+  knowledgeRuntime?.scheduleSuggestionAnalysis?.({ immediate });
 }
 
 function persistActiveWorkspace() {
@@ -3321,26 +3324,35 @@ function centerCameraOnWorldPoint(point) {
 }
 
 function transitionSuggestionState(suggestion, toState) {
-  return knowledgeRuntime.transitionSuggestionState(suggestion, toState);
+  return knowledgeRuntime?.transitionSuggestionState?.(suggestion, toState) ?? null;
 }
 
 function restoreSuggestionForRemovedWidget({ widget, reason } = {}) {
-  knowledgeRuntime.restoreSuggestionForRemovedWidget({ widget, reason });
+  knowledgeRuntime?.restoreSuggestionForRemovedWidget?.({ widget, reason });
 }
 
 function focusSuggestion(suggestion) {
-  knowledgeRuntime.focusSuggestion(suggestion);
+  knowledgeRuntime?.focusSuggestion?.(suggestion);
 }
 
 async function acceptSuggestion(suggestion) {
+  if (!knowledgeRuntime || typeof knowledgeRuntime.acceptSuggestion !== "function") {
+    return null;
+  }
   return knowledgeRuntime.acceptSuggestion(suggestion);
 }
 
 async function jumpToSearchResult(result) {
+  if (!knowledgeRuntime || typeof knowledgeRuntime.jumpToSearchResult !== "function") {
+    return null;
+  }
   return knowledgeRuntime.jumpToSearchResult(result);
 }
 
 async function ensureSearchFeatures() {
+  if (!knowledgeRuntime || typeof knowledgeRuntime.ensureSearchFeatures !== "function") {
+    return null;
+  }
   return knowledgeRuntime.ensureSearchFeatures();
 }
 
@@ -3530,6 +3542,9 @@ async function createReferencePopupFromResearchCapture(capture, intent = null) {
 }
 
 async function ensureResearchPanel() {
+  if (!knowledgeRuntime || typeof knowledgeRuntime.ensureResearchPanel !== "function") {
+    return null;
+  }
   return knowledgeRuntime.ensureResearchPanel();
 }
 
@@ -3946,7 +3961,7 @@ async function restoreWorkspaceForActiveContext() {
 
   restoringContext = true;
   setContextControlsBusy(true);
-  knowledgeRuntime.resetSuggestionScheduling();
+  knowledgeRuntime?.resetSuggestionScheduling?.();
 
   try {
     clearRuntimeWidgets();
