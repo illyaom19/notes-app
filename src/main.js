@@ -33,6 +33,10 @@ import { createSuggestionEngine } from "./features/suggestions/suggestion-engine
 import { createSuggestionUiController } from "./features/suggestions/suggestion-ui-controller.js";
 import { createReferenceManagerUi } from "./features/references/reference-manager-ui.js";
 import { createSectionMinimapController } from "./features/minimap/section-minimap-controller.js";
+import { createInputRoutingController } from "./features/runtime/input-routing-controller.js";
+import { createLibraryOverlayController } from "./features/runtime/library-overlay-controller.js";
+import { createViewportDockOverlayController } from "./features/runtime/viewport-dock-overlay-controller.js";
+import { createWorkspacePersistenceController } from "./features/runtime/workspace-persistence-controller.js";
 import { ALLOWED_CREATION_INTENT_TYPES } from "./features/widget-system/widget-types.js";
 import { createPdfRasterDocumentFromBytes } from "./widgets/pdf/pdf-rasterizer.js";
 
@@ -214,14 +218,13 @@ const suggestionEngine = createSuggestionEngine();
 let suggestionUiController = null;
 let sectionMinimapController = null;
 let referenceManagerUiController = null;
+let inputRoutingController = null;
+let viewportDockOverlayController = null;
+let libraryOverlayController = null;
+let workspacePersistenceController = null;
 let suggestionAnalysisTimer = null;
 let suggestionAnalysisInFlight = false;
 let suggestionAnalysisQueued = false;
-let libraryDropDragState = null;
-let viewportDockDragState = null;
-let viewportDockGlowLeft = null;
-let viewportDockGlowRight = null;
-let viewportTrashDropTarget = null;
 let storageUsageRefreshTimer = null;
 let storageUsageRefreshInFlight = false;
 let storageUsageRefreshQueued = false;
@@ -241,7 +244,6 @@ let lastDocumentUiRenderKey = "";
 let researchCaptures = [];
 
 let restoringContext = false;
-let persistTimer = null;
 let widgetHeavySyncTimer = null;
 let hasShownWorkspaceStorageWarning = false;
 let onboardingStateService = createOnboardingStateService();
@@ -1027,6 +1029,63 @@ if (typeof runtime.registerFrameListener === "function") {
     }
   });
 }
+
+viewportDockOverlayController = createViewportDockOverlayController({
+  runtime,
+  getViewportRect: () => resolveCanvasViewportRect(),
+  isPointerOverLibraryLauncher: (clientX, clientY) => pointerOverLibraryLauncher(clientX, clientY),
+  constants: {
+    edgeZonePx: VIEWPORT_DOCK_EDGE_ZONE_PX,
+    holdMs: VIEWPORT_DOCK_HOLD_MS,
+    marginPx: VIEWPORT_DOCK_MARGIN_PX,
+    metaVersion: VIEWPORT_DOCK_META_VERSION,
+    epsilonWorld: VIEWPORT_DOCK_EPSILON_WORLD,
+    widthRatio: VIEWPORT_DOCK_WIDTH_RATIO,
+    heightRatio: VIEWPORT_DOCK_HEIGHT_RATIO,
+    minWidthPx: VIEWPORT_DOCK_MIN_WIDTH_PX,
+    minHeightPx: VIEWPORT_DOCK_MIN_HEIGHT_PX,
+    contentMinZoom: VIEWPORT_DOCK_CONTENT_MIN_ZOOM,
+    contentMaxZoom: VIEWPORT_DOCK_CONTENT_MAX_ZOOM,
+  },
+  onDockCommitted: () => {
+    triggerWidgetHaptic("soft");
+    updateWidgetUi({ coalesceHeavy: true });
+  },
+});
+
+libraryOverlayController = createLibraryOverlayController({
+  runtime,
+  getViewportRect: () => resolveCanvasViewportRect(),
+  pointerOverLibraryLauncher: (clientX, clientY) => pointerOverLibraryLauncher(clientX, clientY),
+  setLibraryDropTargetState: ({ active, over }) => {
+    setLibraryDropTargetState({ active, over });
+  },
+  showLibraryDropFeedback: ({ kind, message }) => {
+    showLibraryDropFeedback({ kind, message });
+  },
+  addWidgetToLibraryFromDrag: async (widget) => addWidgetToNotebookLibraryFromDrag(widget),
+  animateWidgetBackToOrigin: async (widget, originPosition) =>
+    animateWidgetBackToOrigin(widget, originPosition),
+  onDeleteWidget: (widgetId) => {
+    runtime.removeWidgetById(widgetId, { reason: "drag-trash-delete" });
+    if (runtime.getSelectedWidgetId() === widgetId) {
+      runtime.setSelectedWidgetId(null);
+    }
+    if (runtime.getFocusedWidgetId() === widgetId) {
+      runtime.setFocusedWidgetId(null);
+    }
+  },
+  onAfterDropMutation: () => {
+    updateWidgetUi({ coalesceHeavy: true });
+  },
+  triggerDeleteHaptic: () => {
+    triggerWidgetHaptic("delete");
+  },
+  constants: {
+    trashTargetSizePx: WIDGET_TRASH_TARGET_SIZE_PX,
+    trashTargetMarginPx: WIDGET_TRASH_TARGET_MARGIN_PX,
+  },
+});
 
 function resolveViewportBottomPx() {
   const visualViewport = window.visualViewport;
@@ -3228,25 +3287,6 @@ function toggleWidgetPinFromContextMenu(widget) {
   return true;
 }
 
-function ensureViewportDockGlowElements() {
-  if (!(document.body instanceof HTMLElement)) {
-    return false;
-  }
-  if (!(viewportDockGlowLeft instanceof HTMLElement)) {
-    viewportDockGlowLeft = document.createElement("div");
-    viewportDockGlowLeft.className = "viewport-dock-glow viewport-dock-glow--left";
-    viewportDockGlowLeft.hidden = true;
-    document.body.append(viewportDockGlowLeft);
-  }
-  if (!(viewportDockGlowRight instanceof HTMLElement)) {
-    viewportDockGlowRight = document.createElement("div");
-    viewportDockGlowRight.className = "viewport-dock-glow viewport-dock-glow--right";
-    viewportDockGlowRight.hidden = true;
-    document.body.append(viewportDockGlowRight);
-  }
-  return true;
-}
-
 function resolveCanvasViewportRect() {
   if (!(canvas instanceof HTMLCanvasElement)) {
     return null;
@@ -3259,445 +3299,27 @@ function resolveCanvasViewportRect() {
 }
 
 function syncViewportDockGlowLayout() {
-  if (!ensureViewportDockGlowElements()) {
-    return;
-  }
-  const rect = resolveCanvasViewportRect();
-  if (!rect) {
-    return;
-  }
-  for (const element of [viewportDockGlowLeft, viewportDockGlowRight]) {
-    if (!(element instanceof HTMLElement)) {
-      continue;
-    }
-    element.style.top = `${Math.round(rect.top)}px`;
-    element.style.height = `${Math.round(rect.height)}px`;
-    element.style.width = `${VIEWPORT_DOCK_EDGE_ZONE_PX}px`;
-  }
-  if (viewportDockGlowLeft instanceof HTMLElement) {
-    viewportDockGlowLeft.style.left = `${Math.round(rect.left)}px`;
-  }
-  if (viewportDockGlowRight instanceof HTMLElement) {
-    viewportDockGlowRight.style.left = `${Math.round(rect.right - VIEWPORT_DOCK_EDGE_ZONE_PX)}px`;
-  }
-}
-
-function setViewportDockGlowState({
-  active = false,
-  overLeft = false,
-  overRight = false,
-  armedLeft = false,
-  armedRight = false,
-} = {}) {
-  if (!ensureViewportDockGlowElements()) {
-    return;
-  }
-  syncViewportDockGlowLayout();
-  for (const element of [viewportDockGlowLeft, viewportDockGlowRight]) {
-    if (!(element instanceof HTMLElement)) {
-      continue;
-    }
-    element.hidden = !active;
-    element.dataset.active = active ? "true" : "false";
-  }
-  if (viewportDockGlowLeft instanceof HTMLElement) {
-    viewportDockGlowLeft.dataset.over = overLeft ? "true" : "false";
-    viewportDockGlowLeft.dataset.armed = armedLeft ? "true" : "false";
-  }
-  if (viewportDockGlowRight instanceof HTMLElement) {
-    viewportDockGlowRight.dataset.over = overRight ? "true" : "false";
-    viewportDockGlowRight.dataset.armed = armedRight ? "true" : "false";
-  }
-}
-
-function clearViewportDockHoldTimer(state = viewportDockDragState) {
-  if (!state || !Number.isFinite(state.holdTimer)) {
-    return;
-  }
-  window.clearTimeout(state.holdTimer);
-  state.holdTimer = null;
-}
-
-function getViewportDockSideFromPointer(clientX, clientY) {
-  const rect = resolveCanvasViewportRect();
-  if (!rect) {
-    return null;
-  }
-  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
-    return null;
-  }
-  if (clientY < rect.top || clientY > rect.bottom) {
-    return null;
-  }
-  if (clientX <= rect.left + VIEWPORT_DOCK_EDGE_ZONE_PX) {
-    return "left";
-  }
-  if (clientX >= rect.right - VIEWPORT_DOCK_EDGE_ZONE_PX) {
-    return "right";
-  }
-  return null;
+  viewportDockOverlayController?.syncLayout();
 }
 
 function normalizeViewportDockMetadata(candidate) {
-  if (!candidate || typeof candidate !== "object") {
-    return null;
-  }
-  const normalizeDockView = (viewCandidate) => {
-    const viewSource = viewCandidate && typeof viewCandidate === "object" ? viewCandidate : {};
-    return {
-      zoom: clamp(
-        Number.isFinite(Number(viewSource.zoom)) ? Number(viewSource.zoom) : 1,
-        VIEWPORT_DOCK_CONTENT_MIN_ZOOM,
-        VIEWPORT_DOCK_CONTENT_MAX_ZOOM,
-      ),
-      offsetXWorld: Number.isFinite(Number(viewSource.offsetXWorld)) ? Number(viewSource.offsetXWorld) : 0,
-      offsetYWorld: Number.isFinite(Number(viewSource.offsetYWorld)) ? Number(viewSource.offsetYWorld) : 0,
-    };
-  };
-  const side = candidate.side === "right" ? "right" : candidate.side === "left" ? "left" : null;
-  if (!side) {
-    return null;
-  }
-  const offsetTopPx = Math.max(0, Number(candidate.offsetTopPx) || 0);
-  const widthRatio = VIEWPORT_DOCK_WIDTH_RATIO;
-  const heightRatio = VIEWPORT_DOCK_HEIGHT_RATIO;
-  const restoreWidthWorld = Number(candidate.restoreWidthWorld);
-  const restoreHeightWorld = Number(candidate.restoreHeightWorld);
-  return {
-    side,
-    offsetTopPx,
-    widthRatio,
-    heightRatio,
-    restoreWidthWorld:
-      Number.isFinite(restoreWidthWorld) && restoreWidthWorld > 0 ? restoreWidthWorld : null,
-    restoreHeightWorld:
-      Number.isFinite(restoreHeightWorld) && restoreHeightWorld > 0 ? restoreHeightWorld : null,
-    view: normalizeDockView(candidate.view),
-    version: VIEWPORT_DOCK_META_VERSION,
-  };
+  return viewportDockOverlayController?.normalizeDockMetadata(candidate) ?? null;
 }
 
 function isWidgetViewportDocked(widget) {
-  return Boolean(normalizeViewportDockMetadata(widget?.metadata?.viewportDock));
+  return Boolean(viewportDockOverlayController?.isWidgetDocked(widget));
 }
 
 function applyViewportDockToWidget(widget, { camera = runtime.camera, viewportRect = resolveCanvasViewportRect() } = {}) {
-  if (!widget || !camera || !viewportRect) {
-    return false;
-  }
-  const dock = normalizeViewportDockMetadata(widget.metadata?.viewportDock);
-  if (!dock) {
-    return false;
-  }
-
-  const usableWidth = Math.max(48, viewportRect.width - VIEWPORT_DOCK_MARGIN_PX * 2);
-  const usableHeight = Math.max(48, viewportRect.height - VIEWPORT_DOCK_MARGIN_PX * 2);
-  const widthPx = clamp(
-    viewportRect.width * dock.widthRatio,
-    VIEWPORT_DOCK_MIN_WIDTH_PX,
-    usableWidth,
-  );
-  const heightPx = clamp(
-    viewportRect.height * dock.heightRatio,
-    VIEWPORT_DOCK_MIN_HEIGHT_PX,
-    usableHeight,
-  );
-  const yPx = Math.min(
-    Math.max(dock.offsetTopPx, VIEWPORT_DOCK_MARGIN_PX),
-    Math.max(VIEWPORT_DOCK_MARGIN_PX, viewportRect.height - heightPx - VIEWPORT_DOCK_MARGIN_PX),
-  );
-  const xPx =
-    dock.side === "left"
-      ? VIEWPORT_DOCK_MARGIN_PX
-      : Math.max(VIEWPORT_DOCK_MARGIN_PX, viewportRect.width - widthPx - VIEWPORT_DOCK_MARGIN_PX);
-
-  const zoom = Math.max(0.25, camera.zoom);
-  const nextWorld = camera.screenToWorld(xPx, yPx);
-  const nextWidthWorld = widthPx / zoom;
-  const nextHeightWorld = heightPx / zoom;
-
-  let changed = false;
-  if (
-    !Number.isFinite(widget.position?.x) ||
-    Math.abs(widget.position.x - nextWorld.x) > VIEWPORT_DOCK_EPSILON_WORLD
-  ) {
-    widget.position.x = nextWorld.x;
-    changed = true;
-  }
-  if (
-    !Number.isFinite(widget.position?.y) ||
-    Math.abs(widget.position.y - nextWorld.y) > VIEWPORT_DOCK_EPSILON_WORLD
-  ) {
-    widget.position.y = nextWorld.y;
-    changed = true;
-  }
-  if (
-    !Number.isFinite(widget.size?.width) ||
-    Math.abs(widget.size.width - nextWidthWorld) > VIEWPORT_DOCK_EPSILON_WORLD
-  ) {
-    widget.size.width = nextWidthWorld;
-    changed = true;
-  }
-  if (
-    !Number.isFinite(widget.size?.height) ||
-    Math.abs(widget.size.height - nextHeightWorld) > VIEWPORT_DOCK_EPSILON_WORLD
-  ) {
-    widget.size.height = nextHeightWorld;
-    changed = true;
-  }
-
-  const normalizedDock = {
-    side: dock.side,
-    offsetTopPx: yPx,
-    widthRatio: VIEWPORT_DOCK_WIDTH_RATIO,
-    heightRatio: VIEWPORT_DOCK_HEIGHT_RATIO,
-    restoreWidthWorld: dock.restoreWidthWorld,
-    restoreHeightWorld: dock.restoreHeightWorld,
-    view: dock.view,
-    version: VIEWPORT_DOCK_META_VERSION,
-  };
-  const existingDock = widget.metadata?.viewportDock;
-  if (
-    !existingDock ||
-    existingDock.side !== normalizedDock.side ||
-    Math.abs((Number(existingDock.offsetTopPx) || 0) - normalizedDock.offsetTopPx) > 0.5 ||
-    Math.abs((Number(existingDock.widthRatio) || VIEWPORT_DOCK_WIDTH_RATIO) - normalizedDock.widthRatio) > 0.001 ||
-    Math.abs((Number(existingDock.heightRatio) || VIEWPORT_DOCK_HEIGHT_RATIO) - normalizedDock.heightRatio) > 0.001 ||
-    Math.abs((Number(existingDock.restoreWidthWorld) || 0) - (Number(normalizedDock.restoreWidthWorld) || 0)) > 0.001 ||
-    Math.abs((Number(existingDock.restoreHeightWorld) || 0) - (Number(normalizedDock.restoreHeightWorld) || 0)) > 0.001 ||
-    Math.abs((Number(existingDock?.view?.zoom) || 1) - (Number(normalizedDock?.view?.zoom) || 1)) > 0.0001 ||
-    Math.abs((Number(existingDock?.view?.offsetXWorld) || 0) - (Number(normalizedDock?.view?.offsetXWorld) || 0)) > 0.001 ||
-    Math.abs((Number(existingDock?.view?.offsetYWorld) || 0) - (Number(normalizedDock?.view?.offsetYWorld) || 0)) > 0.001 ||
-    Number(existingDock.version) !== VIEWPORT_DOCK_META_VERSION
-  ) {
-    widget.metadata = {
-      ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
-      viewportDock: normalizedDock,
-    };
-    changed = true;
-  }
-
-  return changed;
+  return viewportDockOverlayController?.applyToWidget(widget, { camera, viewportRect }) ?? false;
 }
 
 function applyViewportDockToAllWidgets() {
-  const viewportRect = resolveCanvasViewportRect();
-  if (!viewportRect) {
-    return false;
-  }
-  const widgets = runtime.listWidgets();
-  let changed = false;
-  for (const widget of widgets) {
-    if (!widget || !isWidgetViewportDocked(widget)) {
-      continue;
-    }
-    if (applyViewportDockToWidget(widget, { viewportRect })) {
-      changed = true;
-    }
-  }
-  return changed;
-}
-
-function dockWidgetToViewportSide(widget, side, pointerClientY = null) {
-  if (!widget || (side !== "left" && side !== "right")) {
-    return false;
-  }
-  const viewportRect = resolveCanvasViewportRect();
-  if (!viewportRect) {
-    return false;
-  }
-  const camera = runtime.camera;
-  if (!camera) {
-    return false;
-  }
-
-  const widthPx = clamp(
-    viewportRect.width * VIEWPORT_DOCK_WIDTH_RATIO,
-    VIEWPORT_DOCK_MIN_WIDTH_PX,
-    Math.max(VIEWPORT_DOCK_MIN_WIDTH_PX, viewportRect.width - VIEWPORT_DOCK_MARGIN_PX * 2),
-  );
-  const heightPx = clamp(
-    viewportRect.height * VIEWPORT_DOCK_HEIGHT_RATIO,
-    VIEWPORT_DOCK_MIN_HEIGHT_PX,
-    Math.max(VIEWPORT_DOCK_MIN_HEIGHT_PX, viewportRect.height - VIEWPORT_DOCK_MARGIN_PX * 2),
-  );
-
-  const currentScreen = camera.worldToScreen(widget.position.x, widget.position.y);
-  const fallbackTop = currentScreen.y;
-  const requestedTop = Number.isFinite(pointerClientY)
-    ? pointerClientY - viewportRect.top - heightPx * 0.5
-    : fallbackTop;
-  const offsetTopPx = Math.max(
-    VIEWPORT_DOCK_MARGIN_PX,
-    Math.min(requestedTop, viewportRect.height - heightPx - VIEWPORT_DOCK_MARGIN_PX),
-  );
-
-  const metadata = {
-    ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
-  };
-  delete metadata.pinned;
-  const existingDock = normalizeViewportDockMetadata(metadata.viewportDock);
-  const restoreWidthWorld = existingDock?.restoreWidthWorld ?? Math.max(20, Number(widget.size?.width) || 20);
-  const restoreHeightWorld = existingDock?.restoreHeightWorld ?? Math.max(20, Number(widget.size?.height) || 20);
-  metadata.viewportDock = {
-    side,
-    offsetTopPx,
-    widthRatio: VIEWPORT_DOCK_WIDTH_RATIO,
-    heightRatio: VIEWPORT_DOCK_HEIGHT_RATIO,
-    restoreWidthWorld,
-    restoreHeightWorld,
-    view: existingDock?.view ?? { zoom: 1, offsetXWorld: 0, offsetYWorld: 0 },
-    version: VIEWPORT_DOCK_META_VERSION,
-  };
-  widget.metadata = metadata;
-  runtime.bringWidgetToFront(widget.id);
-  runtime.setFocusedWidgetId(widget.id);
-  runtime.setSelectedWidgetId(widget.id);
-  return applyViewportDockToWidget(widget, { viewportRect, camera });
-}
-
-function clearViewportDockTracking() {
-  if (!viewportDockDragState) {
-    setViewportDockGlowState({ active: false });
-    return;
-  }
-  clearViewportDockHoldTimer(viewportDockDragState);
-  viewportDockDragState = null;
-  setViewportDockGlowState({ active: false });
-}
-
-function beginViewportDockTracking(payload) {
-  if (!payload || payload.mode !== "move" || !payload.widgetId) {
-    clearViewportDockTracking();
-    return;
-  }
-  const initialSide = pointerOverLibraryLauncher(payload.clientX, payload.clientY)
-    ? null
-    : getViewportDockSideFromPointer(payload.clientX, payload.clientY);
-  viewportDockDragState = {
-    widgetId: payload.widgetId,
-    pointerId: Number.isFinite(payload.pointerId) ? payload.pointerId : null,
-    side: initialSide,
-    armedSide: null,
-    holdTimer: null,
-  };
-  if (initialSide) {
-    viewportDockDragState.holdTimer = window.setTimeout(() => {
-      if (!viewportDockDragState || viewportDockDragState.side !== initialSide) {
-        return;
-      }
-      viewportDockDragState.armedSide = initialSide;
-      setViewportDockGlowState({
-        active: true,
-        overLeft: initialSide === "left",
-        overRight: initialSide === "right",
-        armedLeft: initialSide === "left",
-        armedRight: initialSide === "right",
-      });
-    }, VIEWPORT_DOCK_HOLD_MS);
-  }
-  setViewportDockGlowState({
-    active: true,
-    overLeft: initialSide === "left",
-    overRight: initialSide === "right",
-    armedLeft: false,
-    armedRight: false,
-  });
-}
-
-function updateViewportDockTracking(payload) {
-  if (!viewportDockDragState || !payload || payload.phase !== "move") {
-    return;
-  }
-  if (payload.widgetId !== viewportDockDragState.widgetId) {
-    return;
-  }
-  const nextSide = pointerOverLibraryLauncher(payload.clientX, payload.clientY)
-    ? null
-    : getViewportDockSideFromPointer(payload.clientX, payload.clientY);
-  if (nextSide !== viewportDockDragState.side) {
-    clearViewportDockHoldTimer(viewportDockDragState);
-    viewportDockDragState.side = nextSide;
-    viewportDockDragState.armedSide = null;
-    if (nextSide) {
-      viewportDockDragState.holdTimer = window.setTimeout(() => {
-        if (!viewportDockDragState || viewportDockDragState.side !== nextSide) {
-          return;
-        }
-        viewportDockDragState.armedSide = nextSide;
-        setViewportDockGlowState({
-          active: true,
-          overLeft: nextSide === "left",
-          overRight: nextSide === "right",
-          armedLeft: nextSide === "left",
-          armedRight: nextSide === "right",
-        });
-      }, VIEWPORT_DOCK_HOLD_MS);
-    }
-  }
-  setViewportDockGlowState({
-    active: true,
-    overLeft: nextSide === "left",
-    overRight: nextSide === "right",
-    armedLeft: viewportDockDragState.armedSide === "left",
-    armedRight: viewportDockDragState.armedSide === "right",
-  });
-}
-
-function endViewportDockTracking(payload) {
-  if (!viewportDockDragState || !payload || payload.phase !== "end") {
-    clearViewportDockTracking();
-    return null;
-  }
-  const state = { ...viewportDockDragState };
-  clearViewportDockTracking();
-  if (payload.widgetId !== state.widgetId) {
-    return null;
-  }
-  if (pointerOverLibraryLauncher(payload.clientX, payload.clientY)) {
-    return null;
-  }
-  const releaseSide = getViewportDockSideFromPointer(payload.clientX, payload.clientY);
-  if (!releaseSide || releaseSide !== state.armedSide) {
-    return null;
-  }
-  return releaseSide;
+  return viewportDockOverlayController?.applyToAllWidgets() ?? false;
 }
 
 function handleWidgetDragStateForViewportDock(payload) {
-  if (!payload || !payload.widgetId) {
-    return;
-  }
-  if (payload.mode !== "move") {
-    if (payload.phase === "start" || payload.phase === "end") {
-      clearViewportDockTracking();
-    }
-    return;
-  }
-  if (payload.phase === "start") {
-    beginViewportDockTracking(payload);
-    return;
-  }
-  if (payload.phase === "move") {
-    updateViewportDockTracking(payload);
-    return;
-  }
-  if (payload.phase !== "end") {
-    return;
-  }
-  const dockSide = endViewportDockTracking(payload);
-  if (!dockSide) {
-    return;
-  }
-  const widget = runtime.getWidgetById(payload.widgetId);
-  if (!widget) {
-    return;
-  }
-  const changed = dockWidgetToViewportSide(widget, dockSide, payload.clientY);
-  if (changed) {
-    triggerWidgetHaptic("soft");
-    updateWidgetUi({ coalesceHeavy: true });
-  }
+  viewportDockOverlayController?.onWidgetDragState(payload);
 }
 
 function setLibraryDropTargetState({ active = false, over = false } = {}) {
@@ -3712,62 +3334,8 @@ function setLibraryDropTargetState({ active = false, over = false } = {}) {
   referenceManagerLauncher.dataset.dropOver = active && over ? "true" : "false";
 }
 
-function ensureWidgetTrashDropTargetElement() {
-  if (!(document.body instanceof HTMLElement)) {
-    return false;
-  }
-  if (!(viewportTrashDropTarget instanceof HTMLButtonElement)) {
-    viewportTrashDropTarget = document.createElement("button");
-    viewportTrashDropTarget.type = "button";
-    viewportTrashDropTarget.className = "widget-trash-drop-target";
-    viewportTrashDropTarget.hidden = true;
-    viewportTrashDropTarget.tabIndex = -1;
-    viewportTrashDropTarget.setAttribute("aria-hidden", "true");
-    viewportTrashDropTarget.setAttribute("aria-label", "Drop widget to delete");
-    viewportTrashDropTarget.textContent = "X";
-    document.body.append(viewportTrashDropTarget);
-  }
-  return true;
-}
-
 function syncWidgetTrashDropTargetLayout() {
-  if (!ensureWidgetTrashDropTargetElement() || !(viewportTrashDropTarget instanceof HTMLElement)) {
-    return;
-  }
-  const rect = resolveCanvasViewportRect();
-  if (!rect) {
-    return;
-  }
-  const x = rect.left + (rect.width - WIDGET_TRASH_TARGET_SIZE_PX) * 0.5;
-  const y = rect.bottom - WIDGET_TRASH_TARGET_SIZE_PX - WIDGET_TRASH_TARGET_MARGIN_PX;
-  viewportTrashDropTarget.style.left = `${Math.round(x)}px`;
-  viewportTrashDropTarget.style.top = `${Math.round(y)}px`;
-}
-
-function setWidgetTrashDropTargetState({ active = false, over = false } = {}) {
-  if (!ensureWidgetTrashDropTargetElement() || !(viewportTrashDropTarget instanceof HTMLElement)) {
-    return;
-  }
-  syncWidgetTrashDropTargetLayout();
-  viewportTrashDropTarget.hidden = !active;
-  viewportTrashDropTarget.dataset.active = active ? "true" : "false";
-  viewportTrashDropTarget.dataset.over = active && over ? "true" : "false";
-}
-
-function pointerOverWidgetTrashTarget(clientX, clientY) {
-  if (!(viewportTrashDropTarget instanceof HTMLElement)) {
-    return false;
-  }
-  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
-    return false;
-  }
-  const rect = viewportTrashDropTarget.getBoundingClientRect();
-  return (
-    clientX >= rect.left &&
-    clientX <= rect.right &&
-    clientY >= rect.top &&
-    clientY <= rect.bottom
-  );
+  libraryOverlayController?.syncLayout();
 }
 
 function showLibraryDropFeedback({ kind = "deny", message = "" } = {}) {
@@ -4043,116 +3611,7 @@ async function addWidgetToNotebookLibraryFromDrag(widget) {
 
 function handleWidgetDragStateForLibrary(payload) {
   handleWidgetDragStateForViewportDock(payload);
-  if (!payload || !payload.widgetId || (payload.mode !== "move" && payload.mode !== "resize")) {
-    return;
-  }
-
-  if (payload.phase === "start") {
-    const draggedWidget = runtime.getWidgetById(payload.widgetId);
-    libraryDropDragState = {
-      widgetId: payload.widgetId,
-      mode: payload.mode,
-      overLibrary: payload.mode === "move" && pointerOverLibraryLauncher(payload.clientX, payload.clientY),
-      overTrash: payload.mode === "move" && pointerOverWidgetTrashTarget(payload.clientX, payload.clientY),
-      originPosition:
-        draggedWidget && Number.isFinite(draggedWidget.position?.x) && Number.isFinite(draggedWidget.position?.y)
-          ? {
-              x: draggedWidget.position.x,
-              y: draggedWidget.position.y,
-            }
-          : null,
-    };
-    setLibraryDropTargetState({
-      active: payload.mode === "move",
-      over: payload.mode === "move" && libraryDropDragState.overLibrary,
-    });
-    setWidgetTrashDropTargetState({
-      active: payload.mode === "move",
-      over: payload.mode === "move" && libraryDropDragState.overTrash,
-    });
-    return;
-  }
-
-  if (!libraryDropDragState || libraryDropDragState.widgetId !== payload.widgetId) {
-    return;
-  }
-
-  if (payload.phase === "move") {
-    const overLibrary = libraryDropDragState.mode === "move" && pointerOverLibraryLauncher(payload.clientX, payload.clientY);
-    const overTrash = libraryDropDragState.mode === "move" && pointerOverWidgetTrashTarget(payload.clientX, payload.clientY);
-    libraryDropDragState.overLibrary = overLibrary;
-    libraryDropDragState.overTrash = overTrash;
-    setLibraryDropTargetState({
-      active: libraryDropDragState.mode === "move",
-      over: overLibrary,
-    });
-    setWidgetTrashDropTargetState({
-      active: libraryDropDragState.mode === "move",
-      over: overTrash,
-    });
-    return;
-  }
-
-  if (payload.phase === "end") {
-    const dragState = { ...libraryDropDragState };
-    libraryDropDragState = null;
-
-    if (dragState.mode !== "move") {
-      setLibraryDropTargetState({ active: false, over: false });
-      setWidgetTrashDropTargetState({ active: false, over: false });
-      return;
-    }
-    const hasPointerLocation = Number.isFinite(payload.clientX) && Number.isFinite(payload.clientY);
-    const droppedOverTrash = hasPointerLocation
-      ? pointerOverWidgetTrashTarget(payload.clientX, payload.clientY)
-      : Boolean(dragState.overTrash);
-    const droppedOverLibrary = hasPointerLocation
-      ? pointerOverLibraryLauncher(payload.clientX, payload.clientY)
-      : Boolean(dragState.overLibrary);
-    setLibraryDropTargetState({ active: false, over: false });
-    setWidgetTrashDropTargetState({ active: false, over: false });
-    if (droppedOverTrash) {
-      runtime.removeWidgetById(dragState.widgetId, { reason: "drag-trash-delete" });
-      if (runtime.getSelectedWidgetId() === dragState.widgetId) {
-        runtime.setSelectedWidgetId(null);
-      }
-      if (runtime.getFocusedWidgetId() === dragState.widgetId) {
-        runtime.setFocusedWidgetId(null);
-      }
-      triggerWidgetHaptic("delete");
-      updateWidgetUi({ coalesceHeavy: true });
-      return;
-    }
-    if (!droppedOverLibrary) {
-      return;
-    }
-
-    const widget = runtime.getWidgetById(dragState.widgetId);
-    if (!widget) {
-      return;
-    }
-
-    void addWidgetToNotebookLibraryFromDrag(widget)
-      .then(async (result) => {
-        await animateWidgetBackToOrigin(widget, dragState.originPosition);
-        updateWidgetUi({ coalesceHeavy: true });
-        if (result.ok) {
-          showLibraryDropFeedback({ kind: "success", message: "Added to Library" });
-          return;
-        }
-        if (result.reason === "duplicate") {
-          showLibraryDropFeedback({ kind: "deny", message: "Already in Library" });
-          return;
-        }
-        showLibraryDropFeedback({ kind: "deny", message: "Could not add to Library" });
-      })
-      .catch(async (error) => {
-        console.error("Failed to add widget to library from drag.", error);
-        await animateWidgetBackToOrigin(widget, dragState.originPosition);
-        updateWidgetUi({ coalesceHeavy: true });
-        showLibraryDropFeedback({ kind: "deny", message: "Could not add to Library" });
-      });
-  }
+  libraryOverlayController?.onWidgetDragState(payload);
 }
 
 async function toggleWidgetLibraryFromContextMenu(widget) {
@@ -5134,73 +4593,15 @@ function scheduleSuggestionAnalysis({ immediate = false } = {}) {
 }
 
 function persistActiveWorkspace() {
-  const scopeId = workspaceScopeId();
-  if (!contextWorkspaceStore || !contextStore || !scopeId || restoringContext) {
-    return false;
-  }
-
-  pruneActiveDocuments();
-  syncPdfDocumentMetadata();
-  const persisted = documentManager.toPersistencePayload();
-
-  const saved = contextWorkspaceStore.saveFromRuntime({
-    contextId: scopeId,
-    runtime,
-    researchCaptures,
-    suggestions: suggestionStore.toPersistencePayload({
-      scopeId,
-      sectionId: activeSectionId,
-    }),
-    documents: persisted.documents,
-    documentBindings: persisted.documentBindings,
-    activeDocumentId: persisted.activeDocumentId,
-    lastPdfWidgetId,
-    lastReferenceWidgetId,
-  });
-  if (saved) {
-    hasShownWorkspaceStorageWarning = false;
-    contextStore.touchActiveContext();
-    return true;
-  }
-
-  if (!hasShownWorkspaceStorageWarning) {
-    hasShownWorkspaceStorageWarning = true;
-    requestStorageCleanupNow();
-    const usageLabel =
-      lastStorageEstimate && lastStorageEstimate.hasQuota
-        ? `${formatMegabytes(lastStorageEstimate.usage)} / ${formatMegabytes(lastStorageEstimate.quota)}`
-        : "Unknown";
-    void showNoticeDialog(
-      `Storage is full. Recent PDF/widget changes may not persist until space is freed.\nCurrent usage: ${usageLabel}\nTip: delete unused library PDFs/snips, then retry.`,
-      {
-      title: "Storage",
-      },
-    );
-  }
-  return false;
+  return workspacePersistenceController?.persistNow?.() ?? false;
 }
 
 function flushWorkspacePersist() {
-  if (persistTimer) {
-    window.clearTimeout(persistTimer);
-    persistTimer = null;
-  }
-  return persistActiveWorkspace();
+  return workspacePersistenceController?.flushPersist?.() ?? false;
 }
 
 function scheduleWorkspacePersist() {
-  if (!contextWorkspaceStore || !contextStore || !workspaceScopeId() || restoringContext) {
-    return;
-  }
-
-  if (persistTimer) {
-    window.clearTimeout(persistTimer);
-  }
-
-  persistTimer = window.setTimeout(() => {
-    persistTimer = null;
-    persistActiveWorkspace();
-  }, 220);
+  workspacePersistenceController?.schedulePersist?.({ delayMs: 220 });
 }
 
 function runWidgetHeavySync() {
@@ -7353,65 +6754,6 @@ async function importWidgetsFromAnotherContext() {
 }
 
 function wireBaseEventHandlers() {
-  let lastTouchLikeInteractionAt = 0;
-  const markTouchLikeInteraction = () => {
-    lastTouchLikeInteractionAt = Date.now();
-  };
-
-  window.addEventListener(
-    "pointerdown",
-    (event) => {
-      if (event.pointerType === "touch" || event.pointerType === "pen") {
-        markTouchLikeInteraction();
-      }
-    },
-    { capture: true, passive: true },
-  );
-  window.addEventListener(
-    "touchstart",
-    () => {
-      markTouchLikeInteraction();
-    },
-    { capture: true, passive: true },
-  );
-  window.addEventListener(
-    "contextmenu",
-    (event) => {
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (isTypingTarget(target)) {
-        return;
-      }
-
-      const isMouseSecondaryAction = event.button === 2 || event.which === 3;
-      const fromTouchInput =
-        event.pointerType === "touch" ||
-        event.pointerType === "pen" ||
-        Boolean(event.sourceCapabilities?.firesTouchEvents);
-      const isRecentTouch = Date.now() - lastTouchLikeInteractionAt < 700;
-      if (isMouseSecondaryAction && !fromTouchInput) {
-        return;
-      }
-      if (!fromTouchInput && !isRecentTouch) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-    },
-    { capture: true },
-  );
-  document.addEventListener(
-    "selectstart",
-    (event) => {
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (isTypingTarget(target)) {
-        return;
-      }
-      event.preventDefault();
-    },
-    { capture: true },
-  );
-
   const closeToolsMenu = () => {
     if (!toolsPanelOpen) {
       return;
@@ -7420,6 +6762,39 @@ function wireBaseEventHandlers() {
     safeLocalStorageSetItem("notes-app.tools-panel.open", "0");
     syncToolsUi();
   };
+
+  if (!inputRoutingController) {
+    inputRoutingController = createInputRoutingController({
+      canvas,
+      isTypingTarget: (target) => isTypingTarget(target),
+      isInkToolDropdownOpen: () => isInkToolDropdownOpen(),
+      setInkToolDropdownOpen: (nextOpen) => setInkToolDropdownOpen(nextOpen),
+      isWithinInkToolDropdown: (target) => isWithinInkToolDropdown(target),
+      isInkStyleDropdownOpen: () => isInkStyleDropdownOpen(),
+      setInkStyleDropdownOpen: (nextOpen) => setInkStyleDropdownOpen(nextOpen),
+      isWithinInkStyleDropdown: (target) => isWithinInkStyleDropdown(target),
+      isToolsPanelOpen: () => toolsPanelOpen,
+      isTargetInsideToolsUi: (target) =>
+        (controlsPanel instanceof HTMLElement && controlsPanel.contains(target)) ||
+        (toggleToolsButton instanceof HTMLElement && toggleToolsButton.contains(target)),
+      closeToolsPanel: () => closeToolsMenu(),
+      onWindowResize: () => {
+        if (toolsPanelOpen) {
+          syncToolsUi();
+        }
+      },
+      onViewportSyncRequested: () => {
+        scheduleCanvasViewportSync();
+      },
+      onInkCursorPointerEvent: (event) => {
+        syncInkCursorPill(event);
+      },
+      onInkCursorHide: () => {
+        hideInkCursorPill();
+      },
+    });
+  }
+  inputRoutingController.attach();
 
   toggleToolsButton?.addEventListener("click", () => {
     toolsPanelOpen = !toolsPanelOpen;
@@ -7432,87 +6807,6 @@ function wireBaseEventHandlers() {
     }
     snipTool.disarm();
   });
-
-  window.addEventListener("pointerdown", (event) => {
-    const target = event.target;
-    if (!(target instanceof Node)) {
-      return;
-    }
-
-    if (isInkToolDropdownOpen() && !isWithinInkToolDropdown(target)) {
-      setInkToolDropdownOpen(false);
-    }
-    if (isInkStyleDropdownOpen() && !isWithinInkStyleDropdown(target)) {
-      setInkStyleDropdownOpen(false);
-    }
-
-    if (toolsPanelOpen) {
-      if (
-        (controlsPanel instanceof HTMLElement && controlsPanel.contains(target)) ||
-        (toggleToolsButton instanceof HTMLElement && toggleToolsButton.contains(target))
-      ) {
-        return;
-      }
-
-      closeToolsMenu();
-    }
-  });
-  window.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") {
-      return;
-    }
-    if (isInkToolDropdownOpen()) {
-      setInkToolDropdownOpen(false);
-    }
-    if (isInkStyleDropdownOpen()) {
-      setInkStyleDropdownOpen(false);
-    }
-  });
-  window.addEventListener("resize", () => {
-    if (toolsPanelOpen) {
-      syncToolsUi();
-    }
-    scheduleCanvasViewportSync();
-  });
-  window.addEventListener("orientationchange", () => {
-    scheduleCanvasViewportSync();
-  });
-  canvas.addEventListener(
-    "pointermove",
-    (event) => {
-      syncInkCursorPill(event);
-    },
-    { passive: true },
-  );
-  canvas.addEventListener(
-    "pointerleave",
-    () => {
-      hideInkCursorPill();
-    },
-    { passive: true },
-  );
-  canvas.addEventListener(
-    "pointerup",
-    (event) => {
-      syncInkCursorPill(event);
-    },
-    { passive: true },
-  );
-  canvas.addEventListener(
-    "pointercancel",
-    () => {
-      hideInkCursorPill();
-    },
-    { passive: true },
-  );
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", scheduleCanvasViewportSync, {
-      passive: true,
-    });
-    window.visualViewport.addEventListener("scroll", scheduleCanvasViewportSync, {
-      passive: true,
-    });
-  }
 
   toggleUiModeButton?.addEventListener("click", () => {
     const next = toggleUiMode(uiModeState);
@@ -8293,6 +7587,35 @@ async function setupContextFeatures() {
   sectionsStore.ensureNotebook(activeContextId);
   activeSectionId = sectionsStore.getActiveSectionId(activeContextId);
   documentManager.setContextId(workspaceScopeId());
+
+  workspacePersistenceController = createWorkspacePersistenceController({
+    contextWorkspaceStore,
+    contextStore,
+    runtime,
+    documentManager,
+    suggestionStore,
+    getScopeId: () => workspaceScopeId(),
+    getActiveSectionId: () => activeSectionId,
+    getResearchCaptures: () => researchCaptures,
+    getLastPdfWidgetId: () => lastPdfWidgetId,
+    getLastReferenceWidgetId: () => lastReferenceWidgetId,
+    isRestoringContext: () => restoringContext,
+    onBeforePersist: () => {
+      pruneActiveDocuments();
+      syncPdfDocumentMetadata();
+    },
+    onStoragePressure: () => {
+      requestStorageCleanupNow();
+      const usageLabel =
+        lastStorageEstimate && lastStorageEstimate.hasQuota
+          ? `${formatMegabytes(lastStorageEstimate.usage)} / ${formatMegabytes(lastStorageEstimate.quota)}`
+          : "Unknown";
+      void showNoticeDialog(
+        `Storage is full. Recent PDF/widget changes may not persist until space is freed.\nCurrent usage: ${usageLabel}\nTip: delete unused library PDFs/snips, then retry.`,
+        { title: "Storage" },
+      );
+    },
+  });
 
   const createContextHandler = async () => {
     const name = await showTextPromptDialog({
