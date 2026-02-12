@@ -37,6 +37,7 @@ import { createDocumentPdfRuntime } from "./features/runtime/document-pdf-runtim
 import { createLibraryReferenceRuntime } from "./features/runtime/library-reference-runtime.js";
 import { createKnowledgeRuntime } from "./features/runtime/knowledge-runtime.js";
 import { createOnboardingRuntime } from "./features/runtime/onboarding-runtime.js";
+import { createInkGestureRuntime } from "./features/runtime/ink-gesture-runtime.js";
 import { ALLOWED_CREATION_INTENT_TYPES } from "./features/widget-system/widget-types.js";
 import { createPdfRasterDocumentFromBytes } from "./widgets/pdf/pdf-rasterizer.js";
 
@@ -209,6 +210,7 @@ let documentPdfRuntime = null;
 let libraryReferenceRuntime = null;
 let knowledgeRuntime = null;
 let onboardingRuntime = null;
+let inkGestureRuntime = null;
 let sectionsStore = createNotebookSectionsStore();
 const notebookLibraryStore = createNotebookLibraryStore();
 const notebookDocumentLibraryStore = createNotebookDocumentLibraryStore({
@@ -962,6 +964,57 @@ onboardingRuntime = createOnboardingRuntime({
   createCreationIntent,
   viewportCenterAnchor,
   ensureSearchFeatures,
+});
+inkGestureRuntime = createInkGestureRuntime({
+  runtime,
+  canvas,
+  workspaceScopeId,
+  loadedModules,
+  onLoadedModulesChanged: () => {
+    if (loadedModulesOutput) {
+      loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
+    }
+  },
+  getInkFeature: () => inkFeature,
+  setInkFeature: (feature) => {
+    inkFeature = feature;
+  },
+  getPenGestureController: () => penGestureController,
+  setPenGestureController: (controller) => {
+    penGestureController = controller;
+  },
+  getGesturePrefs: () => gesturePrefs,
+  setGesturePrefs: (prefs) => {
+    gesturePrefs = prefs;
+  },
+  getLastGestureStatus: () => lastGestureStatus,
+  setLastGestureStatus: (status) => {
+    lastGestureStatus = status;
+  },
+  defaultGesturePrefs,
+  normalizeGesturePrefs,
+  normalizeInkTool,
+  normalizeInkColor,
+  normalizeInkThickness,
+  currentInkTool,
+  updateInkUi,
+  updateGestureUi,
+  ensureSearchFeatures,
+  executeCreationFromLasso: (payload) => {
+    void createNoteWidgetFromLassoSelection(payload);
+  },
+  onSearchGesture: () => {
+    onboardingRuntimeSignals.searchOpened = true;
+  },
+  onGestureUsed: () => {
+    onboardingRuntimeSignals.gestureUsed = true;
+  },
+  setInkToggleLabel: (enabled) => {
+    if (enableInkButton instanceof HTMLButtonElement) {
+      enableInkButton.textContent = enabled ? "Ink Enabled" : "Enable Ink";
+    }
+  },
+  scheduleOnboardingRefresh,
 });
 
 viewportDockOverlayController = createViewportDockOverlayController({
@@ -3479,181 +3532,35 @@ async function ensureSearchFeatures() {
 }
 
 async function ensureInkFeature() {
-  if (inkFeature) {
-    return inkFeature;
-  }
-
-  const inkModule = await import("./features/ink/index.js");
-  loadedModules.add("ink");
-  if (loadedModulesOutput) {
-    loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
-  }
-
-  inkFeature = inkModule.createInkFeature({
-    runtime,
-    getActiveContextId: () => workspaceScopeId(),
-    onStateChange: (state) => updateInkUi(state),
-    onCreateNoteFromLasso: (payload) => createNoteWidgetFromLassoSelection(payload),
-  });
-  runtime.bumpWidgetRasterEpoch();
-
-  updateInkUi({
-    activeTool: currentInkTool(),
-    ...(typeof inkFeature.getPenStyle === "function" ? inkFeature.getPenStyle() : {}),
-    enabled: true,
-  });
-
-  if (enableInkButton instanceof HTMLButtonElement) {
-    enableInkButton.textContent = "Ink Enabled";
-  }
-
-  return inkFeature;
+  return inkGestureRuntime.ensureInkFeature();
 }
 
 function setInkEnabled(nextEnabled) {
-  if (!inkFeature || typeof inkFeature.setEnabled !== "function") {
-    return false;
-  }
-
-  const enabled = inkFeature.setEnabled(nextEnabled);
-  updateInkUi({
-    activeTool: currentInkTool(),
-    ...(typeof inkFeature.getPenStyle === "function" ? inkFeature.getPenStyle() : {}),
-    enabled,
-  });
-
-  if (enableInkButton instanceof HTMLButtonElement) {
-    enableInkButton.textContent = enabled ? "Ink Enabled" : "Enable Ink";
-  }
-
-  return enabled;
+  return inkGestureRuntime.setInkEnabled(nextEnabled);
 }
 
 async function toggleInkEnabled() {
-  const feature = await ensureInkFeature();
-  if (!feature || typeof feature.isEnabled !== "function") {
-    return false;
-  }
-  const next = !feature.isEnabled();
-  setInkEnabled(next);
-  return next;
+  return inkGestureRuntime.toggleInkEnabled();
 }
 
 async function toggleInkTool() {
-  const feature = await ensureInkFeature();
-  if (!feature || typeof feature.toggleTool !== "function") {
-    return "pen";
-  }
-
-  const nextTool = normalizeInkTool(feature.toggleTool());
-  updateInkUi({
-    activeTool: nextTool,
-    ...(typeof feature.getPenStyle === "function" ? feature.getPenStyle() : {}),
-    enabled: feature.isEnabled?.() !== false,
-  });
-
-  return nextTool;
+  return inkGestureRuntime.toggleInkTool();
 }
 
 async function selectInkTool(nextTool) {
-  const feature = await ensureInkFeature();
-  if (!feature || typeof feature.setTool !== "function") {
-    return "pen";
-  }
-  const normalized = normalizeInkTool(nextTool);
-  const selected = normalizeInkTool(feature.setTool(normalized));
-  updateInkUi({
-    activeTool: selected,
-    ...(typeof feature.getPenStyle === "function" ? feature.getPenStyle() : {}),
-    enabled: feature.isEnabled?.() !== false,
-  });
-  return selected;
+  return inkGestureRuntime.selectInkTool(nextTool);
 }
 
 async function updatePenStyle({ color = null, thickness = null } = {}) {
-  const feature = await ensureInkFeature();
-  if (!feature) {
-    return { penColor: "#103f78", penThickness: 3 };
-  }
-
-  if (typeof color === "string" && typeof feature.setPenColor === "function") {
-    feature.setPenColor(normalizeInkColor(color));
-  }
-  if (thickness !== null && typeof feature.setPenThickness === "function") {
-    feature.setPenThickness(normalizeInkThickness(thickness));
-  }
-
-  const style =
-    typeof feature.getPenStyle === "function"
-      ? feature.getPenStyle()
-      : { penColor: normalizeInkColor(color), penThickness: normalizeInkThickness(thickness) };
-  updateInkUi({
-    penColor: style.penColor,
-    penThickness: style.penThickness,
-    activeTool: currentInkTool(),
-    enabled: feature.isEnabled?.() !== false,
-  });
-  return style;
+  return inkGestureRuntime.updatePenStyle({ color, thickness });
 }
 
 async function executeGestureAction(actionName) {
-  if (actionName === "select-lasso-tool") {
-    await selectInkTool("lasso");
-    return;
-  }
-
-  if (actionName === "toggle-ink-tool") {
-    await toggleInkTool();
-    return;
-  }
-
-  if (actionName === "toggle-ink-enabled") {
-    await toggleInkEnabled();
-    return;
-  }
-
-  if (actionName === "toggle-search-panel") {
-    const panel = await ensureSearchFeatures();
-    panel.toggle();
-    onboardingRuntimeSignals.searchOpened = true;
-    scheduleOnboardingRefresh(40);
-  }
+  return inkGestureRuntime.executeGestureAction(actionName);
 }
 
 async function ensureGestureFeatures() {
-  if (penGestureController) {
-    return penGestureController;
-  }
-
-  const gestureModule = await import("./features/gestures/pen-gestures.js");
-  loadedModules.add("pen-gestures");
-  if (loadedModulesOutput) {
-    loadedModulesOutput.textContent = Array.from(loadedModules).join(", ");
-  }
-
-  gesturePrefs = normalizeGesturePrefs(gesturePrefs ?? defaultGesturePrefs());
-  updateGestureUi();
-
-  penGestureController = gestureModule.createPenGestureController({
-    canvas,
-    getPrefs: () => gesturePrefs,
-    onAction: (binding) => {
-      void executeGestureAction(binding);
-    },
-    onStatusChange: (status) => {
-      lastGestureStatus = {
-        ...lastGestureStatus,
-        ...(status ?? {}),
-      };
-      if (lastGestureStatus.lastGesture && lastGestureStatus.lastGesture !== "idle") {
-        onboardingRuntimeSignals.gestureUsed = true;
-        scheduleOnboardingRefresh(60);
-      }
-      updateGestureUi();
-    },
-  });
-
-  return penGestureController;
+  return inkGestureRuntime.ensureGestureFeatures();
 }
 
 async function ensureReferencePopupInteractions() {

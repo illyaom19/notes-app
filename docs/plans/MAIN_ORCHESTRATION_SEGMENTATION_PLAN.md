@@ -32,11 +32,16 @@ Refactor `src/main.js` to a bootstrap/composition entrypoint while moving runtim
 - Extracted onboarding orchestration runtime:
   - `src/features/runtime/onboarding-runtime.js`
 - Wired `src/main.js` to delegate onboarding hint overlay scheduling, catalog actions, and hint controls runtime glue.
+- Extracted core ink/gesture orchestration runtime:
+  - `src/features/runtime/ink-gesture-runtime.js`
+- Wired `src/main.js` to delegate ink feature loading, ink-tool actions, pen-style updates, and pen-gesture controller bootstrapping.
 
 ## Remaining Slices (Ordered)
 1. Ink/gesture runtime extraction
-- Create `src/features/runtime/ink-gesture-runtime.js`.
-- Move ink tool state orchestration, gesture preference wiring, and cursor pill routing glue.
+- Finish moving remaining ink/gesture UI glue from `main.js`:
+  - ink dropdown open/close hover logic
+  - cursor pill routing helpers
+  - gesture preference UI event handler wiring
 
 2. Final cleanup pass
 - Remove dead helpers from `main.js`.
@@ -126,6 +131,17 @@ Recommended targeted additions:
 - Slice: Onboarding runtime extraction
 - Files added/updated:
   - `src/features/runtime/onboarding-runtime.js`
+  - `src/main.js`
+  - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
+- Behavior changed: no (refactor-only target)
+- Tests run: `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
+- Result: pass (16/16)
+- Commit: pending
+
+- Date: 2026-02-12
+- Slice: Ink/gesture runtime extraction (phase 1)
+- Files added/updated:
+  - `src/features/runtime/ink-gesture-runtime.js`
   - `src/main.js`
   - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
 - Behavior changed: no (refactor-only target)
