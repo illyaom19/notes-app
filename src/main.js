@@ -5212,8 +5212,12 @@ async function setupContextFeatures() {
     scheduleWorkspacePersist,
     updateContextUi,
     restoreWorkspaceForActiveContext,
-    updateOnboardingControlsUi,
-    scheduleOnboardingRefresh,
+    updateOnboardingControlsUi: () => {
+      onboardingRuntime?.updateOnboardingControlsUi?.();
+    },
+    scheduleOnboardingRefresh: (delayMs) => {
+      onboardingRuntime?.scheduleOnboardingRefresh?.(delayMs);
+    },
     resetOnboardingSignals: () => {
       onboardingRuntime?.resetRuntimeSignals?.();
     },
