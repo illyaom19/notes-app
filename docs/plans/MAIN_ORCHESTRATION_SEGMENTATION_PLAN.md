@@ -44,6 +44,10 @@ Refactor `src/main.js` to a bootstrap/composition entrypoint while moving runtim
 1. Final cleanup pass
 - Remove dead helpers from `main.js`.
 - Keep `main.js` focused on runtime construction + bootstrap wiring only.
+- In progress:
+  - removed dead onboarding proxy helpers no longer referenced
+  - removed dead ink/dropdown cursor proxy helpers and routed input controller directly to runtime methods
+  - removed onboarding runtime proxy wrappers and switched callsites to direct `onboardingRuntime` invocation
 
 ## Contracts To Keep Stable
 - Widget drag payload semantics used across interaction and overlay controllers.
@@ -151,6 +155,26 @@ Recommended targeted additions:
 - Slice: Ink/gesture runtime extraction (phase 2)
 - Files added/updated:
   - `src/features/runtime/ink-gesture-runtime.js`
+  - `src/main.js`
+  - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
+- Behavior changed: no (refactor-only target)
+- Tests run: `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
+- Result: pass (16/16)
+- Commit: pending
+
+- Date: 2026-02-12
+- Slice: Final cleanup pass (phase 1)
+- Files added/updated:
+  - `src/main.js`
+  - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
+- Behavior changed: no (refactor-only target)
+- Tests run: `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
+- Result: pass (16/16)
+- Commit: pending
+
+- Date: 2026-02-12
+- Slice: Final cleanup pass (phase 2)
+- Files added/updated:
   - `src/main.js`
   - `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
 - Behavior changed: no (refactor-only target)

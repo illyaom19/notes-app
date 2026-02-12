@@ -1310,7 +1310,7 @@ function setUiMode(nextMode, { persist = true } = {}) {
   syncDebugControls();
   syncUiModeControls();
   syncDocumentSettingsUi();
-  updateOnboardingControlsUi();
+  onboardingRuntime?.updateOnboardingControlsUi?.();
   scheduleCanvasViewportSync();
   if (debugModeEnabled) {
     schedulePerfHudRefresh({ delayMs: 0 });
@@ -1933,7 +1933,7 @@ function updateInkUi(state) {
   syncInkToolDropdownUi(activeTool, enabled);
   syncInkStyleDropdownUi(penColor, penThickness, enabled);
   if (activeTool !== "eraser" && activeTool !== "lasso") {
-    hideInkCursorPill();
+    inkGestureRuntime.hideInkCursorPill();
   }
 
   if (activePointers > 0) {
@@ -1988,38 +1988,6 @@ function normalizeInkThickness(value) {
 
 function syncInkStyleDropdownUi(penColor = "#103f78", penThickness = 3, enabled = true) {
   inkGestureRuntime.syncInkStyleDropdownUi(penColor, penThickness, enabled);
-}
-
-function isInkToolDropdownOpen() {
-  return inkGestureRuntime.isInkToolDropdownOpen();
-}
-
-function setInkToolDropdownOpen(nextOpen) {
-  return inkGestureRuntime.setInkToolDropdownOpen(nextOpen);
-}
-
-function isInkStyleDropdownOpen() {
-  return inkGestureRuntime.isInkStyleDropdownOpen();
-}
-
-function setInkStyleDropdownOpen(nextOpen) {
-  return inkGestureRuntime.setInkStyleDropdownOpen(nextOpen);
-}
-
-function isWithinInkToolDropdown(target) {
-  return inkGestureRuntime.isWithinInkToolDropdown(target);
-}
-
-function isWithinInkStyleDropdown(target) {
-  return inkGestureRuntime.isWithinInkStyleDropdown(target);
-}
-
-function hideInkCursorPill() {
-  inkGestureRuntime.hideInkCursorPill();
-}
-
-function syncInkCursorPill(event = null) {
-  inkGestureRuntime.syncInkCursorPill(event);
 }
 
 async function createNoteWidgetFromLassoSelection(payload) {
@@ -2141,42 +2109,6 @@ function syncToolsUi() {
     toggleToolsButton.title = toolsPanelOpen ? "Close menu" : "Open menu";
     toggleToolsButton.dataset.open = toolsPanelOpen ? "true" : "false";
   }
-}
-
-function onboardingHintsCatalog() {
-  return onboardingRuntime?.onboardingHintsCatalog?.() ?? [];
-}
-
-async function ensureOnboardingOverlay() {
-  return onboardingRuntime?.ensureOnboardingOverlay?.() ?? null;
-}
-
-async function refreshOnboardingHints() {
-  return onboardingRuntime?.refreshOnboardingHints?.();
-}
-
-function scheduleOnboardingRefresh(delayMs = 50) {
-  onboardingRuntime?.scheduleOnboardingRefresh?.(delayMs);
-}
-
-async function handleOnboardingAction(hintId) {
-  return onboardingRuntime?.handleOnboardingAction?.(hintId);
-}
-
-function dismissOnboardingHint(hintId) {
-  onboardingRuntime?.dismissOnboardingHint?.(hintId);
-}
-
-function toggleOnboardingHints() {
-  onboardingRuntime?.toggleOnboardingHints?.();
-}
-
-function resetOnboardingHints() {
-  onboardingRuntime?.resetOnboardingHints?.();
-}
-
-function updateOnboardingControlsUi() {
-  onboardingRuntime?.updateOnboardingControlsUi?.();
 }
 
 function setWhitespaceState(value) {
@@ -3300,7 +3232,7 @@ function runWidgetHeavySync() {
   applyPopupAutoDocking();
   updateDocumentSwitcherUi();
   updateReferenceManagerUi();
-  scheduleOnboardingRefresh(120);
+  onboardingRuntime?.scheduleOnboardingRefresh?.(120);
   scheduleSuggestionAnalysis();
   scheduleWorkspacePersist();
   scheduleStorageUsageRefresh();
@@ -3348,7 +3280,7 @@ function updateWidgetUi({ deferHeavy = false, coalesceHeavy = false } = {}) {
   } else {
     syncSearchIndexUi(0);
   }
-  updateOnboardingControlsUi();
+  onboardingRuntime?.updateOnboardingControlsUi?.();
 
   if (deferHeavy) {
     return;
@@ -4216,8 +4148,8 @@ async function switchContext(nextContextId) {
   updateContextUi();
   await restoreWorkspaceForActiveContext();
   refreshLinkedWidgets();
-  updateOnboardingControlsUi();
-  scheduleOnboardingRefresh(0);
+  onboardingRuntime?.updateOnboardingControlsUi?.();
+  onboardingRuntime?.scheduleOnboardingRefresh?.(0);
   if (searchPanelController && typeof searchPanelController.runQuery === "function") {
     void searchPanelController.runQuery();
   }
@@ -4246,8 +4178,8 @@ async function switchSection(nextSectionId) {
   updateContextUi();
   await restoreWorkspaceForActiveContext();
   refreshLinkedWidgets();
-  updateOnboardingControlsUi();
-  scheduleOnboardingRefresh(0);
+  onboardingRuntime?.updateOnboardingControlsUi?.();
+  onboardingRuntime?.scheduleOnboardingRefresh?.(0);
   if (searchPanelController && typeof searchPanelController.runQuery === "function") {
     void searchPanelController.runQuery();
   }
@@ -4562,12 +4494,12 @@ function wireBaseEventHandlers() {
     inputRoutingController = createInputRoutingController({
       canvas,
       isTypingTarget: (target) => isTypingTarget(target),
-      isInkToolDropdownOpen: () => isInkToolDropdownOpen(),
-      setInkToolDropdownOpen: (nextOpen) => setInkToolDropdownOpen(nextOpen),
-      isWithinInkToolDropdown: (target) => isWithinInkToolDropdown(target),
-      isInkStyleDropdownOpen: () => isInkStyleDropdownOpen(),
-      setInkStyleDropdownOpen: (nextOpen) => setInkStyleDropdownOpen(nextOpen),
-      isWithinInkStyleDropdown: (target) => isWithinInkStyleDropdown(target),
+      isInkToolDropdownOpen: () => inkGestureRuntime.isInkToolDropdownOpen(),
+      setInkToolDropdownOpen: (nextOpen) => inkGestureRuntime.setInkToolDropdownOpen(nextOpen),
+      isWithinInkToolDropdown: (target) => inkGestureRuntime.isWithinInkToolDropdown(target),
+      isInkStyleDropdownOpen: () => inkGestureRuntime.isInkStyleDropdownOpen(),
+      setInkStyleDropdownOpen: (nextOpen) => inkGestureRuntime.setInkStyleDropdownOpen(nextOpen),
+      isWithinInkStyleDropdown: (target) => inkGestureRuntime.isWithinInkStyleDropdown(target),
       isToolsPanelOpen: () => toolsPanelOpen,
       isTargetInsideToolsUi: (target) =>
         (controlsPanel instanceof HTMLElement && controlsPanel.contains(target)) ||
@@ -4582,10 +4514,10 @@ function wireBaseEventHandlers() {
         scheduleCanvasViewportSync();
       },
       onInkCursorPointerEvent: (event) => {
-        syncInkCursorPill(event);
+        inkGestureRuntime.syncInkCursorPill(event);
       },
       onInkCursorHide: () => {
-        hideInkCursorPill();
+        inkGestureRuntime.hideInkCursorPill();
       },
     });
   }
@@ -4606,15 +4538,15 @@ function wireBaseEventHandlers() {
   toggleUiModeButton?.addEventListener("click", () => {
     const next = toggleUiMode(uiModeState);
     setUiMode(next.mode);
-    scheduleOnboardingRefresh(0);
+    onboardingRuntime?.scheduleOnboardingRefresh?.(0);
   });
 
   toggleOnboardingHintsButton?.addEventListener("click", () => {
-    toggleOnboardingHints();
+    onboardingRuntime?.toggleOnboardingHints?.();
   });
 
   resetOnboardingHintsButton?.addEventListener("click", () => {
-    resetOnboardingHints();
+    onboardingRuntime?.resetOnboardingHints?.();
   });
 
   toggleResearchPanelButton?.addEventListener("click", async () => {
@@ -4638,7 +4570,7 @@ function wireBaseEventHandlers() {
       const panel = await ensureSearchFeatures();
       panel.toggle();
       onboardingRuntimeSignals.searchOpened = true;
-      scheduleOnboardingRefresh(40);
+      onboardingRuntime?.scheduleOnboardingRefresh?.(40);
     } catch (error) {
       console.error(error);
       await showNoticeDialog(`Search panel failed: ${formatErrorMessage(error)}`, {
@@ -4867,7 +4799,7 @@ function wireBaseEventHandlers() {
         .then((panel) => {
           panel.open();
           onboardingRuntimeSignals.searchOpened = true;
-          scheduleOnboardingRefresh(40);
+          onboardingRuntime?.scheduleOnboardingRefresh?.(40);
         })
         .catch((error) => {
           console.error(error);
@@ -4882,7 +4814,7 @@ function wireBaseEventHandlers() {
       event.preventDefault();
       const next = toggleUiMode(uiModeState);
       setUiMode(next.mode);
-      scheduleOnboardingRefresh(0);
+      onboardingRuntime?.scheduleOnboardingRefresh?.(0);
       return;
     }
 
@@ -4983,7 +4915,7 @@ function wireSectionMinimap() {
     canvasElement: sectionMinimapCanvas,
     onFocusFromMinimap: () => {
       onboardingRuntimeSignals.peekActivated = true;
-      scheduleOnboardingRefresh(40);
+      onboardingRuntime?.scheduleOnboardingRefresh?.(40);
     },
   });
 
@@ -5394,8 +5326,8 @@ async function bootstrap() {
     updateGestureUi();
   }
   updateWidgetUi();
-  updateOnboardingControlsUi();
-  scheduleOnboardingRefresh(0);
+  onboardingRuntime?.updateOnboardingControlsUi?.();
+  onboardingRuntime?.scheduleOnboardingRefresh?.(0);
 }
 
 void bootstrap();
