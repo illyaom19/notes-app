@@ -158,8 +158,8 @@ export function createLibraryOverlayController({
     }
 
     const snapshot = { ...dragState };
-    clearDragTracking();
     if (snapshot.mode !== "move") {
+      clearDragTracking();
       return;
     }
 
@@ -170,6 +170,7 @@ export function createLibraryOverlayController({
     const droppedOverLibrary = hasPointerLocation
       ? pointerOverLibraryLauncher(payload.clientX, payload.clientY)
       : Boolean(snapshot.overLibrary);
+    clearDragTracking();
 
     if (droppedOverTrash) {
       if (typeof onDeleteWidget === "function") {
