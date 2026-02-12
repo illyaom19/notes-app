@@ -1017,7 +1017,9 @@ inkGestureRuntime = createInkGestureRuntime({
       enableInkButton.textContent = enabled ? "Ink Enabled" : "Enable Ink";
     }
   },
-  scheduleOnboardingRefresh,
+  scheduleOnboardingRefresh: (delayMs) => {
+    onboardingRuntime?.scheduleOnboardingRefresh?.(delayMs);
+  },
   inkUiElements: {
     inkToolDropdown,
     inkToolDropdownToggle,
