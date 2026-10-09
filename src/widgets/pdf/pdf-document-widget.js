@@ -1,3 +1,4 @@
+import { rasterImageCache } from "./raster-image-cache.js";
 import { fillPill, fillStrokeRoundedRect } from "../../core/canvas/rounded.js";
 import { WidgetBase } from "../../core/widgets/widget-base.js";
 import { resolveWidgetLod } from "../../features/widget-system/widget-lod.js";
@@ -104,6 +105,7 @@ export class PdfDocumentWidget extends WidgetBase {
       ...definition,
       size: definition.size ?? { width: 480, height: 680 },
       metadata: {
+        ...definition.metadata,
         title: definition.metadata?.title ?? definition.dataPayload?.fileName ?? "PDF",
       },
     });
@@ -215,13 +217,12 @@ export class PdfDocumentWidget extends WidgetBase {
         if (typeof level?.dataUrl !== "string" || !level.dataUrl) {
           continue;
         }
-        const image = await loadImageElement(level.dataUrl);
+
         rasterLevels.push({
           id: typeof level.id === "string" ? level.id : "",
-          width: Math.max(1, Number(level.width) || image.naturalWidth || 1),
-          height: Math.max(1, Number(level.height) || image.naturalHeight || 1),
+          width: Math.max(1, Number(level.width) || 1),
+          height: Math.max(1, Number(level.height) || 1),
           dataUrl: level.dataUrl,
-          image,
         });
       }
       if (rasterLevels.length < 1) {
@@ -323,6 +324,8 @@ export class PdfDocumentWidget extends WidgetBase {
     this._layoutWidth = pageWidth;
   }
 
+  async waitForExportImages() { await rasterImageCache.settled(); }
+
   async _buildThumbnail() {
     const firstPage = this.pages[0];
     if (!firstPage) {
@@ -332,13 +335,14 @@ export class PdfDocumentWidget extends WidgetBase {
     if (Array.isArray(firstPage.rasterLevels) && firstPage.rasterLevels.length > 0) {
       const previewLevel = firstPage.rasterLevels[firstPage.rasterLevels.length - 1];
       const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.floor(previewLevel.width));
-      canvas.height = Math.max(1, Math.floor(previewLevel.height));
+      canvas.width = 220;
+      canvas.height = Math.max(1, Math.round(220 * previewLevel.height / previewLevel.width));
       const ctx = canvas.getContext("2d", { alpha: false });
       if (!ctx) {
         return;
       }
-      ctx.drawImage(previewLevel.image, 0, 0, canvas.width, canvas.height);
+      const image = await rasterImageCache.load(previewLevel.dataUrl);
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
       this.thumbnailCanvas = canvas;
       return;
     }
@@ -847,6 +851,7 @@ export class PdfDocumentWidget extends WidgetBase {
   }
 
   getRasterRevision() {
+    const decodedRevision = this._decodedRevision ?? 0;
     let tileRevision = 0;
     for (const page of this.pages) {
       const revision = Number(page?.tileCache?.revision) || 0;
@@ -869,6 +874,7 @@ export class PdfDocumentWidget extends WidgetBase {
       this.pageCount,
       this.documentWorldHeight.toFixed(2),
       tileRevision,
+      decodedRevision,
       rasterRevision,
       whitespaceRevision,
     ].join("::");
@@ -1051,7 +1057,9 @@ export class PdfDocumentWidget extends WidgetBase {
               : segment.worldEndY,
           }));
         const drawLevel = selectRasterLevelForZoom(pageEntry, camera.zoom);
-        if (drawLevel?.image) {
+        const drawImage = drawLevel ? rasterImageCache.peek(drawLevel.dataUrl) : null;
+        if (drawLevel && !drawImage) void rasterImageCache.load(drawLevel.dataUrl).then(() => { this._decodedRevision = (this._decodedRevision ?? 0) + 1; this._context?.requestRender?.(); }).catch(() => {});
+        if (drawImage) {
           for (const segment of mappings) {
             const srcTop = (segment.sourceStartY / pageEntry.baseWorldHeight) * drawLevel.height;
             const srcBottom = (segment.sourceEndY / pageEntry.baseWorldHeight) * drawLevel.height;
@@ -1059,7 +1067,7 @@ export class PdfDocumentWidget extends WidgetBase {
             const worldHeight = Math.max(0.01, segment.worldEndY - segment.worldStartY);
             const segmentScreen = camera.worldToScreen(pageBounds.x, segment.worldStartY);
             ctx.drawImage(
-              drawLevel.image,
+              drawImage,
               0,
               srcTop,
               drawLevel.width,

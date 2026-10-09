@@ -409,6 +409,7 @@ export function createNotebookDocumentLibraryStore({
       } else {
         nextDocuments = [...notebook.documents];
         next.createdAt = nextDocuments[existingIndex].createdAt;
+        if (!next.pdfAssetId) next.pdfAssetId = nextDocuments[existingIndex].pdfAssetId;
         next.lastUsedAt = normalized.lastUsedAt ?? nextDocuments[existingIndex].lastUsedAt ?? null;
         nextDocuments[existingIndex] = next;
       }

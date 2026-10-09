@@ -65,6 +65,7 @@ export function createSearchPanelController({
   const nextButton = panelElement.querySelector("#search-next");
   const resultCountOutput = panelElement.querySelector("#search-result-count");
 
+  document.addEventListener("drawer-view", (event) => { if (event.detail !== "search") updateOpenState(false); });
   let open = false;
   let results = [];
   let activeIndex = -1;
@@ -85,6 +86,7 @@ export function createSearchPanelController({
 
   const updateOpenState = (nextOpen) => {
     open = Boolean(nextOpen);
+    if (open) document.dispatchEvent(new CustomEvent("drawer-view", { detail: "search" }));
     panelElement.hidden = !open;
     if (toggleButton instanceof HTMLButtonElement) {
       toggleButton.setAttribute("aria-label", open ? "Close search" : "Open search");
@@ -196,11 +198,11 @@ export function createSearchPanelController({
       lastIndexedCount = indexedCount;
     }
 
-    setResultCount(results.length);
+    setResultCount(results.filter(isSelectableResult).length);
     if (!safeLabel(query)) {
       setStatus(`Index ready. ${lastIndexedCount} widget${lastIndexedCount === 1 ? "" : "s"} indexed.`);
     } else if (results.length > 0) {
-      setStatus(`Found ${results.length} result${results.length === 1 ? "" : "s"} in ${lastIndexedCount} indexed widget${lastIndexedCount === 1 ? "" : "s"}.`);
+      setStatus(`Found ${results.filter(isSelectableResult).length} result${results.filter(isSelectableResult).length === 1 ? "" : "s"} in ${lastIndexedCount} indexed widget${lastIndexedCount === 1 ? "" : "s"}.`);
     } else {
       setStatus(defaultEmptyMessage(query));
     }
@@ -309,13 +311,13 @@ export function createSearchPanelController({
       return;
     }
 
-    if (!isTypingTarget(event.target) && key === "arrowdown" && results.length > 0) {
+    if ((!isTypingTarget(event.target) || event.target === queryInput) && key === "arrowdown" && results.length > 0) {
       event.preventDefault();
       setActiveIndex(1, { viaNavigation: true });
       return;
     }
 
-    if (!isTypingTarget(event.target) && key === "arrowup" && results.length > 0) {
+    if ((!isTypingTarget(event.target) || event.target === queryInput) && key === "arrowup" && results.length > 0) {
       event.preventDefault();
       setActiveIndex(-1, { viaNavigation: true });
     }

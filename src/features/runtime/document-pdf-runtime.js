@@ -216,6 +216,7 @@ export function createDocumentPdfRuntime({
         {
           title: resolvedTitle,
           sourceDocumentId: source?.id ?? null,
+          pdfText: (rasterDocument?.pages ?? []).map((page) => page.text ?? "").join(" "),
           ...(definition.metadata ?? {}),
         },
         normalizedIntent,
@@ -288,6 +289,7 @@ export function createDocumentPdfRuntime({
             ? definition.metadata.title.trim()
             : file.name,
         sourceType: "pdf",
+        pdfBytes: bytes,
         fileName: file.name,
         rasterDocument,
         status: "active",
@@ -610,6 +612,7 @@ export function createDocumentPdfRuntime({
             ? widget.metadata.title.trim()
             : file.name,
         sourceType: "pdf",
+        pdfBytes: bytes,
         fileName: file.name,
         rasterDocument,
         status: "active",

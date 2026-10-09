@@ -1,0 +1,11 @@
+{
+  "name": "notes-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/storage/*.test.mjs tests/ui/*.test.mjs",
+    "test:browser": "node tests/browser/run.mjs",
+    "offline:build": "python3 scripts/build-offline-manifest.py"
+  },
+  "devDependencies": { "playwright": "1.63.0" }
+}

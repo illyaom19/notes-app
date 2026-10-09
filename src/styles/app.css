@@ -2245,3 +2245,90 @@ body[data-ui-mode="production"] .topbar h1 {
     max-height: min(62vh, 440px);
   }
 }
+
+.save-status { position: fixed; bottom: 16px; left: 16px; z-index: 50; font-size: 12px; }
+.save-status[data-state="failed"] { color: #a02020; border-color: currentColor; }
+.recovery-notification { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 32px); z-index: 90; background: white; padding: 10px 16px; border: 1px solid #b9cdd3; border-radius: 12px; box-shadow: 0 4px 16px #163c4920; }
+.recovery-notification button { margin-left: 8px; }
+
+/* Tablet-first shell: navigation stays above writing tools without consuming the canvas. */
+:root { --line: var(--theme-line, #c9d8dc); --surface: var(--theme-bg-surface, #fff); --text: #163c49; --muted: #526a74; }
+.section-strip { flex-direction: row; flex-wrap: nowrap; padding: 4px 12px; background: #f7faf9; gap: 8px; }
+.writing-tools { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.section-tabs-wrap { flex: 1 1 0; min-width: 0; display: flex; }
+.section-tabs { min-width: 0; overflow-x: auto; flex: 1 1 0; }
+.section-add-btn { flex-shrink: 0; }
+.header-icon-btn, .writing-tools > button { min-width: 44px; min-height: 44px; }
+.context-pick { min-width: 0; max-width: 220px; }
+.context-dropdown-toggle { max-width: 100%; min-height: 44px; }
+.context-dropdown-toggle strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button, input, select { font: inherit; }
+button { touch-action: manipulation; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #197e96; outline-offset: 2px; }
+.controls-panel { overflow: auto; max-height: calc(100dvh - 120px); }
+.search-panel, .reference-manager-overlay { position: fixed; right: 8px !important; left: auto !important; top: var(--drawer-top, 64px) !important; bottom: 8px !important; width: min(var(--drawer-width, 380px), calc(100vw - 16px)); max-width: calc(100vw - 16px); z-index: 72; background: #fff; border: 1px solid #b9cdd3; border-radius: 12px; box-shadow: 0 6px 20px #163c4918; overflow: auto; resize: horizontal; min-width: min(280px, calc(100vw - 16px)); }
+.search-panel { display: flex; flex-direction: column; padding: 16px; }
+.reference-manager-panel { max-height: none !important; padding: 16px; overflow: visible; box-shadow: none; border: none; }
+.drawer-heading { display: flex; align-items: center; gap: 8px; }
+.drawer-heading h2 { font-size: 18px; margin-right: auto; }
+.drawer-heading button, .search-panel-header button, .library-chip-row button { min-height: 44px; }
+.library-filter { display: grid; gap: 4px; margin-bottom: 12px; font-size: 13px; }
+.library-filter input, .library-filter select { min-height: 40px; min-width: 0; }
+.library-chip-stack { touch-action: pan-y !important; overflow-y: auto; }
+.library-chip-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 4px; touch-action: pan-y !important; margin-bottom: 12px; }
+.library-chip { touch-action: pan-y !important; min-width: 0; white-space: normal; text-align: left; }
+.library-drag-handle { touch-action: none; cursor: grab; }
+.library-chip-row [data-action="add-chip"] { grid-column: 1 / -1; }
+.library-chip-menu { grid-column: 1 / -1; }
+.library-chip-preview { touch-action: pan-y; }
+.search-results { flex: 1; min-height: 0; overflow-y: auto; }
+.creation-menu__label { display: block; font-size: 12px; font-weight: 600; color: #163c49; }
+@media (min-width: 0px) {
+  .section-strip { display: grid; grid-template-columns: minmax(100px, 180px) minmax(0, 1fr); align-items: center; gap: 2px 8px; }
+  .writing-tools { grid-column: 1 / -1; justify-content: flex-start; }
+  .section-tabs-wrap { width: auto; }
+  .search-panel, .reference-manager-overlay { --drawer-top: 104px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+
+@font-face { font-family: "Ubuntu Sans"; src: url("../../assets/fonts/UbuntuSans.ttf") format("truetype"); font-weight: 100 900; font-display: swap; }
+:root { --theme-font-sans: "Ubuntu Sans", system-ui, sans-serif; }
+.source-hint { position: fixed; z-index: 61; max-width: 310px; padding: 8px; border: 1px solid #a9c7ce; border-radius: 8px; background: #f2faf9; font-size: 12px; box-shadow: 0 2px 8px #163c4910; }
+.source-hint span { display: block; }
+.source-hint button { min-height: 44px; margin: 4px 3px 0 0; }
+.export-dialog { width: min(720px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); overflow: auto; border: 1px solid #a9c7ce; border-radius: 12px; padding: 20px; color: #163c49; }
+.export-dialog::backdrop { background: #183d4960; }
+.export-dialog label { display: grid; gap: 6px; margin: 14px 0; }
+.export-dialog input, .export-dialog select, .export-dialog button { min-height: 44px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.export-pages { display: flex; flex-wrap: wrap; gap: 12px; background: #e8eeed; padding: 12px; }
+.export-pages canvas { border: 1px solid #c9d8dc; max-width: 100%; }
+
+.controls { display: block; }
+.settings-group { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid #dce5e7; }
+.settings-group h2, .settings-group summary { font-size: 13px; font-weight: 650; margin: 0 0 4px; }
+.settings-group button, .settings-group select { min-height: 44px; text-align: left; }
+.settings-group label { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.suggestion-card-actions { width: auto; }
+.suggestion-card-action { width: auto; min-width: 56px; min-height: 44px; font-size: 12px; }
+.library-chip-preview { max-width: calc(100vw - 24px); }
+
+.suggestion-recovery-tray {
+  position: fixed;
+  pointer-events: auto;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(50vh, 400px);
+  overflow: auto;
+  border: 1px solid var(--border, #b8cfd0);
+  border-radius: 12px;
+  background: #f8fcfb;
+  box-shadow: 0 4px 16px #153b3b14;
+}
+.suggestion-recovery-tray summary { padding: 14px; cursor: pointer; font-size: 13px; }
+.suggestion-recovery-list { display: grid; gap: 8px; padding: 0 10px 10px; }
+.suggestion-recovery-list .suggestion-card { position: static; width: 100%; opacity: 1; }
+
+.save-status { border: 1px solid #c5d9d8; border-radius: 18px; padding: 9px 14px; background: #f7faf9; color: #345b5a; font-family: inherit; font-size: 12px; }
+.save-status[data-state="failed"] { min-height: 44px; cursor: pointer; background: #fff3ef; }

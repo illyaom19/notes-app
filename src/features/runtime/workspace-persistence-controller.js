@@ -13,6 +13,9 @@ export function createWorkspacePersistenceController({
   isRestoringContext = () => false,
   onBeforePersist = null,
   onPersistSuccess = null,
+  getRecovery = () => null,
+  getInkStrokes = () => null,
+  onSaveState = () => {},
   onStoragePressure = null,
 } = {}) {
   if (!contextWorkspaceStore) {
@@ -44,6 +47,8 @@ export function createWorkspacePersistenceController({
     const persisted = documentManager.toPersistencePayload();
     const saved = contextWorkspaceStore.saveFromRuntime({
       contextId: scopeId,
+      recovery: getRecovery(),
+      inkStrokes: getInkStrokes(),
       runtime,
       researchCaptures: typeof getResearchCaptures === "function" ? getResearchCaptures() : [],
       suggestions: suggestionStore.toPersistencePayload({
@@ -59,12 +64,14 @@ export function createWorkspacePersistenceController({
     });
 
     if (saved) {
+      onSaveState("saved");
       hasShownStorageWarning = false;
       contextStore.touchActiveContext();
       onPersistSuccess?.();
       return true;
     }
 
+    onSaveState("failed");
     if (!hasShownStorageWarning) {
       hasShownStorageWarning = true;
       onStoragePressure?.();
@@ -85,6 +92,7 @@ export function createWorkspacePersistenceController({
     if (!scopeId || isRestoringContext()) {
       return;
     }
+    onSaveState("saving");
     if (persistTimer) {
       windowObj.clearTimeout(persistTimer);
     }

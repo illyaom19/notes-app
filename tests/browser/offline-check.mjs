@@ -1,0 +1,23 @@
+import {chromium} from 'playwright';import assert from 'node:assert/strict';
+const browser=await chromium.launch();const context=await browser.newContext({viewport:{width:1024,height:768},acceptDownloads:true});const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.stack));
+await page.goto('http://127.0.0.1:4174');await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForTimeout(500);await context.setOffline(true);await page.reload();await page.waitForTimeout(800);
+await page.locator('#pdf-file-input').setInputFiles('tests/fixtures/searchable.pdf');await page.waitForTimeout(4500);
+console.log('pdfWidgets',await page.locator('#widget-count').textContent());
+await page.locator('#toggle-search-panel').click();await page.locator('#search-query').fill('Chlorophyll');await page.waitForTimeout(500);console.log('search',await page.locator('#search-result-count').textContent());assert.notEqual(await page.locator('#search-result-count').textContent(),'0 results');
+await page.locator('#search-close').click();await page.reload();await page.waitForTimeout(1000);assert.equal(await page.locator('#widget-count').textContent(),'1');
+const assets=await page.evaluate(()=>JSON.parse(localStorage.getItem('notes-app.assets.catalog.v1')).data.records.map(r=>r.type));console.log('assetTypes',assets);assert.ok(assets.includes('pdf-bytes'));
+await page.locator('#toggle-tools').click();
+await page.locator('#share-current-section').click();
+await page.locator('.export-dialog button[value="preview"]').click();
+await page.locator('.export-dialog [data-action="save"]').waitFor();
+const exported = page.waitForEvent('download');
+await page.locator('.export-dialog [data-action="save"]').click();
+assert.match((await exported).suggestedFilename(), /\.pdf$/);
+const backup = await page.evaluate(async () => {
+  const module = await import('/src/features/storage/workspace-backup.js');
+  const blob = await module.createWorkspaceBackup();
+  return (await module.inspectWorkspaceBackup(blob)).records.length;
+});
+assert.ok(backup > 0, 'Offline editable backup includes PDF assets');
+console.log('offline export and editable backup passed');
+console.log('errors',errors);assert.deepEqual(errors,[]);await page.screenshot({path:'/tmp/notes-app-check-offline-pdf.png'});await browser.close();

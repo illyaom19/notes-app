@@ -43,7 +43,7 @@ function shortTypeLabel(type) {
     .join(" ");
 }
 
-function pushUnique(list, value, maxLength = 220) {
+function pushUnique(list, value, maxLength = Infinity) {
   const normalized = safeString(value);
   if (!normalized) {
     return;
@@ -61,7 +61,7 @@ function collectObjectStrings(candidate, target, depth = 0) {
   }
 
   if (Array.isArray(candidate)) {
-    for (const entry of candidate.slice(0, 20)) {
+    for (const entry of candidate) {
       collectObjectStrings(entry, target, depth + 1);
     }
     return;
@@ -69,7 +69,7 @@ function collectObjectStrings(candidate, target, depth = 0) {
 
   const entries = Object.entries(candidate);
   for (const [key, value] of entries) {
-    if (METADATA_SKIP_KEYS.has(key)) {
+    if (METADATA_SKIP_KEYS.has(key) || /(?:Id|At|Fingerprint|Version)$/.test(key) || /^(?:creation|sourceProvenance)/.test(key)) {
       continue;
     }
 
@@ -153,6 +153,8 @@ function extractFields(widget) {
   }
 
   collectObjectStrings(widget.metadata, indexedValues);
+  for (const node of widget.diagramDoc?.nodes ?? widget.dataPayload?.diagramDoc?.nodes ?? []) pushUnique(indexedValues, node.label);
+  pushUnique(indexedValues, widget.pdfText ?? widget.metadata?.pdfText);
 
   if (snippets.length < 1) {
     const fallbackSnippet = indexedValues.find((entry) => entry !== title && entry !== typeLabel) ?? "";
@@ -161,7 +163,8 @@ function extractFields(widget) {
     }
   }
 
-  const searchText = indexedValues.join(" | ").toLowerCase();
+  const displayText = indexedValues.join(" | ");
+  const searchText = displayText.toLowerCase();
 
   return {
     title,
@@ -169,6 +172,7 @@ function extractFields(widget) {
     typeLabel,
     snippet: snippets[0] ?? "",
     searchText,
+    displayText,
   };
 }
 
@@ -214,6 +218,7 @@ function entrySignature(entry) {
 export function createSearchIndex() {
   const entriesByWidgetId = new Map();
   const signaturesByWidgetId = new Map();
+  const inputsByWidgetId = new Map();
   let reindexTimer = null;
   let onUpdated = null;
 
@@ -262,7 +267,14 @@ export function createSearchIndex() {
           continue;
         }
 
-        visibleWidgetIds.add(widget.id);
+        const scopedId = entryId(contextId, widget.id);
+        visibleWidgetIds.add(scopedId);
+        // Compare only searchable inputs; camera/position changes need no text extraction.
+        const input = JSON.stringify([widget.type, widget.metadata, widget.sourceLabel,
+          widget.textContent, widget.citation, widget.fileName, widget.pdfText,
+          (widget.diagramDoc?.nodes ?? widget.dataPayload?.diagramDoc?.nodes ?? []).map(node => node.label)]);
+        if (inputsByWidgetId.get(scopedId) === input) continue;
+        inputsByWidgetId.set(scopedId, input);
         const entry = {
           id: entryId(contextId ?? null, widget.id),
           contextId: contextId ?? null,
@@ -272,22 +284,23 @@ export function createSearchIndex() {
         };
 
         const signature = entrySignature(entry);
-        if (signaturesByWidgetId.get(widget.id) === signature) {
+        if (signaturesByWidgetId.get(scopedId) === signature) {
           continue;
         }
 
-        entriesByWidgetId.set(widget.id, entry);
-        signaturesByWidgetId.set(widget.id, signature);
+        entriesByWidgetId.set(scopedId, entry);
+        signaturesByWidgetId.set(scopedId, signature);
         changed += 1;
       }
 
       let removed = 0;
       for (const widgetId of entriesByWidgetId.keys()) {
-        if (visibleWidgetIds.has(widgetId)) {
+        if (entriesByWidgetId.get(widgetId).contextId !== contextId || visibleWidgetIds.has(widgetId)) {
           continue;
         }
         entriesByWidgetId.delete(widgetId);
         signaturesByWidgetId.delete(widgetId);
+        inputsByWidgetId.delete(widgetId);
         removed += 1;
       }
 
@@ -315,7 +328,7 @@ export function createSearchIndex() {
       }, delayMs);
     },
 
-    query(query, { contextId = null, limit = DEFAULT_LIMIT } = {}) {
+    query(query, { contextId = null, contextPrefix = null, limit = DEFAULT_LIMIT } = {}) {
       const tokens = tokenize(query);
       if (!tokens.length) {
         return [];
@@ -324,7 +337,7 @@ export function createSearchIndex() {
       const matches = [];
 
       for (const entry of entriesByWidgetId.values()) {
-        if (contextId && entry.contextId !== contextId) {
+        if ((contextPrefix && !entry.contextId?.startsWith(contextPrefix)) || (contextId && entry.contextId !== contextId)) {
           continue;
         }
 
@@ -340,7 +353,7 @@ export function createSearchIndex() {
           title: entry.fields.title,
           type: entry.fields.type,
           typeLabel: entry.fields.typeLabel,
-          snippet: entry.fields.snippet,
+          snippet: (() => { const text = entry.fields.displayText; const at = Math.max(0, entry.fields.searchText.indexOf(tokens[0]) - 35); return `${at ? "…" : ""}${text.slice(at, at + 180)}${text.length > at + 180 ? "…" : ""}`; })(),
           updatedAt: entry.updatedAt,
           score,
         });
@@ -362,6 +375,7 @@ export function createSearchIndex() {
     clear() {
       entriesByWidgetId.clear();
       signaturesByWidgetId.clear();
+      inputsByWidgetId.clear();
       if (reindexTimer) {
         window.clearTimeout(reindexTimer);
         reindexTimer = null;

@@ -38,37 +38,27 @@ export function createOnboardingRuntime({
 
     return [
       {
-        id: "import-pdf",
-        title: "Start With A PDF",
-        body: "Import your source document into this section to start writing immediately.",
-        actionLabel: "Import PDF",
-        shouldShow: () => !hasPdf,
-        completeWhen: () => hasPdf,
-        onAction: () => {
-          if (typeof executeCreationIntent !== "function" || typeof createCreationIntent !== "function") {
-            return;
-          }
-
-          void executeCreationIntent(
-            createCreationIntent({
-              type: "pdf-document",
-              anchor: typeof viewportCenterAnchor === "function" ? viewportCenterAnchor() : null,
-              sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
-              createdFrom: "manual",
-            }),
-          );
-        },
-      },
-      {
         id: "radial-create",
-        title: "Use Hold Radial Create",
-        body: "Touch-and-hold with your finger on the canvas, then drag to a radial option and release to create.",
+        title: "Create with a gesture",
+        body: "Hold your finger on empty canvas (or right-click). Drag to a labeled option and release, or release in the center then tap an option. Tap outside or press Escape to cancel.",
         actionLabel: "Got It",
-        shouldShow: () => hasPdf && !hasCreatedWidget,
+        shouldShow: () => !hasCreatedWidget,
         completeWhen: () => hasCreatedWidget,
         onAction: () => {
           signals.gestureUsed = true;
         },
+      },
+      {
+        id: 'library-browse', title: 'Browse your library',
+        body: 'Swipe to scroll and tap to preview. Add to section creates an independent copy. Use the dotted handle to drag a copy onto the canvas.',
+        actionLabel: 'Got it', shouldShow: () => widgets.length > 0, completeWhen: () => false,
+        onAction: () => dismissOnboardingHint('library-browse'),
+      },
+      {
+        id: 'pin-dock', title: 'Pin or dock',
+        body: 'Pin keeps a widget in its canvas position. Drag toward a viewport edge to dock it beside your writing. Docked content stays at the screen edge while you navigate.',
+        actionLabel: 'Got it', shouldShow: () => widgets.length > 1, completeWhen: () => false,
+        onAction: () => dismissOnboardingHint('pin-dock'),
       },
       {
         id: "peek-search-gesture",

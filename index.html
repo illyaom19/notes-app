@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#1f6b8f" />
-    <title>Notes App Prototype</title>
+    <title>Notes</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icons/icon-192.png" type="image/png" />
     <link rel="icon" href="./icons/icon-192.svg" type="image/svg+xml" />
@@ -14,7 +14,7 @@
   <body>
     <main class="app-shell">
       <header class="topbar" data-production-hidden="true">
-        <h1>Notes App Prototype</h1>
+        <h1>Notes</h1>
       </header>
 
       <section class="section-strip" aria-label="Notebook Sections">
@@ -39,6 +39,7 @@
           <div id="section-tabs" class="section-tabs" role="tablist" aria-label="Sections"></div>
           <button id="new-section" class="header-icon-btn section-add-btn" type="button" aria-label="Add section" title="Add section">+</button>
         </div>
+        <div class="writing-tools" role="toolbar" aria-label="Writing tools">
         <div id="ink-tool-dropdown" class="ink-tool-dropdown">
           <button
             id="ink-tool-dropdown-toggle"
@@ -69,12 +70,12 @@
           </button>
           <div id="ink-style-dropdown-menu" class="header-create-dropdown ink-style-menu" hidden>
             <div class="ink-style-colors">
-              <button type="button" data-ink-color="#103f78" title="Navy"></button>
-              <button type="button" data-ink-color="#1f6b8f" title="Teal"></button>
-              <button type="button" data-ink-color="#1f9d63" title="Green"></button>
-              <button type="button" data-ink-color="#8a3fd1" title="Purple"></button>
-              <button type="button" data-ink-color="#c03232" title="Red"></button>
-              <button type="button" data-ink-color="#20262c" title="Black"></button>
+              <button type="button" data-ink-color="#103f78" title="Navy" aria-label="Navy"></button>
+              <button type="button" data-ink-color="#1f6b8f" title="Teal" aria-label="Teal"></button>
+              <button type="button" data-ink-color="#1f9d63" title="Green" aria-label="Green"></button>
+              <button type="button" data-ink-color="#8a3fd1" title="Purple" aria-label="Purple"></button>
+              <button type="button" data-ink-color="#c03232" title="Red" aria-label="Red"></button>
+              <button type="button" data-ink-color="#20262c" title="Black" aria-label="Black"></button>
             </div>
             <label class="ink-style-thickness" for="ink-thickness-range">
               <span>Thickness</span>
@@ -100,15 +101,23 @@
         <button id="toggle-tools" type="button" class="tools-toggle header-icon-btn" aria-label="Menu" title="Menu">
           ☰
         </button>
+        </div>
       </section>
 
+      <button id="save-status" class="save-status" type="button" aria-live="polite" hidden>Saved</button>
+      <div id="recovery-notification" class="recovery-notification" role="status" hidden></div>
       <section id="controls-panel" class="controls-panel" hidden>
         <div class="controls" aria-label="Settings and Actions">
           <button id="toggle-ui-mode" type="button">Mode: Production</button>
           <button id="enable-ink" type="button">Enable Ink</button>
           <button id="toggle-ink-tool" type="button" disabled>Ink Tool: Pen</button>
           <button id="import-context-widget" type="button">Import Widgets</button>
-          <button id="share-current-section" type="button">Share</button>
+          <button id="share-current-section" type="button">Export PDF…</button>
+          <button id="workspace-backup" type="button">Back up workspace</button>
+          <button id="workspace-restore" type="button">Restore workspace…</button>
+          <input id="workspace-restore-file" type="file" accept=".notesbackup" hidden>
+          <button id="recently-deleted" type="button">Recently Deleted</button>
+          <button id="clear-diagram" type="button">Clear selected diagram…</button>
           <button id="start-worker" type="button" data-production-hidden="true">Start Worker</button>
           <button id="run-stress-benchmark" type="button" data-debug-only="true">Run Stress Benchmark</button>
           <label class="toggle-control" for="gesture-enabled">
@@ -142,7 +151,7 @@
             </select>
           </label>
           <button id="toggle-onboarding-hints" type="button">Disable Hints</button>
-          <button id="reset-onboarding-hints" type="button" data-production-hidden="true">Reset Hints</button>
+          <button id="reset-onboarding-hints" type="button">Reset Hints</button>
         </div>
       </section>
 
@@ -182,13 +191,14 @@
 
       <aside id="search-panel" class="search-panel" aria-label="Search Panel" hidden>
         <div class="search-panel-header">
-          <h2>Search Widgets</h2>
+          <h2>Search notebook</h2><button id="drawer-show-library" type="button">Library</button>
           <button id="search-close" type="button">Close</button>
         </div>
         <label class="search-query" for="search-query">
           <span>Query</span>
           <input id="search-query" type="search" placeholder="Search titles, notes, citations, and document text..." />
         </label>
+        <label>Search in <select id="search-scope"><option value="notebook">Current notebook and library</option><option value="section">Current section</option><option value="library">Library</option></select></label>
         <p id="search-status" class="search-status">Type a query to search indexed widget text.</p>
         <div class="search-actions">
           <button id="search-prev" type="button">Prev</button>
@@ -198,6 +208,7 @@
         <div id="search-results" class="search-results" role="listbox" aria-label="Search results"></div>
       </aside>
 
+      <div id="source-hints" aria-label="Source updates"></div>
       <aside id="suggestion-rail" class="suggestion-rail" aria-label="Widget Suggestions" hidden></aside>
       <aside id="snip-mode-notifier" class="snip-mode-notifier" aria-live="polite" hidden>
         <span id="snip-mode-label">Snip mode active</span>
@@ -223,7 +234,9 @@
 
       <section id="reference-manager-overlay" class="reference-manager-overlay" hidden aria-hidden="true">
         <div id="reference-manager-panel" class="reference-manager-panel" role="dialog" aria-label="Notebook library">
-          <p class="library-chip-section-title">All Library Items:</p>
+          <div class="drawer-heading"><h2>Library</h2><button id="drawer-show-search" type="button">Search</button><button id="library-close" type="button">Close</button></div>
+          <label class="library-filter">Find in library<input id="library-query" type="search" placeholder="Titles and tags"></label>
+          <label class="library-filter">Type<select id="library-type"><option value="">All types</option><option value="note">Notes and diagrams</option><option value="reference">References</option><option value="document">PDFs</option></select></label>
           <div id="reference-manager-reference-list" class="library-chip-stack" aria-label="All library entries"></div>
           <div class="library-chip-divider" aria-hidden="true"></div>
           <p class="library-chip-section-title">Recently used</p>

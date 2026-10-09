@@ -459,6 +459,7 @@ function decodeRasterDocument(serialized) {
       pageCount: Number.isFinite(parsed.pageCount) ? Number(parsed.pageCount) : pages.length,
       pages: pages.map((page, index) => ({
         pageNumber: Number(page?.pageNumber) || index + 1,
+        text: typeof page?.text === "string" ? page.text : "",
         width: Math.max(1, Number(page?.width) || 1),
         height: Math.max(1, Number(page?.height) || 1),
         levels: Array.isArray(page?.levels)
@@ -676,6 +677,18 @@ function canonicalizeWorkspaceAssets(
       changed = true;
     }
     nextWidgets.push(result.widget);
+  }
+
+  // History and the deletion bin are asset owners until their retention expires.
+  for (const action of [...(workspace.recovery?.past ?? []), ...(workspace.recovery?.future ?? []), ...(workspace.recovery?.deleted ?? [])]) {
+    for (const change of action.changes ?? []) {
+      if (change.collection !== "widgets") continue;
+      for (const widget of [change.before, change.after]) {
+        for (const field of ["pdfAssetId", "pdfRasterAssetId", "imageAssetId"]) {
+          appendAssetRef(refsByAssetId, widget?.dataPayload?.[field], assetManager.ownerRef(contextId, `history:${action.id}`));
+        }
+      }
+    }
   }
 
   return {
@@ -944,6 +957,8 @@ function sanitizeWorkspace(candidate, contextId) {
     contextId,
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso(),
     widgets: dedupedWidgets,
+    inkStrokes: Array.isArray(candidate.inkStrokes) ? candidate.inkStrokes : null,
+    recovery: candidate.recovery?.version === 1 ? candidate.recovery : null,
     researchCaptures,
     suggestions,
     documents: documents.map((entry) => ({
@@ -1178,6 +1193,15 @@ export function createContextWorkspaceStore({
   const assetManager = createAssetManager({ storage, ...assetManagerOptions });
 
   return {
+    readSearchWorkspace(contextId) {
+      try { const raw = storage.getItem(keyForContext(contextId)); const value = raw ? JSON.parse(raw) : null; return sanitizeWorkspace(value?.data ?? value, contextId); }
+      catch { return defaultWorkspace(contextId); }
+    },
+
+    serializeWidgets(runtime, contextId) {
+      return runtime.listWidgets().map((widget) => serializeWidget(widget, contextId, { assetManager, allowInlinePdfBase64Fallback })).filter(Boolean);
+    },
+
     async prepare() {
       if (typeof assetManager.hydratePayloadCache === "function") {
         await assetManager.hydratePayloadCache();
@@ -1289,13 +1313,13 @@ export function createContextWorkspaceStore({
       const workspace = sanitizeWorkspace(canonicalized.workspace, contextId);
 
       try {
-        assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
         writeEnvelope({
           storage,
           key: keyForContext(contextId),
           schemaVersion: WORKSPACE_SCHEMA_VERSION,
           data: workspace,
         });
+        assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
       } catch (error) {
         console.warn(`[storage] failed to persist workspace ${contextId}.`, error);
         return false;
@@ -1309,6 +1333,8 @@ export function createContextWorkspaceStore({
       runtime,
       researchCaptures = [],
       suggestions = [],
+      inkStrokes = null,
+      recovery = null,
       documents = [],
       documentBindings = [],
       activeDocumentId = null,
@@ -1333,6 +1359,8 @@ export function createContextWorkspaceStore({
       const saved = this.saveWorkspace({
         contextId,
         widgets: serializedWidgets,
+        inkStrokes,
+        recovery,
         researchCaptures,
         suggestions,
         documents,
@@ -1367,6 +1395,8 @@ export function createContextWorkspaceStore({
         metadata: { ...normalized.metadata },
         interactionFlags: normalizeInteractionFlags(normalized.interactionFlags),
         collapsed: normalized.collapsed,
+        dataPayload: { ...normalized.dataPayload },
+        runtimeState: { ...normalized.runtimeState },
       };
 
       if (normalized.type === "pdf-document") {

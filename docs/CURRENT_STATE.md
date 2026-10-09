@@ -1,110 +1,40 @@
 # CURRENT_STATE
 
-## Snapshot
-- Date: 2026-02-12
-- Branch reviewed: `main`
-- Scope of this pass:
-  - Comprehensive codebase/app-state review (performance, storage, reliability)
-  - Documentation normalization and archive
+Updated 2026-10-08. Approved UI improvement implementation is being committed for the user-requested push to `origin/main`; remaining release gates are listed below. No deployment was requested. The decision ledger is `docs/plans/UI_IMPROVEMENT_PLAN.md`. Earlier review/planning history is preserved in `docs/reviews/CURRENT_STATE_before_UI_implementation_2026-10-08.md`.
 
-## Current App Surface (Implemented)
+## Implemented surface
 
-### Core runtime
-- Canvas runtime, camera pan/zoom/pinch: `src/core/canvas/`, `src/main.js`
-- Modular widget architecture and lazy registration: `src/core/widgets/`, `src/main.js`
+- `src/features/history/`: chronological per-section widget/diagram/native-ink undo and redo, persisted bounded history (100 actions / 2 MiB), deletion Undo notification, and 30-day section content recovery. History stores asset references; erased strokes and widget ordering are included. Notebook/library deletion is outside this section recovery bin.
+- Compact two-row tablet shell, shared resizable Library/Search drawer, library filters, explicit Add and drag handles, labeled gesture creation, grouped settings, contextual hints, local font, focus indicators and reduced motion. No new persistent Add or zoom toolbar.
+- Independent library copies retain source provenance. Visible stale copies offer Link/Dismiss/Never; replacement requires confirmation and can be undone. Library search activation now reveals/previews the matching entry.
+- Notebook-wide retained full-text search includes stored section content, diagram labels and extractable text from new PDF imports. No OCR. Dismissed suggestions now have an always-reachable recovery tray while their PDF is focused.
+- PDF export settings, image-based page previews, selected-widget/section scope, portrait/landscape, fit/tiles and cancellation. Editable `.notesbackup` archives include app settings, all notebooks, recovery and stored assets; restore verifies hashes and uses a durable settings rollback journal.
+- Local PDF.js worker, character maps, standard fonts and UI font; generated service-worker precache (`scripts/build-offline-manifest.py`). Offline lazy feature loading no longer depends on a CDN.
+- Shared asset catalogs preserve originals; original PDF bytes survive worker transfer; persistence writes envelopes before releasing previous references. Save feedback waits for asset writes and ignores stale asynchronous completions.
+- PDF image decoding uses shared LRU retention and two concurrent loads. Immutable raster registration is memoized. Search workspace reads avoid modifying ownership. Source-update and notebook-search orchestration have separate modules.
 
-### Active widget types
-- Notes widget (`expanded-area`): `src/widgets/expanded-area/`
-- PDF widget (`pdf-document`): `src/widgets/pdf/`
-- Reference/Snip widget (`reference-popup`): `src/widgets/reference-popup/`
-- Diagram widget (`diagram`): `src/widgets/diagram/`
+## Verification — 2026-10-08
 
-### Key user-facing systems
-- Ink engine with pen/eraser/lasso and lasso-to-note flow: `src/features/ink/`
-- Pen gestures including barrel handling/bindings: `src/features/gestures/pen-gestures.js`
-- Radial widget creation: `src/features/widget-system/widget-creation-controller.js`
-- Unified widget interactions (move/resize/collapse/docked-body interactions):
-  - `src/features/widget-system/widget-interaction-manager.js`
-- Viewport docking with edge glows and unsnap: `src/main.js`
-- Notebook/section scoped persistence and switching:
-  - `src/features/contexts/`
-  - `src/features/sections/`
-  - `src/features/notebooks/`
-- Library UI and drag-to-spawn workflows: `src/features/references/reference-manager-ui.js`, `src/main.js`
-- PDF raster/import/storage + missing-PDF reimport path:
-  - `src/widgets/pdf/pdf-document-widget.js`
-  - `src/features/documents/document-manager.js`
-  - `src/main.js`
-- PWA service worker and offline shell caching: `sw.js`, `src/main.js`
+- `npm test`: **67 passed**, 0 failed (2026-10-08).
+- All seven scripts in `npm run test:browser` passed: creation/undo/reload; independent library Add/search/PDF download; deletion/bin/archive corruption and interrupted-restore recovery; stale-copy link/Undo; offline cold reload/PDF import/search/export/backup with original-byte retention; four viewport sizes and mixed pen/widget history; 100-item touch scrolling without spawning and library search reveal.
+- Tablet emulation measured header height 109.94px (audit baseline 332px).
+- Browser dependencies are isolated under `/tmp/notes-app-browsers` and `/tmp/notes-app-libs`; these are environment prerequisites, not app dependencies.
+- Offline manifest rebuilt: 277 assets, version `546d3cac35289b8d`. All source/test JS syntax checks and `git diff --check` passed. Phone/tablet screenshots visually inspected; regenerate the manifest after source changes.
 
-## Comprehensive Review Findings (Severity Ordered)
+## Remaining work / release limits
 
-### High
-1. Test suite is not fully green on `main`.
-- Failing test: `tests/ui/widget-types.test.mjs`
-- Root issue: test expectations still reflect pre-diagram policy while `diagram` is now in `SUPPORTED_WIDGET_TYPES` and `USER_CREATION_TYPES`.
-- Impact: weak CI signal and reduced confidence in regression detection.
+- Extend coverage for real-device drag/dock/pen cancellation, PDF section-switch stress, and storage quota/multi-tab failure scenarios. These are outstanding acceptance scenarios, not reported test passes.
+- Physical Galaxy Tab/S Pen and iPad/Apple Pencil acceptance cannot be established through desktop Chromium emulation. Pen latency, palm rejection, Safari storage limits and real long-session memory remain unverified.
+- Full optimization is an ongoing accepted workstream; warm raster-registration improvements do not establish whole-app frame-time or startup targets. Main orchestration remains large.
+- History and archives are bounded; backup records over 128 MiB are rejected. Restore stages immutable assets and preserves prior assets for rollback; interrupted staging can leave unreferenced payloads. Browser quota and multi-tab fault scenarios need further validation.
+- Legacy PDFs without captured text need reimport to gain text search. Export remains raster/image based. The decoded cache may retain one page larger than its 64 MiB soft budget.
+- Typing, new research UI, lossless raw-canvas Snip/unpack architecture, clipboard, dark mode and object accessibility navigator remain explicitly deferred.
 
-2. No integration tests for highest-risk pointer/render flows.
-- Current tests are predominantly storage/UI-unit tests.
-- Missing automated coverage for drag/dock/library-spawn/radial + touch/pen interaction sequences and PDF section-switch rendering reliability.
-- Impact: user-visible regressions can ship while unit tests remain green.
+### Latest review and checks
+- Added 44px diagram controls with wrapping, matching-library-item search navigation, preserved-case search snippets, and a persistent suggestion recovery tray. Source replacement now uses the same guarded history transaction as Undo.
+- Added reproducible CPU workloads in `tests/performance/workloads.mjs`; results/limits in `docs/reviews/UI_OPTIMIZATION_RESULTS_2026-10-08.md`. Dense full reindex and history snapshots remain measurable costs.
+- Browser mixed pen/widget undo/redo now passes; the failing assertion treated a legacy empty workspace as having an ink array. Four viewport checks and a 100-item touch-swipe/no-spawn + search-reveal workflow pass. Unchanged searchable-input caching reduced repeated 1,000-note indexing median from 41.0 ms to 5.5 ms in the CPU fixture.
 
-### Medium
-1. Runtime orchestration is highly centralized.
-- `src/main.js` currently ~8.7k LOC and owns many concern boundaries.
-- Impact: elevated change risk and slower safe iteration.
-
-2. Partially dead/legacy feature surfaces remain.
-- Graph feature code remains in tree (`src/features/graph/`, `src/widgets/graph/`) while current supported widget policy is centered on notes/pdf/reference/diagram.
-- Impact: maintenance and onboarding complexity.
-
-3. Storage-pressure UX is resilient but still disruptive.
-- The app correctly warns/fails safely under quota pressure and can request PDF reimport; this preserves integrity but interrupts workflow for heavy notebooks.
-- Impact: reliability is safe, continuity is not ideal under constrained storage.
-
-## Medium Severity Plan Tracking
-- `src/main.js` orchestration split:
-  - Status: in progress
-  - Plan: `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md`
-  - Completed in current cycle:
-    - Input routing extracted to `src/features/runtime/input-routing-controller.js`
-    - Library overlay orchestration extracted to `src/features/runtime/library-overlay-controller.js`
-    - Viewport dock overlay orchestration extracted to `src/features/runtime/viewport-dock-overlay-controller.js`
-    - Workspace persistence orchestration extracted to `src/features/runtime/workspace-persistence-controller.js`
-  - Remaining slices are documented in the plan and should be implemented in listed order.
-
-### Low
-1. Live documentation had drifted from implementation.
-- Resolved in this pass by archiving non-core docs and refreshing canonical docs.
-
-## Documentation State (After This Pass)
-
-### Live canonical docs (exactly 4)
-- `docs/README.md`
-- `docs/CURRENT_STATE.md`
-- `docs/PROJECT_SUMMARY.md`
-- `docs/MISSING_FROM_VISION.md`
-
-### Archived docs
-- Non-core top-level docs moved to `docs/done/`, including:
-  - `FINAL_DESIGN.md`
-  - `SPRINTS_SUMMARY.md` (archived as `SPRINTS_SUMMARY_active_2026-02-12.md` due filename collision)
-  - `SPRINT_8` through `SPRINT_18` specs
-
-## Verification Status
-
-Commands run in this pass:
-- `node --test tests/storage/*.test.mjs tests/ui/*.test.mjs`
-  - Result: 15 passed, 1 failed (`tests/ui/widget-types.test.mjs`).
-- `node tests/ui/widget-types.test.mjs`
-  - Confirmed assertion mismatch caused by diagram support being added to widget policy.
-- Static scan:
-  - `rg -n "TODO|FIXME|HACK|XXX|BUG" src tests docs`
-  - No active TODO/FIXME markers found in core runtime paths.
-
-## Recommended Next Steps
-1. Fix `tests/ui/widget-types.test.mjs` to match current widget policy.
-2. Add integration tests for touch/pen/mouse interaction flows (radial create, library drag-spawn, viewport dock/undock, PDF section rehydration).
-3. Continue executing `docs/plans/MAIN_ORCHESTRATION_SEGMENTATION_PLAN.md` until `main.js` is bootstrap/composition-only.
-4. Decide whether graph is coming back soon; if not, archive/remove dormant graph surfaces.
+### Push handoff
+- User requested committing and pushing the implementation. `git fetch origin` confirmed local `main` and `origin/main` were aligned before this commit; `git diff --check` passed. Existing validation remains 67 unit/storage tests and seven browser workflows passing.
+- Staged whitespace validation found and removed an extra source EOF line and trailing whitespace in bundled license text; license wording is unchanged. Regenerated the offline manifest and passed `git diff --cached --check`.

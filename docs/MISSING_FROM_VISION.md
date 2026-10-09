@@ -1,43 +1,22 @@
 # MISSING_FROM_VISION
 
-This file tracks **real remaining gaps** between the current app and the intended product direction.
+Updated 2026-10-08. Track actual remaining gaps; historical audit findings are in `docs/reviews/UI_EASE_OF_USE_AND_FEATURE_AUDIT_2026-09-26.md`. Implementation status and current test outcomes are in `docs/CURRENT_STATE.md`.
 
-## Critical
+## Release validation
 
-- None confirmed in this review pass.
+- Physical Galaxy Tab/S Pen and iPad/Apple Pencil checks remain outstanding: latency, palm rejection, gesture/docking ergonomics, Safari storage behavior and long-session memory. Desktop Chromium emulation cannot replace these.
+- Browser coverage now exists for creation, history/reload, library Add, stale-source linking, PDF export, backup restore and offline PDF import/search. Mixed pen/widget history, four viewport sizes and 100-item touch scrolling now pass. Section-switch PDF stress, multi-tab restore and quota-fault integration still need coverage.
+- Broader performance acceptance remains open. Repeat raster registration is much cheaper; dense history snapshots and full indexing still consume measurable CPU. See `docs/reviews/UI_OPTIMIZATION_RESULTS_2026-10-08.md` for reproducible workloads and limits.
 
-## High
+## Implementation limits
 
-1. Automated test suite is not green on `main`.
-- `tests/ui/widget-types.test.mjs` still asserts the pre-diagram widget policy and fails now that `diagram` is supported.
-- Impact: CI confidence is reduced and regressions can hide behind known red tests.
+- Recovery covers section canvas content. Notebook/section/library deletion is not restored by that section's Recently Deleted bin.
+- Archive restore validates checksums and stages immutable assets; aborted staging may leave unreferenced payloads. Settings rollback requires spare local storage. Backup records over 128 MiB are rejected.
+- Searchable PDF text is extracted on import; legacy PDFs without saved text require reimport. OCR is outside scope. PDF export remains image based.
+- Source-link preview describes content; it is not yet a rich side-by-side visual diff. Existing source provenance cannot be reconstructed for old independent copies that never stored it.
+- Main orchestration still owns many concerns despite separate history, export, backup, search and source-update modules.
+- PDF decode cache has a 64 MiB soft budget and permits one oversized image. Device memory pressure remains to be measured.
 
-2. No integration coverage for high-risk pointer/render flows.
-- Existing tests are mostly store/unit-level (`tests/storage/*.mjs`, `tests/ui/*.mjs`).
-- Missing: automated validation for pen/touch drag-drop, dock/undock, radial creation, library spawn-to-canvas, and PDF section-switch rehydration.
-- Impact: behavior can regress without detection despite unit tests passing.
+## Explicitly deferred product scope
 
-## Medium
-
-1. Runtime orchestration is highly centralized.
-- `src/main.js` is currently large and owns many unrelated concerns (input routing, persistence wiring, UI overlays, widget lifecycle, docking, library drag state).
-- Impact: change risk is high; unrelated features can regress during routine edits.
-
-2. Legacy/unused feature surfaces remain in tree.
-- Example: `src/features/graph/` and `src/widgets/graph/` exist while graph widgets are not part of current supported widget types.
-- Impact: maintenance overhead and confusion about current supported behavior.
-
-3. Storage UX under quota pressure still needs hardening.
-- Current flow warns on quota failures and can request reimport for missing PDF state; this is safe but still disruptive in heavy notebooks.
-- Impact: notebook continuity degrades in low-storage environments.
-
-## Low
-
-1. Historical docs had diverged from implementation.
-- This pass resolves that by archiving historical sprint/design docs and reducing live docs to 4 canonical files.
-
-## Deferred by Product Decision
-
-- Collaboration / cloud sync / accounts
-- OCR ingestion
-- Full research-browser workflow as a first-class default flow
+Typing anywhere on canvas; new research workflow; lossless raw-element Snip into Note and unpacking; clipboard; dark mode; canvas accessibility object navigator; new diagram families. These must not be added implicitly while finishing the accepted UI pass.

@@ -430,34 +430,12 @@ export function createReferenceManagerUi({
       return;
     }
 
-    const overlayWidth = Math.max(200, Math.min(276, viewportRect.width - FLOATING_INSET * 2));
-    shellElement.style.right = "auto";
-    shellElement.style.bottom = "auto";
-    shellElement.style.width = `${Math.round(overlayWidth)}px`;
-
-    const preferredLeft = launcherLeft + LAUNCHER_SIZE - overlayWidth;
-    const minLeft = viewportRect.left + FLOATING_INSET;
-    const maxLeft = Math.max(minLeft, viewportRect.right - FLOATING_INSET - overlayWidth);
-    const overlayLeft = clamp(preferredLeft, minLeft, maxLeft);
-
-    const panelHeightEstimate = panelRoot instanceof HTMLElement
-      ? Math.max(180, panelRoot.getBoundingClientRect().height || panelRoot.scrollHeight || 0)
-      : 320;
-    const preferredTop = launcherTop - OVERLAY_GAP - panelHeightEstimate;
-    const minTop = viewportRect.top + FLOATING_INSET;
-    const maxTop = Math.max(minTop, viewportRect.bottom - FLOATING_INSET - panelHeightEstimate);
-    const overlayTop = clamp(preferredTop, minTop, maxTop);
-
-    shellElement.style.left = `${Math.round(overlayLeft)}px`;
-    shellElement.style.top = `${Math.round(overlayTop)}px`;
-
-    if (panelRoot instanceof HTMLElement) {
-      panelRoot.style.maxHeight = `${Math.max(180, Math.floor(viewportRect.height - FLOATING_INSET * 2))}px`;
-    }
+    shellElement.style.setProperty('--drawer-top', `${Math.round(viewportRect.top)}px`);
   }
 
   function setOpen(nextOpen) {
     open = Boolean(nextOpen);
+    if (open) document.dispatchEvent(new CustomEvent("drawer-view", { detail: "library" }));
     launcherButton.dataset.open = open ? "true" : "false";
     launcherButton.setAttribute("aria-expanded", open ? "true" : "false");
     if (shellElement) {
@@ -496,13 +474,17 @@ export function createReferenceManagerUi({
     row.className = "library-chip-row";
     row.dataset.key = item.key;
     row.innerHTML = `
-      <button type="button" class="library-chip" data-action="focus-chip">${item.title}</button>
+      <button type="button" class="library-chip" data-action="focus-chip"></button>
+      <button type="button" class="library-drag-handle" data-action="drag-chip" aria-label="Drag into section">⠿</button>
+      <button type="button" data-action="add-chip">Add to section</button>
       <div class="library-chip-menu" data-role="chip-menu">
+        <button type="button" data-action="add-linked">Add linked copy</button>
         <button type="button" data-action="chip-info">Info</button>
         <button type="button" data-action="chip-rename">Rename</button>
         <button type="button" data-action="chip-delete">Delete</button>
       </div>
     `;
+    row.querySelector(".library-chip").textContent = item.title;
     return row;
   }
 
@@ -523,7 +505,9 @@ export function createReferenceManagerUi({
       empty.textContent = "No library items yet.";
       allListElement.append(empty);
     } else {
-      for (const item of shelfItems) {
+      const query = document.querySelector("#library-query")?.value.trim().toLowerCase() ?? "";
+      const kind = document.querySelector("#library-type")?.value ?? "";
+      for (const item of shelfItems.filter((entry) => (!kind || entry.kind === kind) && `${entry.title} ${(entry.raw?.tags ?? []).join(" ")}`.toLowerCase().includes(query))) {
         const row = makeChipRow(item);
         rowMap.set(item.key, row);
         allListElement.append(row);
@@ -1011,7 +995,7 @@ function renderNoteThumbnail(container, item) {
     return { imported: value === true, widgetId: null };
   }
 
-  async function importAtPointer(item, clientX, clientY) {
+  async function importAtPointer(item, clientX, clientY, linkStatus = "frozen") {
     if (!item) {
       return { imported: false, widgetId: null };
     }
@@ -1037,7 +1021,7 @@ function renderNoteThumbnail(container, item) {
         screenPoint,
         canvasPoint,
         dropMeta,
-        linkStatus: "linked",
+        linkStatus,
       }));
       if (!imported.imported) {
         triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
@@ -1047,7 +1031,7 @@ function renderNoteThumbnail(container, item) {
       return imported;
     }
     if (item.kind === "note") {
-      const imported = normalizeImportResult(await onImportNote?.(item.raw, { screenPoint, canvasPoint, dropMeta }));
+      const imported = normalizeImportResult(await onImportNote?.(item.raw, { screenPoint, canvasPoint, dropMeta, linkStatus }));
       if (!imported.imported) {
         triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
         return { imported: false, widgetId: null };
@@ -1059,7 +1043,7 @@ function renderNoteThumbnail(container, item) {
       screenPoint,
       canvasPoint,
       dropMeta,
-      linkStatus: "linked",
+      linkStatus,
     }));
     if (!imported.imported) {
       triggerDropFeedback({ kind: "deny", message: "Could not add to canvas" });
@@ -1398,7 +1382,7 @@ function renderNoteThumbnail(container, item) {
     if (!(target instanceof HTMLElement)) {
       return;
     }
-    const chip = target.closest("button[data-action='focus-chip']");
+    const chip = target.closest("button[data-action='drag-chip']");
     if (!(chip instanceof HTMLButtonElement)) {
       return;
     }
@@ -1594,6 +1578,11 @@ function onListPointerLeave(event) {
       return;
     }
 
+    if (action === "add-chip" || action === "add-linked") {
+      const rect = resolveViewportRect();
+      void importAtPointer(item, rect.left + rect.width * 0.4, rect.top + rect.height * 0.45, action === "add-linked" ? "linked" : "frozen");
+      return;
+    }
     if (action === "focus-chip") {
       void showPreviewForKey(itemKey, row);
       setMenuRowKey(null);
@@ -1664,6 +1653,12 @@ function onListPointerLeave(event) {
 
   function wireEvents() {
     appendFloatingElements();
+    bind(document.querySelector('#library-query'), 'input', renderLists);
+    bind(document.querySelector('#library-type'), 'change', renderLists);
+    bind(document.querySelector('#library-close'), 'click', () => { setOpen(false); launcherButton.focus(); });
+    bind(document, 'drawer-view', (event) => { if (event.detail !== 'library') setOpen(false); });
+    bind(document.querySelector('#drawer-show-library'), 'click', () => setOpen(true));
+    bind(document.querySelector('#drawer-show-search'), 'click', () => document.querySelector('#toggle-search-panel')?.click());
 
     bind(launcherButton, "click", () => {
       setOpen(!open);
@@ -1677,7 +1672,7 @@ function onListPointerLeave(event) {
       previewHovered = false;
       hidePreviewLater();
     });
-    bind(previewElement, "pointerdown", onPreviewPointerDown);
+
     bind(previewElement, "pointermove", onPreviewPointerMove);
     bind(previewElement, "pointerup", onPreviewPointerUp);
     bind(previewElement, "pointercancel", onPreviewPointerCancel);
@@ -1737,6 +1732,21 @@ function onListPointerLeave(event) {
 
     open() {
       setOpen(true);
+    },
+
+    async reveal(key) {
+      const item = findItem(key);
+      if (!item) return false;
+      document.querySelector('#library-query').value = '';
+      document.querySelector('#library-type').value = '';
+      renderLists();
+      setOpen(true);
+      const row = rowMap.get(key);
+      if (!row) return false;
+      row.scrollIntoView({ block: 'nearest' });
+      row.querySelector('button')?.focus({ preventScroll: true });
+      await showPreviewForKey(key, row);
+      return true;
     },
 
     close() {

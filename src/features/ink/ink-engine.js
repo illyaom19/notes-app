@@ -1656,6 +1656,20 @@ export class InkEngine {
     };
   }
 
+  getSectionStrokes(contextId = this._activeContextId()) {
+    return this.store.getCompletedStrokes().filter((stroke) => stroke.contextId === contextId);
+  }
+
+  replaceSectionStrokes(strokes, contextId = this._activeContextId()) {
+    const others = this.store.getCompletedStrokes().filter((stroke) => stroke.contextId !== contextId);
+    this.store = new StrokeStore([...others, ...JSON.parse(JSON.stringify(strokes))]);
+    this._completedLayerCacheRevision = -1;
+    this._widgetInkRevisionCacheRevision = -1;
+    this._afterStoreMutation();
+    this.runtime.bumpWidgetRasterEpoch();
+    this.runtime.requestRender();
+  }
+
   _afterStoreMutation() {
     this._syncLassoSelectionAfterMutation();
     this.persistence.scheduleSave(this.store.serialize());

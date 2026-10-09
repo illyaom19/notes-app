@@ -1,8 +1,7 @@
-const PDFJS_VERSION = "4.6.82";
-const PRIMARY_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.min.mjs`;
-const PRIMARY_WORKER_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.min.mjs`;
-const FALLBACK_URL = `https://unpkg.com/pdfjs-dist@${PDFJS_VERSION}/build/pdf.min.mjs`;
-const FALLBACK_WORKER_URL = `https://unpkg.com/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.min.mjs`;
+const PRIMARY_URL = new URL("../../../vendor/pdfjs/pdf.min.mjs", import.meta.url).href;
+const PRIMARY_WORKER_URL = new URL("../../../vendor/pdfjs/pdf.worker.min.mjs", import.meta.url).href;
+const FALLBACK_URL = PRIMARY_URL;
+const FALLBACK_WORKER_URL = PRIMARY_WORKER_URL;
 
 let loadPromise = null;
 
@@ -45,7 +44,10 @@ export async function loadPdfDocumentFromBytes(bytes, { forceDisableWorker = fal
   const pdfjs = await loadPdfJs();
   const openDocument = async (disableWorker) => {
     const loadingTask = pdfjs.getDocument({
-      data: bytes,
+      data: bytes.slice(),
+      cMapUrl: new URL("../../../vendor/pdfjs/cmaps/", import.meta.url).href,
+      cMapPacked: true,
+      standardFontDataUrl: new URL("../../../vendor/pdfjs/standard_fonts/", import.meta.url).href,
       ...(disableWorker ? { disableWorker: true } : {}),
     });
     try {

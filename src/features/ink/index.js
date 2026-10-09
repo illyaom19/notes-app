@@ -5,6 +5,8 @@ export function createInkFeature({ runtime, onStateChange, getActiveContextId, o
   engine.attach();
 
   return {
+    getSectionStrokes: (scope) => engine.getSectionStrokes(scope),
+    replaceSectionStrokes: (strokes, scope) => engine.replaceSectionStrokes(strokes, scope),
     undo: () => engine.undo(),
     redo: () => engine.redo(),
     getTool: () => engine.getTool(),

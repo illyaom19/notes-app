@@ -92,3 +92,16 @@ test("asset manager reuses deduplicated payloads", () => {
     restoreEnv();
   }
 });
+
+test('multiple asset managers preserve a shared catalog and original PDF owners', () => {
+  const storage = createMemoryStorage();
+  const restore = installBrowserEnv(storage);
+  try {
+    const library = createAssetManager({ storage });
+    const workspace = createAssetManager({ storage });
+    const original = library.registerPdfBytes(new Uint8Array([1, 2, 3]), { ownerId: 'library:source' });
+    workspace.registerPdfRasterDocument({ pages: [{ pageNumber: 1, width: 10, height: 10, levels: [] }] }, { ownerId: 'section:widget' });
+    assert.equal(workspace.snapshot().recordCount, 2);
+    assert.deepEqual(workspace.loadPdfBytes(original.id), new Uint8Array([1, 2, 3]));
+  } finally { restore(); }
+});

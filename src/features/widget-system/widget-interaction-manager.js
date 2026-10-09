@@ -914,6 +914,7 @@ export function createWidgetInteractionManager({
       return;
     }
 
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const key = event.key.toLowerCase();
 
     if (key === "escape") {

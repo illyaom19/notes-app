@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+const browser = await chromium.launch(); const context = await browser.newContext({ viewport: { width: 768, height: 1024 }, serviceWorkers: 'block' });
+const page = await context.newPage(); const errors=[]; page.on('pageerror', e=>errors.push(e.stack));
+await page.goto('http://127.0.0.1:4174'); await page.waitForTimeout(900);
+await page.locator('#onboarding-hint-dismiss').click().catch(()=>{});
+await page.mouse.click(300,300,{button:'right'});await page.locator('[data-create-type="expanded-area"]').click();await page.waitForTimeout(500);
+assert.equal(await page.locator('#widget-count').textContent(), '1');
+console.log('created',await page.locator('#widget-count').textContent(),'undoDisabled',await page.locator('#undo-ink').isDisabled());
+await page.locator('#undo-ink').click();await page.waitForTimeout(300);assert.equal(await page.locator('#widget-count').textContent(), '0');console.log('undoCreate',await page.locator('#widget-count').textContent());
+await page.locator('#redo-ink').click();await page.waitForTimeout(350);assert.equal(await page.locator('#widget-count').textContent(), '1');console.log('redoCreate',await page.locator('#widget-count').textContent());
+await page.reload();await page.waitForTimeout(600);assert.equal(await page.locator('#widget-count').textContent(), '1');console.log('reload',await page.locator('#widget-count').textContent(),await page.locator('#undo-ink').isDisabled());
+await page.locator('#undo-ink').click();await page.waitForTimeout(250);assert.equal(await page.locator('#widget-count').textContent(), '0');console.log('undoAfterReload',await page.locator('#widget-count').textContent());
+console.log('headerHeight',await page.locator('.section-strip').evaluate(e=>e.getBoundingClientRect().height));console.log('errors',errors);assert.deepEqual(errors, []);assert.ok(await page.locator('.section-strip').evaluate(e=>e.getBoundingClientRect().height) < 140);
+await page.screenshot({path:'/tmp/notes-app-check-implemented-tablet.png'});await browser.close();

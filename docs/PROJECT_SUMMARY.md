@@ -10,6 +10,12 @@ Primary goals:
 - Keep widget interactions predictable across touch, pen, and mouse.
 - Keep UI minimal while still discoverable.
 
+## Planned Canvas Content Direction (Deferred)
+
+Users should be able to draw, and eventually type, anywhere on the canvas without first creating a Note. Typing is deferred. A future lossless “Snip into Note” flow will package raw elements into a movable/reusable Note, with conversion back to editable raw elements. This is an accepted product direction, not a claim about the current implementation; detailed capture/unpack semantics and migration timing remain to be planned.
+
+See `docs/plans/UI_IMPROVEMENT_PLAN.md` for selected UI directions. New research workflow work is also deferred.
+
 ## Current Architecture Shape
 
 - Runtime orchestration: `src/main.js`
@@ -27,6 +33,10 @@ Primary goals:
   - Suggestions + references/library UI: `src/features/suggestions/`, `src/features/references/`
   - PDF/document lifecycle: `src/features/documents/`, `src/widgets/pdf/`
   - Gestures and minimap: `src/features/gestures/`, `src/features/minimap/`
+
+## Approved UI pass in progress
+
+The current working tree adds persisted unified section history/recovery, independent source-aware library copies, a compact tablet shell and shared Library/Search drawer, notebook/PDF full-text search, PDF export preview and editable full-workspace archives. Core fonts/PDF dependencies are bundled for offline use. See `docs/CURRENT_STATE.md` for verified behavior and remaining limits; these changes are not yet a physical-device release sign-off.
 
 ## Execution Priorities (Current)
 

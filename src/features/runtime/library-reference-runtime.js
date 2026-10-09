@@ -1,3 +1,4 @@
+import { sourceProvenance, sourceVersion } from "../notebooks/source-version.js";
 import {
   fingerprintDocumentEntry,
   fingerprintNoteEntry,
@@ -13,6 +14,7 @@ export function createLibraryReferenceRuntime({
   makeId,
   captureWidgetInkSnapshot,
   restoreWidgetInkSnapshot,
+  replaceWidgetInkSnapshot,
   updateWidgetUi,
   flushWorkspacePersist,
   scheduleSuggestionAnalysis,
@@ -104,6 +106,7 @@ export function createLibraryReferenceRuntime({
       ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
       title: saved.title,
       librarySourceId: saved.id,
+      libraryVersion: sourceVersion("reference", saved),
       popupMetadata: {
         ...saved.popupMetadata,
         title: saved.title,
@@ -194,6 +197,7 @@ export function createLibraryReferenceRuntime({
       ...(widget.metadata && typeof widget.metadata === "object" ? widget.metadata : {}),
       title: saved.title,
       libraryNoteId: saved.id,
+      libraryVersion: sourceVersion("note", saved),
     };
     if (widget.type === "expanded-area") {
       widget.metadata.note = saved.metadata?.note ?? "";
@@ -462,7 +466,7 @@ export function createLibraryReferenceRuntime({
     let changed = false;
 
     for (const widget of runtime.listWidgets()) {
-      if (!widget || widget.type !== "reference-popup") {
+      if (!widget || widget.metadata?.independentCopy || widget.type !== "reference-popup") {
         continue;
       }
 
@@ -479,6 +483,14 @@ export function createLibraryReferenceRuntime({
         continue;
       }
 
+      const revision = sourceVersion('reference', source);
+      if (widget.metadata.libraryVersion !== revision) {
+        widget.textContent = source.textContent ?? ''; widget.citation = source.citation; widget.contentType = source.contentType;
+        if (source.imageDataUrl && source.imageDataUrl !== widget.imageDataUrl) { widget.imageDataUrl = source.imageDataUrl; const image = new Image(); image.onload = () => { widget._image = image; runtime.bumpWidgetRasterEpoch(); runtime.requestRender(); }; image.src = source.imageDataUrl; }
+        replaceWidgetInkSnapshot?.(source.inkStrokes ?? [], widget.id);
+        widget.metadata.libraryVersion = revision;
+        changed = true;
+      }
       const currentTitle = typeof widget.metadata?.title === "string" ? widget.metadata.title : "";
       const currentSourceLabel = typeof widget.sourceLabel === "string" ? widget.sourceLabel : "";
       const currentPopupMetadata =
@@ -510,7 +522,7 @@ export function createLibraryReferenceRuntime({
     }
 
     for (const widget of runtime.listWidgets()) {
-      if (!widget || (widget.type !== "expanded-area" && widget.type !== "diagram")) {
+      if (!widget || widget.metadata?.independentCopy || (widget.type !== "expanded-area" && widget.type !== "diagram")) {
         continue;
       }
 
@@ -527,6 +539,8 @@ export function createLibraryReferenceRuntime({
         continue;
       }
 
+      const revision = sourceVersion("note", source);
+      if (widget.metadata.libraryVersion !== revision) { replaceWidgetInkSnapshot?.(source.inkStrokes ?? [], widget.id); widget.metadata.libraryVersion = revision; changed = true; }
       const sourceNote = source.metadata?.note ?? "";
       const sourceWidgetType = source.metadata?.widgetType === "diagram" ? "diagram" : "expanded-area";
       const currentTitle = typeof widget.metadata?.title === "string" ? widget.metadata.title : "";
@@ -591,7 +605,7 @@ export function createLibraryReferenceRuntime({
     }
 
     for (const widget of runtime.listWidgets()) {
-      if (!widget) {
+      if (!widget || widget.metadata?.independentCopy) {
         continue;
       }
       if (widget.type === "reference-popup") {
@@ -602,12 +616,15 @@ export function createLibraryReferenceRuntime({
         if (!sourceId) {
           continue;
         }
+        const latest = notebookLibraryStore.getReference(activeContextId, sourceId);
+        if (widget.metadata.libraryVersion && widget.metadata.libraryVersion !== sourceVersion("reference", latest)) continue;
         const entry = referenceLibraryEntryFromWidget(widget);
         if (entry) {
-          notebookLibraryStore.upsertReference(activeContextId, {
+          const saved = notebookLibraryStore.upsertReference(activeContextId, {
             ...entry,
             id: sourceId,
           });
+          if (saved) widget.metadata.libraryVersion = sourceVersion("reference", saved);
         }
         continue;
       }
@@ -620,12 +637,15 @@ export function createLibraryReferenceRuntime({
         if (!sourceId) {
           continue;
         }
+        const latest = notebookLibraryStore.getNote(activeContextId, sourceId);
+        if (widget.metadata.libraryVersion && widget.metadata.libraryVersion !== sourceVersion("note", latest)) continue;
         const entry = widget.type === "diagram" ? diagramLibraryEntryFromWidget(widget) : noteLibraryEntryFromWidget(widget);
         if (entry) {
-          notebookLibraryStore.upsertNote(activeContextId, {
+          const saved = notebookLibraryStore.upsertNote(activeContextId, {
             ...entry,
             id: sourceId,
           });
+          if (saved) widget.metadata.libraryVersion = sourceVersion("note", saved);
         }
       }
 
@@ -654,7 +674,7 @@ export function createLibraryReferenceRuntime({
     }
   }
 
-  async function createReferencePopupFromLibraryEntry(referenceEntry, { linkStatus = "linked", intent = null } = {}) {
+  async function createReferencePopupFromLibraryEntry(referenceEntry, { linkStatus = "frozen", intent = null } = {}) {
     if (!referenceEntry || typeof referenceEntry !== "object") {
       return null;
     }
@@ -665,6 +685,9 @@ export function createLibraryReferenceRuntime({
       definition: {
         metadata: {
           title: referenceEntry.title,
+          independentCopy: !linked,
+          libraryVersion: sourceVersion("reference", referenceEntry),
+          sourceProvenance: sourceProvenance("reference", referenceEntry),
           ...(linked ? { librarySourceId: referenceEntry.id } : {}),
           popupMetadata: {
             ...referenceEntry.popupMetadata,
@@ -705,7 +728,7 @@ export function createLibraryReferenceRuntime({
     return widget;
   }
 
-  async function createNoteWidgetFromLibraryEntry(noteEntry, intent = null) {
+  async function createNoteWidgetFromLibraryEntry(noteEntry, intent = null, { linkStatus = "frozen" } = {}) {
     if (!noteEntry || typeof noteEntry !== "object") {
       return null;
     }
@@ -715,7 +738,10 @@ export function createLibraryReferenceRuntime({
         {
           metadata: {
             title: noteEntry.title ?? "Diagram",
-            libraryNoteId: noteEntry.id ?? null,
+            independentCopy: linkStatus !== "linked",
+            libraryNoteId: linkStatus === "linked" ? noteEntry.id : null,
+            libraryVersion: sourceVersion("note", noteEntry),
+            sourceProvenance: sourceProvenance("note", noteEntry),
           },
           size: noteEntry.size,
           dataPayload: {
@@ -732,7 +758,10 @@ export function createLibraryReferenceRuntime({
           metadata: {
             title: noteEntry.title ?? "Notes",
             note: typeof noteEntry.metadata?.note === "string" ? noteEntry.metadata.note : "",
-            libraryNoteId: noteEntry.id ?? null,
+            independentCopy: linkStatus !== "linked",
+            libraryNoteId: linkStatus === "linked" ? noteEntry.id : null,
+            libraryVersion: sourceVersion("note", noteEntry),
+            sourceProvenance: sourceProvenance("note", noteEntry),
           },
           size: noteEntry.size,
         },
@@ -748,7 +777,7 @@ export function createLibraryReferenceRuntime({
     return widget;
   }
 
-  async function createPdfWidgetFromLibraryEntry(sourceDocument, { linkStatus = "linked", intent = null } = {}) {
+  async function createPdfWidgetFromLibraryEntry(sourceDocument, { linkStatus = "frozen", intent = null } = {}) {
     const normalizedIntent =
       normalizeCreationIntent(intent) ??
       createCreationIntent({
@@ -758,9 +787,11 @@ export function createLibraryReferenceRuntime({
         createdFrom: "manual",
       });
 
-    return createPdfWidgetFromNotebookSource(sourceDocument, normalizedIntent, {
+    const widget = await createPdfWidgetFromNotebookSource(sourceDocument, normalizedIntent, {
       linkStatus: linkStatus === "frozen" ? "frozen" : "linked",
     });
+    if (widget) { widget.metadata.independentCopy = linkStatus === "frozen"; widget.metadata.sourceProvenance = sourceProvenance("document", sourceDocument); updateWidgetUi?.(); }
+    return widget;
   }
 
   async function renameNotebookReferenceFromManager(entry) {

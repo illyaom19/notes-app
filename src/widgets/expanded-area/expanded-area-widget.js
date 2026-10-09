@@ -12,6 +12,7 @@ export class ExpandedAreaWidget extends WidgetBase {
       ...definition,
       size: definition.size ?? { width: 420, height: 260 },
       metadata: {
+        ...definition.metadata,
         title: definition.metadata?.title ?? "Notes",
         note: definition.metadata?.note ?? "",
       },

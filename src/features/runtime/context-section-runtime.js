@@ -76,7 +76,7 @@ export function createContextSectionRuntime({
         return;
       }
 
-      flushWorkspacePersist?.();
+      if (flushWorkspacePersist?.() === false) { await showNoticeDialog?.("Save failed. Retry before changing notebooks or sections.", { title: "Not saved" }); return; }
 
       const created = contextStore.createContext(name, "notebook");
       if (!created) {
@@ -147,7 +147,7 @@ export function createContextSectionRuntime({
         return;
       }
 
-      flushWorkspacePersist?.();
+      if (flushWorkspacePersist?.() === false) { await showNoticeDialog?.("Save failed. Retry before changing notebooks or sections.", { title: "Not saved" }); return; }
       const targetSections = sectionsStore.listSections(target.id);
       const deletingActiveContext = target.id === getActiveContextId?.();
 
@@ -202,7 +202,7 @@ export function createContextSectionRuntime({
         return;
       }
 
-      flushWorkspacePersist?.();
+      if (flushWorkspacePersist?.() === false) { await showNoticeDialog?.("Save failed. Retry before changing notebooks or sections.", { title: "Not saved" }); return; }
       const created = sectionsStore.createSection(activeContextId, name);
       if (!created) {
         await showNoticeDialog?.("Section name cannot be empty.", { title: "Section" });
@@ -274,7 +274,7 @@ export function createContextSectionRuntime({
         return;
       }
 
-      flushWorkspacePersist?.();
+      if (flushWorkspacePersist?.() === false) { await showNoticeDialog?.("Save failed. Retry before changing notebooks or sections.", { title: "Not saved" }); return; }
       const deletingActiveSection = section.id === getActiveSectionId?.();
       const result = sectionsStore.deleteSection(activeContextId, section.id);
       if (!result) {

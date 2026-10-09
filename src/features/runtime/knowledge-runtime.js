@@ -10,6 +10,8 @@ export function createKnowledgeRuntime({
   activeSectionRecord,
   isScopeInNotebook,
   getSectionsStore,
+  prepareNotebookSearch,
+  activateLibrarySearchResult,
   getSuggestionUiController,
   getRestoringContext,
   scheduleWorkspacePersist,
@@ -386,6 +388,7 @@ export function createKnowledgeRuntime({
   }
 
   async function jumpToSearchResult(result) {
+    if (result?.libraryKey) { await activateLibrarySearchResult?.(result); return true; }
     if (!result || typeof result.widgetId !== "string" || !result.widgetId.trim()) {
       return false;
     }
@@ -451,6 +454,7 @@ export function createKnowledgeRuntime({
           return { results: [], indexedCount: 0 };
         }
 
+        await prepareNotebookSearch?.(liveIndex);
         const activeScopeId = workspaceScopeId?.();
         if (activeScopeId) {
           liveIndex.reindexNow({ runtime, contextId: activeScopeId });
@@ -468,7 +472,7 @@ export function createKnowledgeRuntime({
           : [];
 
         const notebookResults = liveIndex
-          .query(query, { contextId: null, limit: 260 })
+          .query(query, { contextId: null, contextPrefix: `${getActiveContextId?.()}::`, limit: 260 })
           .filter((entry) => entry.contextId !== activeScopeId && isScopeInNotebook?.(entry.contextId, getActiveContextId?.()))
           .slice(0, 80)
           .map((entry) => {
@@ -507,8 +511,10 @@ export function createKnowledgeRuntime({
           results.push(...notebookResults);
         }
 
+        const filter = document.querySelector('#search-scope')?.value ?? 'notebook';
+        const filtered = filter === 'section' ? sectionResults : filter === 'library' ? notebookResults.filter((entry) => entry.contextId.endsWith('::library')) : results;
         return {
-          results,
+          results: filtered.map((entry) => entry.contextId?.endsWith('::library') ? { ...entry, libraryKey: entry.widgetId, contextLabel: 'Library' } : entry),
           indexedCount: liveIndex
             .snapshotEntries()
             .filter((entry) => isScopeInNotebook?.(entry.contextId, getActiveContextId?.())).length,

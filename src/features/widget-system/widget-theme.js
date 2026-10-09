@@ -28,8 +28,8 @@ export const WIDGET_THEME = Object.freeze({
     focusHalo: "rgba(31, 103, 113, 0.24)",
   }),
   typography: Object.freeze({
-    uiFamily: '"IBM Plex Sans", "Segoe UI", sans-serif',
-    contentFamily: '"Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif',
+    uiFamily: '"Ubuntu Sans", system-ui, sans-serif',
+    contentFamily: '"Ubuntu Sans", system-ui, sans-serif',
   }),
   lod: Object.freeze({
     detailMinZoom: 1,
@@ -173,6 +173,7 @@ export function drawFloatingWidgetTitle(
     return;
   }
 
+  if (widget?.metadata?.sourceProvenance && !widget.metadata.independentCopy) title += " · Linked";
   const effectiveZoom = Math.max(1, camera.zoom);
   ctx.save();
   ctx.font = `${Math.max(1, 10 * effectiveZoom)}px ${WIDGET_THEME.typography.uiFamily}`;
@@ -181,7 +182,7 @@ export function drawFloatingWidgetTitle(
   const pillH = Math.max(14, 18 * effectiveZoom);
   const pillW = Math.min(Math.max(44 * effectiveZoom, textWidth + padX * 2), Math.max(64, frame.width - 18));
   const pillX = frame.screen.x + 10;
-  const pillY = frame.screen.y - pillH - Math.max(4, 6 * effectiveZoom);
+  const pillY = Math.max(4, frame.screen.y - pillH - Math.max(4, 6 * effectiveZoom));
 
   if (widget && typeof widget === "object") {
     widget._floatingTitleLayout = {
@@ -205,7 +206,9 @@ export function drawFloatingWidgetTitle(
   ctx.fillStyle = focused ? WIDGET_THEME.palette.controlFg : WIDGET_THEME.palette.headerAccent;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ctx.fillText(title, pillX + padX, pillY + pillH / 2);
+  let label = title;
+  while (label.length > 1 && ctx.measureText(label).width > pillW - padX * 2) label = label.slice(0, -2) + "…";
+  ctx.fillText(label, pillX + padX, pillY + pillH / 2);
   ctx.restore();
 }
 

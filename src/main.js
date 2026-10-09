@@ -1,3 +1,10 @@
+import { prepareNotebookSearch as indexNotebook } from "./features/search/notebook-search.js";
+import { organizeSettingsMenu } from "./features/ui/settings-menu.js";
+import { flushAssetWrites } from "./features/storage/asset-manager.js";
+import { recoverInterruptedRestore } from "./features/storage/workspace-backup.js";
+recoverInterruptedRestore();
+import { createSourceUpdateRuntime } from "./features/runtime/source-update-runtime.js";
+import { createHistoryRuntime } from "./features/history/history-runtime.js";
 import { CanvasRuntime } from "./core/canvas/canvas-runtime.js";
 import { WidgetRegistry } from "./core/widgets/widget-registry.js";
 import { BackgroundWorkerClient } from "./core/workers/background-worker-client.js";
@@ -164,6 +171,10 @@ const loadedModules = new Set();
 let inkFeature = null;
 let popupInteractions = null;
 let diagramInteractions = null;
+let historyRuntime = null;
+let sourceUpdateRuntime = null;
+let pendingRecovery = null;
+let saveStatusTimer = null;
 let snipTool = null;
 let whitespaceManager = null;
 let researchPanelController = null;
@@ -802,6 +813,7 @@ const runtime = new CanvasRuntime({
     }
     renderSuggestionRail();
     renderSectionMinimap();
+    scheduleSourceHints();
   },
   onViewModeChange: ({ mode }) => {
     if (peekStateOutput) {
@@ -872,6 +884,7 @@ libraryReferenceRuntime = createLibraryReferenceRuntime({
   makeId,
   captureWidgetInkSnapshot,
   restoreWidgetInkSnapshot,
+  replaceWidgetInkSnapshot: (strokes, id) => { inkFeature?.removeStrokesForWidget(id, { contextId: workspaceScopeId() }); restoreWidgetInkSnapshot(strokes, id); },
   updateWidgetUi,
   flushWorkspacePersist,
   scheduleSuggestionAnalysis,
@@ -900,6 +913,8 @@ knowledgeRuntime = createKnowledgeRuntime({
   activeSectionRecord,
   isScopeInNotebook,
   getSectionsStore: () => sectionsStore,
+  prepareNotebookSearch,
+  activateLibrarySearchResult: async (result) => referenceManagerUiController?.reveal(result.libraryKey),
   getSuggestionUiController: () => suggestionUiController,
   getRestoringContext: () => restoringContext,
   scheduleWorkspacePersist,
@@ -1913,6 +1928,7 @@ function isScopeInNotebook(scopeId, notebookId) {
 }
 
 function updateInkUi(state) {
+  historyRuntime?.schedule();
   if (!inkStateOutput || !strokeCountOutput || !undoInkButton || !redoInkButton) {
     return;
   }
@@ -1932,8 +1948,10 @@ function updateInkUi(state) {
   const enabled = inkStateSnapshot.enabled !== false;
 
   strokeCountOutput.textContent = String(completed);
-  undoInkButton.disabled = undoDepth < 1;
-  redoInkButton.disabled = redoDepth < 1;
+  if (!historyRuntime) {
+    undoInkButton.disabled = undoDepth < 1;
+    redoInkButton.disabled = redoDepth < 1;
+  }
 
   if (inkToolOutput) {
     inkToolOutput.textContent = activeTool;
@@ -2526,6 +2544,7 @@ async function renameWidgetFromContextMenu(widget) {
   }
 
   const normalizedTitle = nextTitle.trim();
+  if (widget.metadata?.independentCopy) { widget.metadata.title = normalizedTitle; updateWidgetUi(); return true; }
   if (widget.type === "reference-popup") {
     const sourceId =
       typeof widget.metadata?.librarySourceId === "string" && widget.metadata.librarySourceId.trim()
@@ -2862,15 +2881,15 @@ function applyPopupAutoDocking() {
   }
 }
 
-async function createReferencePopupFromLibraryEntry(referenceEntry, { linkStatus = "linked", intent = null } = {}) {
+async function createReferencePopupFromLibraryEntry(referenceEntry, { linkStatus = "frozen", intent = null } = {}) {
   return libraryReferenceRuntime.createReferencePopupFromLibraryEntry(referenceEntry, { linkStatus, intent });
 }
 
-async function createNoteWidgetFromLibraryEntry(noteEntry, intent = null) {
-  return libraryReferenceRuntime.createNoteWidgetFromLibraryEntry(noteEntry, intent);
+async function createNoteWidgetFromLibraryEntry(noteEntry, intent = null, options = {}) {
+  return libraryReferenceRuntime.createNoteWidgetFromLibraryEntry(noteEntry, intent, options);
 }
 
-async function createPdfWidgetFromLibraryEntry(sourceDocument, { linkStatus = "linked", intent = null } = {}) {
+async function createPdfWidgetFromLibraryEntry(sourceDocument, { linkStatus = "frozen", intent = null } = {}) {
   return libraryReferenceRuntime.createPdfWidgetFromLibraryEntry(sourceDocument, { linkStatus, intent });
 }
 
@@ -3220,11 +3239,143 @@ function scheduleSuggestionAnalysis({ immediate = false } = {}) {
   knowledgeRuntime?.scheduleSuggestionAnalysis?.({ immediate });
 }
 
+function setupBackupControls() {
+  const fileInput = document.querySelector('#workspace-restore-file');
+  let busy = false;
+  const run = async (operation) => {
+    if (busy) return; busy = true;
+    const button = document.querySelector('#workspace-backup'); button.disabled = true;
+    try { await operation(); } catch (error) { notifyRecovery(error.message); }
+    finally { busy = false; button.disabled = false; }
+  };
+  document.querySelector('#workspace-backup').onclick = () => run(async () => {
+    if (!flushWorkspacePersist()) throw new Error('Save the current section before backing up.');
+    const { createWorkspaceBackup } = await import('./features/storage/workspace-backup.js');
+    const blob = await createWorkspaceBackup();
+    const anchor = document.createElement('a'); const url = URL.createObjectURL(blob);
+    anchor.href = url; anchor.download = `Notes-${new Date().toISOString().slice(0, 10)}.notesbackup`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+    notifyRecovery('Workspace backup downloaded.');
+  });
+  document.querySelector('#workspace-restore').onclick = () => { fileInput.value = ''; fileInput.click(); };
+  fileInput.onchange = () => run(async () => {
+    const file = fileInput.files[0]; if (!file) return;
+    const { inspectWorkspaceBackup, restoreWorkspaceBackup } = await import('./features/storage/workspace-backup.js');
+    const manifest = await inspectWorkspaceBackup(file);
+    if (!await showConfirmDialog({ title: 'Restore workspace?', message: `Replace all notebooks and settings with the backup from ${manifest.createdAt}? This includes ${manifest.records.length} assets. Download a backup of your current workspace first if you need to keep it.`, confirmLabel: 'Replace workspace', danger: true })) return;
+    // Quiesce edits and persistence while applying the staged archive.
+    flushWorkspacePersist(); restoringContext = true; workspacePersistenceController.destroy();
+    const overlay = document.createElement('dialog'); overlay.textContent = 'Restoring workspace…'; document.body.append(overlay); overlay.showModal();
+    try { await restoreWorkspaceBackup(file); location.reload(); }
+    catch (error) { restoringContext = false; overlay.remove(); throw error; }
+  });
+}
+
+let saveStatusGeneration = 0;
+function showSaveState(state) {
+  const output = document.querySelector('#save-status');
+  if (!output) return;
+  const generation = ++saveStatusGeneration;
+  clearTimeout(saveStatusTimer);
+  output.hidden = false;
+  output.dataset.state = state === 'failed' ? 'failed' : 'saving';
+  output.textContent = state === 'failed' ? 'Not saved — Retry' : 'Saving…';
+  if (state !== 'saved') return;
+  // A late asset-write completion must never hide a newer save or failure.
+  void flushAssetWrites().then(() => {
+    if (generation !== saveStatusGeneration) return;
+    output.dataset.state = 'saved';
+    output.textContent = 'Saved';
+    saveStatusTimer = setTimeout(() => { output.hidden = true; }, 1800);
+  }).catch(() => {
+    if (generation === saveStatusGeneration) showSaveState('failed');
+  });
+}
+
+function notifyRecovery(message, undo = null) {
+  const toast = document.querySelector('#recovery-notification');
+  toast.replaceChildren();
+  const text = document.createElement('span'); text.textContent = message; toast.append(text);
+  if (undo) {
+    const button = document.createElement('button'); button.textContent = 'Undo';
+    button.onclick = () => { void undo(); toast.hidden = true; }; toast.append(button);
+  }
+  const close = document.createElement('button'); close.textContent = 'Dismiss'; close.onclick = () => { toast.hidden = true; }; toast.append(close);
+  toast.hidden = false;
+}
+
+function scheduleSourceHints() { sourceUpdateRuntime?.schedule(); }
+function prepareNotebookSearch(index) {
+  return indexNotebook({ index, sectionsStore, activeContextId, workspaceScopeId, contextWorkspaceStore, notebookLibraryStore, notebookDocumentLibraryStore });
+}
+
+function snapshotForHistory() {
+  const payload = documentManager.toPersistencePayload();
+  return {
+    widgets: contextWorkspaceStore.serializeWidgets(runtime, workspaceScopeId()),
+    strokes: inkFeature?.getSectionStrokes(workspaceScopeId()) ?? [],
+    documents: payload.documents,
+    documentBindings: payload.documentBindings,
+    ordering: [{ id: "widgets", ids: runtime.listWidgets().map(widget => widget.id) }],
+  };
+}
+
+async function applyHistorySnapshot(next) {
+  const current = snapshotForHistory();
+  const previous = new Map(current.widgets.map((widget) => [widget.id, JSON.stringify(widget)]));
+  const replacements = new Map();
+  for (const serialized of next.widgets) {
+    if (previous.get(serialized.id) === JSON.stringify(serialized)) continue;
+    const definition = contextWorkspaceStore.toWidgetDefinition(serialized);
+    const widget = await registry.instantiate(definition.type, definition);
+    if (definition.runtimeState?.whitespaceZones) widget.setWhitespaceZones?.(definition.runtimeState.whitespaceZones);
+    replacements.set(widget.id, widget);
+  }
+  // Construction completes first, so failed loading leaves the live section intact.
+  const nextIds = new Set(next.widgets.map((entry) => entry.id));
+  for (const widget of runtime.listWidgets().slice()) {
+    if (!nextIds.has(widget.id) || replacements.has(widget.id)) runtime.removeWidgetById(widget.id, { reason: 'history' });
+  }
+  for (const widget of replacements.values()) runtime.addWidget(widget);
+  if (next.ordering?.[0]?.ids) { const order = next.ordering[0].ids; runtime.widgets.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)); }
+  inkFeature.replaceSectionStrokes(next.strokes, workspaceScopeId());
+  documentManager.reset({ contextId: workspaceScopeId(), documents: next.documents, documentBindings: next.documentBindings, validWidgetIds: [...nextIds], activeDocumentId: documentManager.getActiveDocumentId() });
+  runtime.bumpWidgetRasterEpoch(); runtime.requestRender(); updateWidgetUi();
+}
+
+function setupHistory() {
+  historyRuntime = createHistoryRuntime({
+    canvas, getScope: workspaceScopeId, getSnapshot: snapshotForHistory,
+    applySnapshot: applyHistorySnapshot, persist: scheduleWorkspacePersist,
+    notify: notifyRecovery, isBusy: () => restoringContext,
+    onChange: (undo, redo, busy) => { undoInkButton.disabled = busy || !undo; redoInkButton.disabled = busy || !redo; canvas.style.pointerEvents = busy ? "none" : ""; setContextControlsBusy(busy); },
+  });
+  historyRuntime.initialize(snapshotForHistory(), pendingRecovery?.recovery);
+  sourceUpdateRuntime = createSourceUpdateRuntime({ runtime, canvas, notebookLibraryStore, notebookDocumentLibraryStore, getNotebookId: () => activeContextId, isRestoring: () => restoringContext, getHistory: () => historyRuntime, snapshotForHistory, workspaceScopeId, makeId, showConfirmDialog, notifyRecovery, onChanged: updateWidgetUi, persist: scheduleWorkspacePersist });
+  document.querySelector('#save-status').onclick = () => flushWorkspacePersist();
+  document.querySelector('#recently-deleted').onclick = async () => {
+    const entries = historyRuntime.listDeleted();
+    const action = await showActionDialog({ title: 'Recently Deleted · this section', message: entries.length ? 'Content is kept for 30 days. Undo history may retain older edits separately.' : 'No recently deleted content in this section.', actions: [...entries.map((entry) => ({ id: entry.id, label: `Restore ${entry.label}` })), ...(entries.length ? [{ id: 'empty', label: 'Empty Recently Deleted', variant: 'danger' }] : [])] });
+    if (action === 'empty') {
+      if (await showConfirmDialog({ title: 'Empty Recently Deleted?', message: 'Remove all items from this section’s bin? Available Undo history is kept separately.', confirmLabel: 'Empty', danger: true })) historyRuntime.emptyDeleted();
+    } else if (action) await historyRuntime.restore(action);
+  };
+  document.querySelector('#clear-diagram').onclick = async () => {
+    const widget = runtime.getWidgetById(runtime.getSelectedWidgetId());
+    if (widget?.type !== 'diagram') { notifyRecovery('Select a diagram first.'); return; }
+    if (await showConfirmDialog({ title: 'Clear diagram?', message: 'Remove every node and connection? You can undo this action.', confirmLabel: 'Clear diagram', danger: true })) {
+      widget.diagramDoc.nodes = []; widget.diagramDoc.edges = [];
+      widget.diagramDoc.selectedNodeId = null; widget.diagramDoc.connectSourceId = null;
+      updateWidgetUi(); runtime.requestRender();
+    }
+  };
+}
+
 function persistActiveWorkspace() {
   return workspacePersistenceController?.persistNow?.() ?? false;
 }
 
 function flushWorkspacePersist() {
+  historyRuntime?.capture();
   return workspacePersistenceController?.flushPersist?.() ?? false;
 }
 
@@ -3261,6 +3412,7 @@ function scheduleWidgetHeavySync({ delayMs = 140 } = {}) {
 }
 
 function updateWidgetUi({ deferHeavy = false, coalesceHeavy = false } = {}) {
+  if (!deferHeavy) historyRuntime?.schedule();
   const dockedMoved = applyViewportDockToAllWidgets();
   if (dockedMoved) {
     runtime.requestRender({ continuousMs: 80 });
@@ -3281,6 +3433,7 @@ function updateWidgetUi({ deferHeavy = false, coalesceHeavy = false } = {}) {
   syncViewportDockGlowLayout();
   renderSuggestionRail();
   renderSectionMinimap();
+  scheduleSourceHints();
   if (searchIndex && workspaceScopeId()) {
     searchIndex.scheduleReindex({
       runtime,
@@ -4028,6 +4181,8 @@ async function restoreWorkspaceForActiveContext() {
       }
     }
 
+    pendingRecovery = workspace;
+    if (inkFeature && Array.isArray(workspace.inkStrokes)) inkFeature.replaceSectionStrokes(workspace.inkStrokes, scopeId);
     documentManager.reset({
       contextId: scopeId,
       documents: workspace.documents,
@@ -4133,6 +4288,7 @@ async function restoreWorkspaceForActiveContext() {
     pruneActiveDocuments();
     syncPdfDocumentMetadata();
     syncLinkedNotebookDocumentInstances();
+    syncLinkedLibraryMetadata();
     const activeDocument = documentManager.getActiveDocument();
     if (activeDocument) {
       focusDocumentWidgets(activeDocument.id, { selectPrimary: true });
@@ -4145,6 +4301,7 @@ async function restoreWorkspaceForActiveContext() {
   } finally {
     setContextControlsBusy(false);
     restoringContext = false;
+    if (historyRuntime) historyRuntime.initialize(snapshotForHistory(), pendingRecovery?.recovery);
   }
 }
 
@@ -4153,7 +4310,7 @@ async function switchContext(nextContextId) {
     return;
   }
 
-  flushWorkspacePersist();
+  if (!flushWorkspacePersist()) { notifyRecovery("Save failed. Retry before switching notebooks."); return; }
 
   if (!contextStore.setActiveContext(nextContextId)) {
     return;
@@ -4186,7 +4343,7 @@ async function switchSection(nextSectionId) {
     return;
   }
 
-  flushWorkspacePersist();
+  if (!flushWorkspacePersist()) { notifyRecovery("Save failed. Retry before switching sections."); return; }
   if (!sectionsStore.setActiveSection(activeContextId, nextSectionId)) {
     return;
   }
@@ -4502,6 +4659,7 @@ async function importWidgetsFromAnotherContext() {
 }
 
 function wireBaseEventHandlers() {
+  document.querySelector("#search-scope")?.addEventListener("change", () => searchPanelController?.runQuery());
   const closeToolsMenu = () => {
     if (!toolsPanelOpen) {
       return;
@@ -4719,6 +4877,7 @@ function wireBaseEventHandlers() {
       if (!inkFeature) {
         await ensureInkFeature();
         setInkEnabled(true);
+
       } else {
         setInkEnabled(true);
       }
@@ -4743,11 +4902,11 @@ function wireBaseEventHandlers() {
   });
 
   undoInkButton?.addEventListener("click", () => {
-    inkFeature?.undo();
+    void historyRuntime?.move("undo");
   });
 
   redoInkButton?.addEventListener("click", () => {
-    inkFeature?.redo();
+    void historyRuntime?.move("redo");
   });
 
   documentTabs?.addEventListener("click", (event) => {
@@ -4869,19 +5028,19 @@ function wireBaseEventHandlers() {
 
     if (key === "z" && event.shiftKey) {
       event.preventDefault();
-      inkFeature.redo();
+      void historyRuntime?.move("redo");
       return;
     }
 
     if (key === "z") {
       event.preventDefault();
-      inkFeature.undo();
+      void historyRuntime?.move("undo");
       return;
     }
 
     if (key === "y") {
       event.preventDefault();
-      inkFeature.redo();
+      void historyRuntime?.move("redo");
     }
   });
 
@@ -4982,9 +5141,9 @@ function wireReferenceManagerUi() {
     notesCountElement: referenceManagerNoteCount,
     documentsCountElement: referenceManagerDocumentCount,
     previewLayerElement: referencePreviewLayer,
-    onImportReference: async (entry, { screenPoint = null } = {}) => {
+    onImportReference: async (entry, { screenPoint = null, linkStatus = "frozen" } = {}) => {
       const widget = await createReferencePopupFromLibraryEntry(entry, {
-        linkStatus: "linked",
+        linkStatus,
         intent: createCreationIntent({
           type: "reference-popup",
           anchor: screenPoint ? anchorFromScreenPoint(screenPoint) : viewportCenterAnchor(),
@@ -4998,9 +5157,9 @@ function wireReferenceManagerUi() {
       updateWidgetUi();
       return { imported: true, widgetId: widget.id };
     },
-    onImportDocument: async (entry, { screenPoint = null } = {}) => {
+    onImportDocument: async (entry, { screenPoint = null, linkStatus = "frozen" } = {}) => {
       const widget = await createPdfWidgetFromLibraryEntry(entry, {
-        linkStatus: "linked",
+        linkStatus,
         intent: createCreationIntent({
           type: "pdf-document",
           anchor: screenPoint ? anchorFromScreenPoint(screenPoint) : viewportCenterAnchor(),
@@ -5014,7 +5173,7 @@ function wireReferenceManagerUi() {
       updateWidgetUi();
       return { imported: true, widgetId: widget.id };
     },
-    onImportNote: async (entry, { screenPoint = null } = {}) => {
+    onImportNote: async (entry, { screenPoint = null, linkStatus = "frozen" } = {}) => {
       const widget = await createNoteWidgetFromLibraryEntry(
         entry,
         createCreationIntent({
@@ -5023,6 +5182,7 @@ function wireReferenceManagerUi() {
           sourceWidgetId: runtime.getFocusedWidgetId() ?? runtime.getSelectedWidgetId() ?? null,
           createdFrom: "manual",
         }),
+        { linkStatus },
       );
       if (!widget) {
         return { imported: false };
@@ -5199,6 +5359,8 @@ function wireWidgetRemovalSuggestionSync() {
   }
 
   detachWidgetRemovalSuggestionSync = runtime.registerWidgetRemovedListener((payload) => {
+    if (restoringContext || historyRuntime?.applying) return;
+    historyRuntime?.schedule();
     if (payload?.widget?.id && inkFeature && typeof inkFeature.removeStrokesForWidget === "function") {
       inkFeature.removeStrokesForWidget(payload.widget.id, {
         contextId: workspaceScopeId(),
@@ -5284,6 +5446,9 @@ async function setupContextFeatures() {
     runtime,
     documentManager,
     suggestionStore,
+    getRecovery: () => historyRuntime?.serialize() ?? pendingRecovery?.recovery,
+    getInkStrokes: () => inkFeature?.getSectionStrokes(workspaceScopeId()) ?? pendingRecovery?.inkStrokes,
+    onSaveState: showSaveState,
     getScopeId: () => workspaceScopeId(),
     getActiveSectionId: () => activeSectionId,
     getResearchCaptures: () => researchCaptures,
@@ -5318,7 +5483,9 @@ async function bootstrap() {
   gesturePrefs = loadGesturePrefs();
   updateGestureUi();
 
+  organizeSettingsMenu();
   wireBaseEventHandlers();
+  setupBackupControls();
   wireWidgetInteractionManager();
   wireWidgetCreationController();
   wireDocumentFocusSync();
@@ -5351,6 +5518,8 @@ async function bootstrap() {
   try {
     await ensureInkFeature();
     setInkEnabled(true);
+    if (Array.isArray(pendingRecovery?.inkStrokes)) inkFeature.replaceSectionStrokes(pendingRecovery.inkStrokes, workspaceScopeId());
+    setupHistory();
   } catch (error) {
     console.error(error);
     if (inkStateOutput) {
@@ -5370,6 +5539,7 @@ async function bootstrap() {
     updateGestureUi();
   }
   updateWidgetUi();
+  document.fonts.ready.then(() => { runtime.bumpWidgetRasterEpoch(); runtime.requestRender(); });
   onboardingRuntime?.updateOnboardingControlsUi?.();
   onboardingRuntime?.scheduleOnboardingRefresh?.(0);
 }

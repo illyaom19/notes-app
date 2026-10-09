@@ -75,14 +75,15 @@ function buildActiveChip(suggestion) {
   acceptButton.className = "suggestion-card-action suggestion-card-action--accept";
   acceptButton.dataset.action = "accept";
   acceptButton.dataset.suggestionId = suggestion.id;
-  acceptButton.textContent = "✓";
+  acceptButton.textContent = "Accept";
 
   const ghostButton = document.createElement("button");
   ghostButton.type = "button";
   ghostButton.className = "suggestion-card-action suggestion-card-action--ghost";
   ghostButton.dataset.action = "ghost";
   ghostButton.dataset.suggestionId = suggestion.id;
-  ghostButton.textContent = "✕";
+  ghostButton.textContent = "Dismiss";
+  ghostButton.setAttribute("aria-label", `Dismiss ${suggestion.label ?? "suggestion"}`);
 
   actions.append(acceptButton, ghostButton);
   row.append(focusButton, actions);
@@ -134,6 +135,7 @@ export function createSuggestionUiController({
     };
   }
 
+  let recoveryTrayOpen = false;
   let suggestionsById = new Map();
   let hoveredSuggestionId = null;
   let hoverPointerType = null;
@@ -339,6 +341,28 @@ export function createSuggestionUiController({
       rootElement.dataset.open = "true";
       rootElement.innerHTML = "";
       rootElement.style.clipPath = `inset(${Math.max(0, bounds.top)}px ${Math.max(0, window.innerWidth - bounds.right)}px ${Math.max(0, window.innerHeight - bounds.bottom)}px ${Math.max(0, bounds.left)}px)`;
+
+      // Recovery remains reachable even when an anchor is outside the viewport.
+      const tray = document.createElement('details');
+      tray.className = 'suggestion-recovery-tray';
+      tray.open = recoveryTrayOpen;
+      tray.style.left = `${bounds.left + 12}px`;
+      tray.style.bottom = `${window.innerHeight - bounds.bottom + 12}px`;
+      const summary = document.createElement('summary');
+      summary.textContent = `Suggestions (${proposed.length}) · Dismissed (${ghosted.length})`;
+      tray.append(summary);
+      const items = document.createElement('div');
+      items.className = 'suggestion-recovery-list';
+      for (const suggestion of proposed) items.append(buildActiveChip(suggestion));
+      for (const suggestion of ghosted) {
+        const button = buildGhostChip(suggestion);
+        button.title = 'Restore suggestion';
+        button.setAttribute('aria-label', `Restore ${compactLabel(suggestion)}`);
+        items.append(button);
+      }
+      tray.append(items);
+      tray.addEventListener('toggle', () => { if (tray.isConnected) recoveryTrayOpen = tray.open; });
+      rootElement.append(tray);
 
       const railLeft = railLeftForWidget(runtime, focusedWidget, bounds);
       const railTop = Math.max(bounds.top + RAIL_TOP_MIN, 0);

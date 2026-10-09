@@ -1,3 +1,4 @@
+import { exportOptions, exportPreview } from "./export-dialog.js";
 import { Camera2D } from "../../core/canvas/camera.js";
 import { resolveWidgetLod } from "../widget-system/widget-lod.js";
 import { WIDGET_THEME } from "../widget-system/widget-theme.js";
@@ -72,8 +73,8 @@ function strokeBounds(stroke) {
   return {
     minX,
     minY,
-    maxX,
-    maxY,
+    maxX: Math.max(maxX, minX + 1),
+    maxY: Math.max(maxY, minY + 1),
   };
 }
 
@@ -273,18 +274,21 @@ export function createSectionPdfShareRuntime({
     throw new Error("Section PDF share runtime requires a canvas runtime.");
   }
 
-  const dpi = DEFAULT_DPI;
-  const pageWidthPx = Math.max(640, Math.round(PAGE_WIDTH_IN * dpi));
-  const pageHeightPx = Math.max(920, Math.round(PAGE_HEIGHT_IN * dpi));
-  const marginPx = DEFAULT_MARGIN_PX;
-  const printableWidthPx = Math.max(64, pageWidthPx - marginPx * 2);
-  const printableHeightPx = Math.max(64, pageHeightPx - marginPx * 2);
-
   async function shareCurrentSectionAsPdf() {
-    const widgets = runtime.listWidgets();
+    const options = await exportOptions(documentObj);
+    if (!options) return { ok: false, reason: 'cancelled' };
+    await documentObj.fonts?.ready;
+    const dpi = DEFAULT_DPI;
+    const landscape = options.orientation === 'landscape';
+    const pageWidthPx = Math.round((landscape ? PAGE_HEIGHT_IN : PAGE_WIDTH_IN) * dpi);
+    const pageHeightPx = Math.round((landscape ? PAGE_WIDTH_IN : PAGE_HEIGHT_IN) * dpi);
+    const marginPx = DEFAULT_MARGIN_PX;
+    const printableWidthPx = pageWidthPx - marginPx * 2;
+    const printableHeightPx = pageHeightPx - marginPx * 2;
+    const widgets = runtime.listWidgets().filter((widget) => options.scope !== 'selection' || widget.id === runtime.getSelectedWidgetId());
     const scopeId = typeof getActiveScopeId === "function" ? getActiveScopeId() : null;
     const ink = typeof getInkFeature === "function" ? getInkFeature() : null;
-    const allStrokes =
+    let allStrokes =
       ink && typeof ink.getRenderableStrokesForExport === "function"
         ? ink.getRenderableStrokesForExport({
             contextId: scopeId,
@@ -292,6 +296,7 @@ export function createSectionPdfShareRuntime({
           })
         : [];
 
+    if (options.scope === 'selection') allStrokes = allStrokes.filter((stroke) => widgets.some((widget) => widget.id === stroke.sourceWidgetId));
     const globalStrokes = allStrokes.filter((stroke) => stroke.layer === "global");
     const attachedStrokes = allStrokes.filter((stroke) => stroke.layer === "pdf" || stroke.layer === "widget");
 
@@ -309,20 +314,22 @@ export function createSectionPdfShareRuntime({
 
     const contentWidthWorld = Math.max(1, bounds.maxX - bounds.minX);
     const contentHeightWorld = Math.max(1, bounds.maxY - bounds.minY);
-    const exportScale = printableWidthPx / contentWidthWorld;
-    const pageWorldHeight = printableHeightPx / Math.max(0.0001, exportScale);
-    const pageCount = Math.max(1, Math.ceil(contentHeightWorld / pageWorldHeight));
-
+    const exportScale = options.layout === 'tile' ? dpi / 96 : Math.min(printableWidthPx / contentWidthWorld, printableHeightPx / contentHeightWorld);
+    const pageWorldHeight = printableHeightPx / exportScale;
+    const pageWorldWidth = printableWidthPx / exportScale;
+    const columns = Math.max(1, Math.ceil(contentWidthWorld / pageWorldWidth - 1e-8));
+    const rows = Math.max(1, Math.ceil(contentHeightWorld / pageWorldHeight - 1e-8));
+    const pageCount = columns * rows;
+    if (pageCount > 200) { await showNoticeDialog?.('This layout exceeds 200 pages. Export a selection or use Fit on one page.', { title: 'Export PDF' }); return { ok: false, reason: 'too-large' }; }
+    const preview = exportPreview(documentObj);
+    try {
     const jpegPages = [];
     for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
-      const pageWorldMinY = bounds.minY + pageIndex * pageWorldHeight;
-      const pageWorldMaxY = Math.min(bounds.maxY, pageWorldMinY + pageWorldHeight);
-      const pageWorldRect = {
-        minX: bounds.minX,
-        maxX: bounds.maxX,
-        minY: pageWorldMinY,
-        maxY: pageWorldMaxY,
-      };
+      preview.signal.throwIfAborted();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const pageWorldMinX = bounds.minX + (pageIndex % columns) * pageWorldWidth;
+      const pageWorldMinY = bounds.minY + Math.floor(pageIndex / columns) * pageWorldHeight;
+      const pageWorldRect = { minX: pageWorldMinX, maxX: pageWorldMinX + pageWorldWidth, minY: pageWorldMinY, maxY: pageWorldMinY + pageWorldHeight };
 
       const canvas = documentObj.createElement("canvas");
       canvas.width = pageWidthPx;
@@ -337,7 +344,8 @@ export function createSectionPdfShareRuntime({
 
       const camera = new Camera2D();
       camera.zoom = exportScale;
-      camera.offsetX = marginPx - bounds.minX * exportScale;
+      camera.offsetX = marginPx - pageWorldMinX * exportScale;
+      ctx.save(); ctx.beginPath(); ctx.rect(marginPx, marginPx, printableWidthPx, printableHeightPx); ctx.clip();
       camera.offsetY = marginPx - pageWorldMinY * exportScale;
 
       const renderContext = {
@@ -374,6 +382,7 @@ export function createSectionPdfShareRuntime({
           continue;
         }
         widget.render(ctx, camera, renderContext);
+        if (widget.waitForExportImages) { await widget.waitForExportImages(); preview.signal.throwIfAborted(); widget.render(ctx, camera, renderContext); }
       }
 
       if (ink && typeof ink.renderStrokesForExport === "function") {
@@ -381,6 +390,8 @@ export function createSectionPdfShareRuntime({
         ink.renderStrokesForExport(ctx, camera, visibleAttached, { includeLayers: ["pdf", "widget"] });
       }
 
+      ctx.restore();
+      preview.append(canvas, pageIndex + 1, pageCount);
       jpegPages.push({
         widthPx: pageWidthPx,
         heightPx: pageHeightPx,
@@ -389,59 +400,20 @@ export function createSectionPdfShareRuntime({
     }
 
     const pdfBytes = buildPdfFromJpegPages(jpegPages, {
-      pageWidthPt: A4_WIDTH_PT,
-      pageHeightPt: A4_HEIGHT_PT,
+      pageWidthPt: landscape ? A4_HEIGHT_PT : A4_WIDTH_PT,
+      pageHeightPt: landscape ? A4_WIDTH_PT : A4_HEIGHT_PT,
     });
     const blob = new Blob([pdfBytes], { type: "application/pdf" });
 
-    const defaultSectionName = sanitizeFileStem(
-      typeof getActiveSectionName === "function" ? getActiveSectionName() : "",
-      "Section",
-    );
-    const promptedName = await showTextPromptDialog?.({
-      title: "Share Section",
-      message: "Name this PDF file.",
-      label: "File name",
-      defaultValue: defaultSectionName,
-      placeholder: "Section name",
-      confirmLabel: "Continue",
-    });
-    if (promptedName === null) {
-      return { ok: false, reason: "cancelled" };
-    }
-
-    const fileName = ensurePdfFilename(promptedName || defaultSectionName, `${defaultSectionName}.pdf`);
-    const file =
-      typeof File === "function"
-        ? new File([blob], fileName, { type: "application/pdf" })
-        : null;
-
-    let canShareFiles = false;
-    if (file && typeof navigator !== "undefined" && typeof navigator.share === "function") {
-      if (typeof navigator.canShare === "function") {
-        try {
-          canShareFiles = navigator.canShare({ files: [file] });
-        } catch (_error) {
-          canShareFiles = false;
-        }
-      } else {
-        canShareFiles = true;
-      }
-    }
-
-    if (canShareFiles && file) {
-      await navigator.share({
-        files: [file],
-        title: fileName,
-      });
-      return { ok: true, method: "share", fileName };
-    }
-
+    if (!await preview.ready()) return { ok: false, reason: 'cancelled' };
+    const fileName = ensurePdfFilename(sanitizeFileStem(options.filename));
     downloadBlob(blob, fileName, documentObj);
-    await showNoticeDialog?.("Native share is unavailable on this device. Downloaded PDF instead.", {
-      title: "Share",
-    });
-    return { ok: true, method: "download", fileName };
+    return { ok: true, method: 'download', fileName, pageCount };
+    } catch (error) {
+      preview.close();
+      if (error.name === 'AbortError') return { ok: false, reason: 'cancelled' };
+      throw error;
+    }
   }
 
   return {

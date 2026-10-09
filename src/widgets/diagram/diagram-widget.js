@@ -10,7 +10,7 @@ import {
 
 const HEADER_WORLD_HEIGHT = 34;
 const GRID_STEP_WORLD = 28;
-const TOOLBAR_BUTTON_SIZE_PX = 22;
+const TOOLBAR_BUTTON_SIZE_PX = 44;
 const TOOLBAR_GAP_PX = 6;
 const TOOLBAR_INSET_PX = 10;
 const DIAGRAM_VIEW_MIN_ZOOM = 0.3;
@@ -598,13 +598,7 @@ export class DiagramWidget extends WidgetBase {
       if (this.diagramDoc.selectedNodeId) {
         return this.removeSelectedNode();
       }
-      if (this.diagramDoc.nodes.length > 0 || this.diagramDoc.edges.length > 0) {
-        this.diagramDoc.nodes = [];
-        this.diagramDoc.edges = [];
-        this.diagramDoc.connectSourceId = null;
-        this.diagramDoc.selectedNodeId = null;
-        return true;
-      }
+
     }
     return false;
   }
@@ -624,13 +618,14 @@ export class DiagramWidget extends WidgetBase {
       "toggle-connect",
       "clear-selection",
     ];
-    const totalWidth = actions.length * buttonSize + (actions.length - 1) * gap;
+    const columns = Math.max(1, Math.min(actions.length, Math.floor((body.width - inset * 2 + gap) / (buttonSize + gap))));
+    const totalWidth = columns * buttonSize + (columns - 1) * gap;
     const startX = body.x + Math.max(inset, body.width - totalWidth - inset);
     const y = body.y + inset;
     return actions.map((action, index) => ({
       action,
-      x: startX + index * (buttonSize + gap),
-      y,
+      x: startX + (index % columns) * (buttonSize + gap),
+      y: y + Math.floor(index / columns) * (buttonSize + gap),
       width: buttonSize,
       height: buttonSize,
     }));

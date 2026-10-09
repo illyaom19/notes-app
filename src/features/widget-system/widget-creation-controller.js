@@ -117,7 +117,7 @@ export function createWidgetCreationController({
     const id = layoutEntry?.id ?? createType;
     const angleDeg = Number.isFinite(layoutEntry?.angleDeg) ? layoutEntry.angleDeg : fallbackAngle;
 
-    button.innerHTML = `<span class="creation-menu__segment-icon">${iconMarkup(icon)}</span>`;
+    button.innerHTML = `<span class="creation-menu__segment-icon">${iconMarkup(icon)}</span><span class="creation-menu__label">${label}</span>`;
     button.dataset.segmentId = id;
     button.ariaLabel = label;
 
@@ -441,7 +441,8 @@ export function createWidgetCreationController({
           });
         }
 
-        closeMenu();
+        if (type) closeMenu();
+        else pointerState = null;
         return true;
       }
 

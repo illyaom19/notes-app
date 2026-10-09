@@ -96,6 +96,8 @@ export async function createPdfRasterDocumentFromBytes(
   const pages = [];
   for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
     const page = await pdfDocument.getPage(pageNumber);
+    const textContent = typeof page.getTextContent === "function" ? await page.getTextContent() : { items: [] };
+    const extractedText = textContent.items.map((item) => item.str ?? "").join(" ");
     const baseViewport = page.getViewport({ scale: 1 });
     const baseWidth = Math.max(1, Math.round(baseViewport.width));
     const baseHeight = Math.max(1, Math.round(baseViewport.height));
@@ -132,6 +134,7 @@ export async function createPdfRasterDocumentFromBytes(
     }
 
     pages.push({
+      text: extractedText,
       pageNumber,
       width: baseWidth,
       height: baseHeight,

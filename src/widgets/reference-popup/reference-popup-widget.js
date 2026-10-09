@@ -192,6 +192,7 @@ export class ReferencePopupWidget extends WidgetBase {
         height: Math.max(MIN_SIZE.height, definition.size?.height ?? 210),
       },
       metadata: {
+        ...definition.metadata,
         title,
         popupMetadata,
       },

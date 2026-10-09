@@ -11,6 +11,19 @@ const ASSET_DB_NAME = "notes-app-assets";
 const ASSET_DB_VERSION = 1;
 const ASSET_DB_STORE = "payloads";
 
+const sharedAssetState = new WeakMap();
+const pendingWrites = new Set();
+const failedWrites = new Map();
+function trackWrite(id, write) {
+  const pending = write().then((ok) => { if (!ok) failedWrites.set(id, write); else failedWrites.delete(id); }).finally(() => pendingWrites.delete(pending));
+  pendingWrites.add(pending);
+}
+export async function flushAssetWrites() {
+  for (const [id, write] of failedWrites) trackWrite(id, write);
+  while (pendingWrites.size) await Promise.all([...pendingWrites]);
+  if (failedWrites.size) throw new Error('Some assets could not be saved. Free storage and retry.');
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -173,7 +186,9 @@ export function createAssetManager({
 } = {}) {
   let gcTimer = null;
   let catalogPersistTimer = null;
-  const payloadCache = new Map();
+  const shared = sharedAssetState.get(storage);
+  const payloadCache = (typeof window !== "undefined" && "indexedDB" in window ? shared?.payloadCache : null) ?? new Map();
+  const rasterRegistrations = new WeakMap();
   let payloadsHydrated = false;
   let hydratePromise = null;
   let dbPromise = null;
@@ -196,7 +211,9 @@ export function createAssetManager({
     },
   });
 
-  let catalog = normalizeCatalog(migrationState.data, maxBytes);
+  const catalog = shared?.catalog ?? normalizeCatalog(migrationState.data, maxBytes);
+  catalog.maxBytes = Math.min(catalog.maxBytes, maxBytes);
+  sharedAssetState.set(storage, { catalog, payloadCache });
 
   function dataKey(assetId) {
     return `${DATA_PREFIX}${assetId}`;
@@ -538,7 +555,7 @@ export function createAssetManager({
     payloadCache.set(id, payload);
 
     if (indexedDbUsable) {
-      void putPayloadToDb(id, payload);
+      trackWrite(id, () => putPayloadToDb(id, payload));
       storage.removeItem(dataKey(id));
     } else {
       if (!allowLocalStoragePayloadFallback) {
@@ -618,6 +635,12 @@ export function createAssetManager({
     if (!rasterDocument || typeof rasterDocument !== "object") {
       return null;
     }
+    const cachedId = rasterRegistrations.get(rasterDocument);
+    const cached = cachedId && findRecord(cachedId);
+    if (cached) {
+      if (ownerId && !cached.refs.includes(ownerId)) { normalizeRefsForRecord(cached, [...cached.refs, ownerId]); persistCatalog(); }
+      return { ...cached, reused: true };
+    }
     let payload = null;
     try {
       payload = JSON.stringify(rasterDocument);
@@ -627,12 +650,14 @@ export function createAssetManager({
     if (typeof payload !== "string" || payload.length < 2) {
       return null;
     }
-    return registerAsset({
+    const result = registerAsset({
       type: "pdf-raster-document",
       data: payload,
       ownerId,
       derivedFrom,
     });
+    if (result) rasterRegistrations.set(rasterDocument, result.id);
+    return result;
   }
 
   function loadAssetData(assetId) {
@@ -647,7 +672,7 @@ export function createAssetManager({
       if (typeof payload === "string" && payload.length > 0) {
         payloadCache.set(assetId, payload);
         if (indexedDbUsable) {
-          void putPayloadToDb(assetId, payload);
+          trackWrite(assetId, () => putPayloadToDb(assetId, payload));
           storage.removeItem(dataKey(assetId));
         }
       }
@@ -700,6 +725,7 @@ export function createAssetManager({
         pageCount: Number.isFinite(parsed.pageCount) ? Number(parsed.pageCount) : pages.length,
         pages: pages.map((page) => ({
           pageNumber: Number(page?.pageNumber) || 1,
+          text: typeof page?.text === "string" ? page.text : "",
           width: Math.max(1, Number(page?.width) || 1),
           height: Math.max(1, Number(page?.height) || 1),
           levels: Array.isArray(page?.levels)
@@ -809,7 +835,7 @@ export function createAssetManager({
       const migratedLocalKeys = [];
 
       for (const record of [...catalog.records]) {
-        let payload = dbPayloads.get(record.id) ?? null;
+        let payload = payloadCache.get(record.id) ?? dbPayloads.get(record.id) ?? null;
         if (typeof payload !== "string" || payload.length < 1) {
           const legacyPayload = allowLocalStoragePayloadFallback
             ? storage.getItem(dataKey(record.id))
@@ -817,7 +843,7 @@ export function createAssetManager({
           if (typeof legacyPayload === "string" && legacyPayload.length > 0) {
             payload = legacyPayload;
             if (indexedDbUsable) {
-              void putPayloadToDb(record.id, payload);
+              trackWrite(record.id, () => putPayloadToDb(record.id, payload));
               migratedLocalKeys.push(dataKey(record.id));
             }
           }
