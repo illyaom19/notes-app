@@ -1,7 +1,7 @@
 import { prepareNotebookSearch as indexNotebook } from "./features/search/notebook-search.js";
 import { organizeSettingsMenu } from "./features/ui/settings-menu.js";
 import { flushAssetWrites } from "./features/storage/asset-manager.js";
-import { recoverInterruptedRestore } from "./features/storage/workspace-backup.js";
+import { recoverInterruptedRestore, RESTORE_EVENT_KEY } from "./features/storage/workspace-backup.js";
 recoverInterruptedRestore();
 import { createSourceUpdateRuntime } from "./features/runtime/source-update-runtime.js";
 import { createHistoryRuntime } from "./features/history/history-runtime.js";
@@ -3270,6 +3270,39 @@ function setupBackupControls() {
   });
 }
 
+function setupCrossTabRestoreCoordination() {
+  let resumeTimer = null;
+  window.addEventListener('storage', (event) => {
+    if (event.key !== RESTORE_EVENT_KEY || !event.newValue) return;
+    let message = null;
+    try { message = JSON.parse(event.newValue); } catch (_error) { return; }
+    if (message?.phase === 'started') {
+      restoringContext = true;
+      workspacePersistenceController?.destroy?.();
+      canvas.style.pointerEvents = 'none';
+      notifyRecovery('Workspace restore is running in another tab. Editing is paused.');
+      clearTimeout(resumeTimer);
+      const remaining = Math.max(0, Number(message.expiresAt) - Date.now());
+      resumeTimer = setTimeout(() => {
+        restoringContext = false;
+        canvas.style.pointerEvents = '';
+        notifyRecovery('The other-tab restore did not finish. Editing resumed.');
+      }, Math.min(remaining || 5 * 60 * 1000, 5 * 60 * 1000));
+      return;
+    }
+    clearTimeout(resumeTimer);
+    if (message?.phase === 'complete') {
+      location.reload();
+      return;
+    }
+    if (message?.phase === 'failed') {
+      restoringContext = false;
+      canvas.style.pointerEvents = '';
+      notifyRecovery('The other-tab restore failed. This tab was not changed.');
+    }
+  });
+}
+
 let saveStatusGeneration = 0;
 function showSaveState(state) {
   const output = document.querySelector('#save-status');
@@ -5485,6 +5518,7 @@ async function bootstrap() {
 
   organizeSettingsMenu();
   wireBaseEventHandlers();
+  setupCrossTabRestoreCoordination();
   setupBackupControls();
   wireWidgetInteractionManager();
   wireWidgetCreationController();

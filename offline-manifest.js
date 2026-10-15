@@ -1,5 +1,5 @@
 self.NOTES_OFFLINE = {
-  "version": "546d3cac35289b8d",
+  "version": "ef8977a48a1fe11e",
   "files": [
     "./assets/fonts/UbuntuSans.ttf",
     "./icons/icon-192.png",

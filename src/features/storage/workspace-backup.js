@@ -1,10 +1,11 @@
 import { flushAssetWrites } from './asset-manager.js';
 const MAGIC = 'NOTES-WORKSPACE-1\n';
 const JOURNAL = 'notes-app.restore-journal';
+export const RESTORE_EVENT_KEY = 'notes-app.restore-event';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const MAX_RECORD = 128 * 1024 * 1024;
-const isAppKey = (key) => key.startsWith('notes-app.') && key !== JOURNAL;
+const isAppKey = (key) => key.startsWith('notes-app.') && key !== JOURNAL && key !== RESTORE_EVENT_KEY;
 const digest = async (bytes) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), (x) => x.toString(16).padStart(2, '0')).join('');
 const snapshot = () => Object.fromEntries(Object.keys(localStorage).filter(isAppKey).map((key) => [key, localStorage.getItem(key)]));
 function replaceSettings(settings) {
@@ -27,7 +28,8 @@ async function openDb() {
 }
 async function requestValue(db, method, ...args) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('payloads', method === 'put' ? 'readwrite' : 'readonly');
+    const writes = method === 'put' || method === 'delete';
+    const tx = db.transaction('payloads', writes ? 'readwrite' : 'readonly');
     const request = tx.objectStore('payloads')[method](...args);
     tx.oncomplete = () => resolve(request.result);
     tx.onerror = tx.onabort = () => reject(tx.error ?? new Error('Asset transaction failed.'));
@@ -81,8 +83,16 @@ export async function inspectWorkspaceBackup(file, { signal } = {}) {
 }
 export async function restoreWorkspaceBackup(file, { signal, onProgress = () => {} } = {}) {
   const manifest = await inspectWorkspaceBackup(file, { signal });
-  const db = await openDb();
+  const restoreId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  localStorage.setItem(RESTORE_EVENT_KEY, JSON.stringify({
+    id: restoreId,
+    phase: 'started',
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  }));
+  let db = null;
+  const insertedKeys = [];
   try {
+    db = await openDb();
     // Stage immutable assets first. Existing assets are preserved for rollback.
     for (let i = 0; i < manifest.records.length; i++) {
       signal?.throwIfAborted();
@@ -90,7 +100,10 @@ export async function restoreWorkspaceBackup(file, { signal, onProgress = () => 
       const value = decoder.decode(await file.slice(record.offset, record.offset + record.size).arrayBuffer());
       const existing = await requestValue(db, 'get', record.key);
       if (existing !== undefined && existing !== value) throw new Error('Conflicting asset identifier; existing workspace was preserved.');
-      if (existing === undefined) await requestValue(db, 'put', value, record.key);
+      if (existing === undefined) {
+        await requestValue(db, 'put', value, record.key);
+        insertedKeys.push(record.key);
+      }
       onProgress(i + 1, manifest.records.length);
     }
     signal?.throwIfAborted();
@@ -99,5 +112,23 @@ export async function restoreWorkspaceBackup(file, { signal, onProgress = () => 
     localStorage.setItem(JOURNAL, JSON.stringify(previous));
     try { replaceSettings(manifest.settings); localStorage.removeItem(JOURNAL); }
     catch (error) { replaceSettings(previous); localStorage.removeItem(JOURNAL); throw error; }
-  } finally { db.close(); }
+    try {
+      localStorage.setItem(RESTORE_EVENT_KEY, JSON.stringify({ id: restoreId, phase: 'complete' }));
+      localStorage.removeItem(RESTORE_EVENT_KEY);
+    } catch (_coordinationError) {
+      // The archive is committed. Sibling tabs retain their expiry fallback if
+      // the completion notification cannot be published under storage pressure.
+    }
+  } catch (error) {
+    // A staged restore must not leak new assets if validation, cancellation, or
+    // the settings commit fails. Existing immutable assets are never touched.
+    if (db) await Promise.allSettled(insertedKeys.map((key) => requestValue(db, 'delete', key)));
+    try {
+      localStorage.setItem(RESTORE_EVENT_KEY, JSON.stringify({ id: restoreId, phase: 'failed' }));
+      localStorage.removeItem(RESTORE_EVENT_KEY);
+    } catch (_coordinationError) {
+      // Preserve the original restore failure.
+    }
+    throw error;
+  } finally { db?.close(); }
 }
