@@ -1,6 +1,6 @@
 # CURRENT_STATE
 
-Updated 2026-10-19. The approved UI improvement implementation and reliability follow-up are on `origin/main`; the workspace-storage migration described below is currently uncommitted. Remaining hardware release gates are listed below. No deployment was requested. The decision ledger is `docs/plans/UI_IMPROVEMENT_PLAN.md`. Earlier review/planning history is preserved in `docs/reviews/CURRENT_STATE_before_UI_implementation_2026-10-08.md`.
+Updated 2026-10-19. The approved UI improvement implementation, reliability follow-up, and workspace-storage migration are on `origin/main`. Remaining hardware release gates are listed below. No deployment was requested. The decision ledger is `docs/plans/UI_IMPROVEMENT_PLAN.md`. Earlier review/planning history is preserved in `docs/reviews/CURRENT_STATE_before_UI_implementation_2026-10-08.md`.
 
 ## Implemented surface
 
@@ -63,3 +63,4 @@ Updated 2026-10-19. The approved UI improvement implementation and reliability f
 - User requested committing and pushing the implementation. `git fetch origin` confirmed local `main` and `origin/main` were aligned before this commit; `git diff --check` passed. Existing validation remains 67 unit/storage tests and seven browser workflows passing.
 - Staged whitespace validation found and removed an extra source EOF line and trailing whitespace in bundled license text; license wording is unchanged. Regenerated the offline manifest and passed `git diff --cached --check`.
 - 2026-10-14 follow-up adds the eighth browser workflow, cancelled-restore asset cleanup, and cross-tab restore coordination. The full unit suite and all eight browser workflows pass; the final offline manifest contains 277 assets.
+- 2026-10-19 workspace migration was committed as `a9271b0` and pushed to `origin/main`. Final validation was 67 unit/storage tests and all eight browser workflows passing; the offline manifest contains 278 assets at version `53a0cc92423f6ed9`.
