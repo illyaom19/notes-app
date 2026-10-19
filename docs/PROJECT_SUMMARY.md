@@ -36,7 +36,7 @@ See `docs/plans/UI_IMPROVEMENT_PLAN.md` for selected UI directions. New research
 
 ## Approved UI pass
 
-The implemented pass adds persisted unified section history/recovery, independent source-aware library copies, a compact tablet shell and shared Library/Search drawer, notebook/PDF full-text search, PDF export preview and editable full-workspace archives. Core fonts/PDF dependencies are bundled for offline use. Follow-up reliability work covers quota-safe navigation, staged-restore cleanup and sibling-tab restore coordination. See `docs/CURRENT_STATE.md` for verified behavior and remaining limits; these changes are not yet a physical-device release sign-off.
+The implemented pass adds persisted unified section history/recovery, independent source-aware library copies, a compact tablet shell and shared Library/Search drawer, notebook/PDF full-text search, PDF export preview and editable full-workspace archives. Core fonts/PDF dependencies are bundled for offline use. Follow-up reliability work covers IndexedDB workspace persistence and legacy migration, quota-safe navigation, staged-restore cleanup and sibling-tab restore coordination. See `docs/CURRENT_STATE.md` for verified behavior and remaining limits; these changes are not yet a physical-device release sign-off.
 
 ## Execution Priorities (Current)
 

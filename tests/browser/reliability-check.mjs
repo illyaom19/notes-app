@@ -41,17 +41,17 @@ try {
   const pdfAssets = await page.evaluate(() => JSON.parse(localStorage.getItem('notes-app.assets.catalog.v1')).data.records.filter((record) => record.type === 'pdf-bytes'));
   assert.equal(pdfAssets.length, 1, 'Section switching preserves one original PDF asset');
 
-  // Inject quota failure at the browser Storage boundary. The app must retain
+  // Inject quota failure at the IndexedDB workspace boundary. The app must retain
   // the current section, expose a durable failure, then recover through Retry.
   await page.evaluate(() => {
-    const original = Storage.prototype.setItem;
-    window.__notesOriginalSetItem = original;
+    const original = IDBDatabase.prototype.transaction;
+    window.__notesOriginalWorkspaceTransaction = original;
     window.__notesFailWorkspaceWrites = true;
-    Storage.prototype.setItem = function (key, value) {
-      if (window.__notesFailWorkspaceWrites && String(key).startsWith('notes-app.context.workspace.')) {
+    IDBDatabase.prototype.transaction = function (store, ...args) {
+      if (window.__notesFailWorkspaceWrites && String(store) === 'workspaces' && args[0] === 'readwrite') {
         throw new DOMException('Injected quota limit', 'QuotaExceededError');
       }
-      return original.call(this, key, value);
+      return original.call(this, store, ...args);
     };
   });
   await page.mouse.click(760, 320, { button: 'right' });
@@ -93,6 +93,20 @@ try {
   await sibling.waitForFunction(() => document.querySelector('#widget-count'));
   assert.match(await sibling.evaluate(() => sessionStorage.getItem('restore-phases')), /started,complete/);
   assert.equal(await sibling.locator('#workspace-canvas').evaluate((canvas) => canvas.style.pointerEvents), '');
+
+  // Legacy localStorage workspaces migrate durably before their original is removed.
+  const migrationContext = await browser.newContext({ serviceWorkers: 'block' });
+  const migrationPage = await migrationContext.newPage();
+  const legacyKey = 'notes-app.context.workspace.v1.legacy-migration-check';
+  await migrationPage.addInitScript(({ key }) => localStorage.setItem(key, JSON.stringify({
+    schemaVersion: 3,
+    data: { version: 1, contextId: 'legacy-migration-check', widgets: [], researchCaptures: [], suggestions: [], documents: [], documentBindings: [], activeWorkspaceState: {} },
+  })), { key: legacyKey });
+  await migrationPage.goto('http://127.0.0.1:4174');
+  await migrationPage.waitForFunction((key) => localStorage.getItem(key) === null, legacyKey);
+  const migrated = await migrationPage.evaluate(async (key) => (await (await import('/src/features/storage/workspace-database.js')).inspectWorkspaceStorage()).records.some(([recordKey]) => recordKey === key), legacyKey);
+  assert.equal(migrated, true, 'Legacy workspace moves to IndexedDB before localStorage cleanup');
+  await migrationContext.close();
 
   assert.deepEqual(errors, []);
   console.log('PDF section switching and quota-failure recovery passed.');

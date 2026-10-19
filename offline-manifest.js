@@ -1,5 +1,5 @@
 self.NOTES_OFFLINE = {
-  "version": "ef8977a48a1fe11e",
+  "version": "53a0cc92423f6ed9",
   "files": [
     "./assets/fonts/UbuntuSans.ttf",
     "./icons/icon-192.png",
@@ -64,6 +64,7 @@ self.NOTES_OFFLINE = {
     "./src/features/storage/schema-migrations.js",
     "./src/features/storage/schema-registry.js",
     "./src/features/storage/workspace-backup.js",
+    "./src/features/storage/workspace-database.js",
     "./src/features/suggestions/suggestion-engine.js",
     "./src/features/suggestions/suggestion-store.js",
     "./src/features/suggestions/suggestion-ui-controller.js",

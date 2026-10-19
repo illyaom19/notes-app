@@ -7,7 +7,7 @@ await create('expanded-area',300,250);assert.equal(await page.locator('#widget-c
 await page.mouse.click(330,280,{button:'right'});await page.locator('[data-action="toggle-library"]').click();await page.waitForTimeout(400);
 await page.locator('#reference-manager-launcher').click();await page.locator('#reference-manager-reference-list [data-action="add-chip"]').first().click();await page.waitForTimeout(500);assert.equal(await page.locator('#widget-count').textContent(),'2');
 await page.locator('#library-close').click();
-const copies=await page.evaluate(()=>Object.entries(localStorage).filter(([k])=>k.startsWith('notes-app.context.workspace.')).flatMap(([,v])=>JSON.parse(v).data.widgets));console.log('copies',copies.map(w=>({id:w.id,independent:w.metadata.independentCopy,origin:w.metadata.sourceProvenance})));
+const copies=await page.evaluate(async()=>(await (await import('/src/features/storage/workspace-database.js')).inspectWorkspaceStorage()).records.flatMap(([,v])=>v.data.widgets));console.log('copies',copies.map(w=>({id:w.id,independent:w.metadata.independentCopy,origin:w.metadata.sourceProvenance})));
 assert.equal(copies.filter(w=>w.metadata.independentCopy).length,1);
 await page.locator('#toggle-search-panel').click();await page.locator('#search-query').fill('Notes');await page.waitForTimeout(500);console.log('search',await page.locator('#search-result-count').textContent());await page.locator('#search-close').click();
 await page.locator('#toggle-tools').click();await page.locator('#share-current-section').click();

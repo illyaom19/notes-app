@@ -5,9 +5,15 @@ await page.locator('#pdf-file-input').setInputFiles('tests/fixtures/searchable.p
 console.log('pdfWidgets',await page.locator('#widget-count').textContent());
 await page.locator('#toggle-search-panel').click();await page.locator('#search-query').fill('Chlorophyll');await page.waitForTimeout(500);console.log('search',await page.locator('#search-result-count').textContent());assert.notEqual(await page.locator('#search-result-count').textContent(),'0 results');
 await page.locator('#search-close').click();
-await page.addInitScript(() => {
-  for (const key of Object.keys(localStorage).filter((entry) => entry.startsWith('notes-app.context.workspace.'))) {
-    const envelope = JSON.parse(localStorage.getItem(key));
+// Leave the app so its pagehide save completes, then inject the persisted
+// recovery fixture without the live runtime overwriting it during reload.
+await context.setOffline(false);
+await page.goto('http://127.0.0.1:4174/docs/PROJECT_SUMMARY.md');
+await page.evaluate(async () => {
+  const workspaceModule = await import('/src/features/storage/workspace-database.js');
+  await workspaceModule.createWorkspaceDatabase();
+  const snapshot = await workspaceModule.inspectWorkspaceStorage();
+  for (const [key, envelope] of snapshot.records) {
     const pdf = envelope?.data?.widgets?.find((widget) => widget.type === 'pdf-document');
     if (!pdf) continue;
     const scopeId = envelope.data.contextId;
@@ -19,10 +25,12 @@ await page.addInitScript(() => {
       payload: { sourceWidgetId: pdf.id, snippetText: 'Chlorophyll absorbs light.' },
       state: 'ghosted', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     }];
-    localStorage.setItem(key, JSON.stringify(envelope));
+    workspaceModule.updateActiveWorkspaceRecord(key, () => envelope);
   }
+  await workspaceModule.flushWorkspaceWrites();
 });
-await page.reload();await page.waitForTimeout(1000);assert.equal(await page.locator('#widget-count').textContent(),'1');
+await context.setOffline(true);
+await page.goto('http://127.0.0.1:4174');await page.waitForTimeout(1000);assert.equal(await page.locator('#widget-count').textContent(),'1');
 await page.locator('#toggle-search-panel').click();await page.locator('#search-query').fill('Chlorophyll');await page.waitForTimeout(400);
 await page.locator('.search-result-item').first().click();
 await page.locator('.suggestion-recovery-tray').waitFor();

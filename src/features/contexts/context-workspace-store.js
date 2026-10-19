@@ -1,5 +1,11 @@
 import { createAssetManager } from "../storage/asset-manager.js";
 import { readMigratedEnvelope, writeEnvelope } from "../storage/schema-migrations.js";
+import {
+  abandonWorkspaceWriteFailures,
+  createWorkspaceDatabase,
+  flushWorkspaceWrites,
+  workspaceWritesHealthy,
+} from "../storage/workspace-database.js";
 import { STORAGE_SCHEMA_REGISTRY } from "../storage/schema-registry.js";
 import { SUPPORTED_WIDGET_TYPES as SUPPORTED_WIDGET_TYPES_LIST } from "../widget-system/widget-types.js";
 
@@ -8,6 +14,7 @@ const STORAGE_PREFIX = WORKSPACE_SCHEMA.keyPrefix;
 const LEGACY_GRAPH_KEY = "notes-app.graph.widgets.v1";
 const WORKSPACE_SCHEMA_VERSION = WORKSPACE_SCHEMA.schemaVersion;
 const SUPPORTED_WIDGET_TYPES = new Set(SUPPORTED_WIDGET_TYPES_LIST);
+const GLOBAL_HISTORY_BUDGET_BYTES = 8 * 1024 * 1024;
 
 const WORKSPACE_MIGRATIONS = {
   2: (candidate) => candidate,
@@ -16,6 +23,24 @@ const WORKSPACE_MIGRATIONS = {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function historySize(recovery) {
+  if (!recovery || typeof recovery !== "object") return 0;
+  if (!(recovery.past?.length || recovery.future?.length)) return 0;
+  try { return JSON.stringify({ past: recovery.past ?? [], future: recovery.future ?? [] }).length * 2; }
+  catch { return GLOBAL_HISTORY_BUDGET_BYTES; }
+}
+
+function trimRecoveryToBytes(recovery, maxBytes) {
+  if (!recovery || typeof recovery !== "object") return recovery;
+  const copy = structuredClone(recovery);
+  while (historySize(copy) > maxBytes) {
+    if (copy.past?.length) copy.past.shift();
+    else if (copy.future?.length) copy.future.shift();
+    else break;
+  }
+  return copy;
 }
 
 function makeId(prefix) {
@@ -1191,10 +1216,56 @@ export function createContextWorkspaceStore({
   allowInlinePdfBase64Fallback = true,
 } = {}) {
   const assetManager = createAssetManager({ storage, ...assetManagerOptions });
+  let workspaceDatabase = null;
+
+  function readWorkspaceEnvelope(contextId) {
+    const key = keyForContext(contextId);
+    if (workspaceDatabase) return workspaceDatabase.cache.get(key) ?? null;
+    const raw = storage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  function writeWorkspaceEnvelope(contextId, workspace) {
+    const key = keyForContext(contextId);
+    const envelope = { schemaVersion: WORKSPACE_SCHEMA_VERSION, data: workspace };
+    if (workspaceDatabase) {
+      workspaceDatabase.put(key, envelope);
+      return;
+    }
+    writeEnvelope({ storage, key, schemaVersion: WORKSPACE_SCHEMA_VERSION, data: workspace });
+  }
+
+  function applyGlobalHistoryBudget(workspace) {
+    if (!workspaceDatabase) return workspace;
+    let otherBytes = 0;
+    for (const [key, envelope] of workspaceDatabase.cache) {
+      if (key === keyForContext(workspace.contextId)) continue;
+      otherBytes += historySize(envelope?.data?.recovery ?? envelope?.recovery);
+    }
+    return { ...workspace, recovery: trimRecoveryToBytes(workspace.recovery, Math.max(0, GLOBAL_HISTORY_BUDGET_BYTES - otherBytes)) };
+  }
+
+  function enforceCachedGlobalHistoryBudget() {
+    if (!workspaceDatabase) return;
+    const entries = [...workspaceDatabase.cache.entries()]
+      .map(([key, envelope]) => ({ key, envelope, bytes: historySize(envelope?.data?.recovery ?? envelope?.recovery) }))
+      .sort((a, b) => Date.parse(a.envelope?.data?.updatedAt ?? 0) - Date.parse(b.envelope?.data?.updatedAt ?? 0));
+    let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
+    for (const entry of entries) {
+      if (total <= GLOBAL_HISTORY_BUDGET_BYTES || entry.bytes < 1) continue;
+      const allowed = Math.max(0, GLOBAL_HISTORY_BUDGET_BYTES - (total - entry.bytes));
+      const envelope = structuredClone(entry.envelope);
+      if (envelope?.data) envelope.data.recovery = trimRecoveryToBytes(envelope.data.recovery, allowed);
+      else envelope.recovery = trimRecoveryToBytes(envelope.recovery, allowed);
+      const nextBytes = historySize(envelope?.data?.recovery ?? envelope?.recovery);
+      total -= entry.bytes - nextBytes;
+      workspaceDatabase.put(entry.key, envelope);
+    }
+  }
 
   return {
     readSearchWorkspace(contextId) {
-      try { const raw = storage.getItem(keyForContext(contextId)); const value = raw ? JSON.parse(raw) : null; return sanitizeWorkspace(value?.data ?? value, contextId); }
+      try { const value = readWorkspaceEnvelope(contextId); return sanitizeWorkspace(value?.data ?? value, contextId); }
       catch { return defaultWorkspace(contextId); }
     },
 
@@ -1203,6 +1274,35 @@ export function createContextWorkspaceStore({
     },
 
     async prepare() {
+      workspaceDatabase = await createWorkspaceDatabase();
+      if (workspaceDatabase) {
+        const migratedKeys = [];
+        for (let index = storage.length - 1; index >= 0; index -= 1) {
+          const key = storage.key(index);
+          if (!key?.startsWith(WORKSPACE_SCHEMA.keyPrefix)) continue;
+          try {
+            const value = JSON.parse(storage.getItem(key));
+            if (!workspaceDatabase.cache.has(key)) workspaceDatabase.put(key, value);
+            migratedKeys.push(key);
+          } catch (error) {
+            console.warn(`[storage] failed to migrate legacy workspace ${key}.`, error);
+          }
+        }
+        if (migratedKeys.length) {
+          try {
+            await flushWorkspaceWrites();
+            migratedKeys.forEach((key) => storage.removeItem(key));
+          } catch (error) {
+            console.warn("[storage] workspace migration failed; retaining localStorage copies.", error);
+            workspaceDatabase = null;
+            abandonWorkspaceWriteFailures();
+          }
+        }
+        if (workspaceDatabase) {
+          enforceCachedGlobalHistoryBudget();
+          await flushWorkspaceWrites();
+        }
+      }
       if (typeof assetManager.hydratePayloadCache === "function") {
         await assetManager.hydratePayloadCache();
       }
@@ -1225,21 +1325,18 @@ export function createContextWorkspaceStore({
     loadWorkspace(contextId) {
       const key = keyForContext(contextId);
       let workspace = defaultWorkspace(contextId);
-
-      const loaded = readMigratedEnvelope({
-        storage,
-        key,
-        targetSchemaVersion: WORKSPACE_SCHEMA_VERSION,
-        legacySchemaVersion: 1,
-        defaultData: defaultWorkspace(contextId),
-        migrations: WORKSPACE_MIGRATIONS,
-        onMigrationStep: ({ from, to }) => {
-          console.info(`[storage] migrated workspace ${contextId} ${from} -> ${to}`);
-        },
-        onError: (error) => {
-          console.warn(`[storage] failed to read workspace ${contextId}, reset to defaults.`, error);
-        },
-      });
+      let loaded;
+      if (workspaceDatabase) {
+        const envelope = readWorkspaceEnvelope(contextId);
+        loaded = { data: envelope?.data ?? envelope ?? defaultWorkspace(contextId) };
+      } else {
+        loaded = readMigratedEnvelope({
+          storage, key, targetSchemaVersion: WORKSPACE_SCHEMA_VERSION, legacySchemaVersion: 1,
+          defaultData: defaultWorkspace(contextId), migrations: WORKSPACE_MIGRATIONS,
+          onMigrationStep: ({ from, to }) => console.info(`[storage] migrated workspace ${contextId} ${from} -> ${to}`),
+          onError: (error) => console.warn(`[storage] failed to read workspace ${contextId}, reset to defaults.`, error),
+        });
+      }
       const rawWidgets = Array.isArray(loaded?.data?.widgets) ? loaded.data.widgets : [];
       const hasUnsupportedWidgetTypes = rawWidgets.some((entry) => {
         const type = entry && typeof entry.type === "string" ? entry.type : null;
@@ -1310,16 +1407,12 @@ export function createContextWorkspaceStore({
       const canonicalized = canonicalizeWorkspaceAssets(normalized, contextId, assetManager, {
         allowInlinePdfBase64Fallback,
       });
-      const workspace = sanitizeWorkspace(canonicalized.workspace, contextId);
+      const workspace = applyGlobalHistoryBudget(sanitizeWorkspace(canonicalized.workspace, contextId));
 
       try {
-        writeEnvelope({
-          storage,
-          key: keyForContext(contextId),
-          schemaVersion: WORKSPACE_SCHEMA_VERSION,
-          data: workspace,
-        });
+        writeWorkspaceEnvelope(contextId, workspace);
         assetManager.replaceContextReferences(contextId, canonicalized.refsByAssetId);
+        if (!workspaceWritesHealthy()) return false;
       } catch (error) {
         console.warn(`[storage] failed to persist workspace ${contextId}.`, error);
         return false;
@@ -1376,7 +1469,9 @@ export function createContextWorkspaceStore({
     },
 
     deleteWorkspace(contextId) {
-      storage.removeItem(keyForContext(contextId));
+      const key = keyForContext(contextId);
+      if (workspaceDatabase) workspaceDatabase.delete(key);
+      else storage.removeItem(key);
       assetManager.removeContextReferences(contextId);
       assetManager.scheduleGarbageCollection({ delayMs: 120 });
     },

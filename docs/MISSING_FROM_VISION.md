@@ -1,6 +1,6 @@
 # MISSING_FROM_VISION
 
-Updated 2026-10-14. Track actual remaining gaps; historical audit findings are in `docs/reviews/UI_EASE_OF_USE_AND_FEATURE_AUDIT_2026-09-26.md`. Implementation status and current test outcomes are in `docs/CURRENT_STATE.md`.
+Updated 2026-10-19. Track actual remaining gaps; historical audit findings are in `docs/reviews/UI_EASE_OF_USE_AND_FEATURE_AUDIT_2026-09-26.md`. Implementation status and current test outcomes are in `docs/CURRENT_STATE.md`.
 
 ## Release validation
 
@@ -11,7 +11,7 @@ Updated 2026-10-14. Track actual remaining gaps; historical audit findings are i
 ## Implementation limits
 
 - Recovery covers section canvas content. Notebook/section/library deletion is not restored by that section's Recently Deleted bin.
-- Archive restore validates checksums, rolls back settings, removes assets introduced by failed/cancelled staging, and pauses sibling-tab persistence. Settings rollback still requires spare local storage. Backup records over 128 MiB are rejected.
+- Archive restore validates checksums, rolls back settings and workspace records, removes assets introduced by failed/cancelled staging, and pauses sibling-tab persistence. Settings rollback still requires spare local storage. Backup records over 128 MiB are rejected.
 - Searchable PDF text is extracted on import; legacy PDFs without saved text require reimport. OCR is outside scope. PDF export remains image based.
 - Source-link preview describes content; it is not yet a rich side-by-side visual diff. Existing source provenance cannot be reconstructed for old independent copies that never stored it.
 - Main orchestration still owns many concerns despite separate history, export, backup, search and source-update modules.

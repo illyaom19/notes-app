@@ -31,15 +31,15 @@ try {
   for (let x = 752; x < 800; x += 2) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y: 400 + (x - 750) / 2, buttons: 1, pointerType: 'pen', force: 0.5 });
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 800, y: 425, button: 'left', buttons: 0, clickCount: 1, pointerType: 'pen' });
   await page.waitForTimeout(600);
-  await page.waitForFunction(() => Object.entries(localStorage).filter(([k]) => k.startsWith('notes-app.context.workspace.')).some(([, v]) => JSON.parse(v).data.inkStrokes?.length > 0));
+  await page.waitForFunction(async () => (await (await import('/src/features/storage/workspace-database.js')).inspectWorkspaceStorage()).records.some(([, v]) => v.data.inkStrokes?.length > 0));
   await page.locator('#undo-ink').click();
-  await page.waitForFunction(() => Object.entries(localStorage).filter(([k]) => k.startsWith('notes-app.context.workspace.')).every(([, v]) => (JSON.parse(v).data.inkStrokes?.length ?? 0) === 0));
+  await page.waitForFunction(async () => (await (await import('/src/features/storage/workspace-database.js')).inspectWorkspaceStorage()).records.every(([, v]) => (v.data.inkStrokes?.length ?? 0) === 0));
   assert.equal(await page.locator('#widget-count').textContent(), '1');
   await page.locator('#undo-ink').click();
   assert.equal(await page.locator('#widget-count').textContent(), '0');
   await page.locator('#redo-ink').click();
   await page.locator('#redo-ink').click();
-  await page.waitForFunction(() => Object.entries(localStorage).filter(([k]) => k.startsWith('notes-app.context.workspace.')).some(([, v]) => JSON.parse(v).data.inkStrokes?.length > 0));
+  await page.waitForFunction(async () => (await (await import('/src/features/storage/workspace-database.js')).inspectWorkspaceStorage()).records.some(([, v]) => v.data.inkStrokes?.length > 0));
   assert.deepEqual(errors, []);
   console.log('Four viewport layouts and chronological pen/widget undo/redo passed.');
 } finally { await browser.close(); }

@@ -1,6 +1,6 @@
 # CURRENT_STATE
 
-Updated 2026-10-14. The approved UI improvement implementation and reliability follow-up are on `origin/main`. Remaining hardware release gates are listed below. No deployment was requested. The decision ledger is `docs/plans/UI_IMPROVEMENT_PLAN.md`. Earlier review/planning history is preserved in `docs/reviews/CURRENT_STATE_before_UI_implementation_2026-10-08.md`.
+Updated 2026-10-19. The approved UI improvement implementation and reliability follow-up are on `origin/main`; the workspace-storage migration described below is currently uncommitted. Remaining hardware release gates are listed below. No deployment was requested. The decision ledger is `docs/plans/UI_IMPROVEMENT_PLAN.md`. Earlier review/planning history is preserved in `docs/reviews/CURRENT_STATE_before_UI_implementation_2026-10-08.md`.
 
 ## Implemented surface
 
@@ -39,6 +39,25 @@ Updated 2026-10-14. The approved UI improvement implementation and reliability f
 - Added `tests/browser/reliability-check.mjs`. Twelve section switches preserve one PDF widget and one original PDF asset; injected `QuotaExceededError` keeps the current section active until the retry save succeeds.
 - Offline browser coverage now verifies the dismissed-suggestion recovery tray and that aborting an archive restore after staging begins removes every newly inserted asset.
 - Workspace restore publishes a short-lived coordination event. Sibling tabs pause persistence while restore runs, reload after commit, and resume after failure or a five-minute expiry fallback.
+
+### Storage diagnosis — 2026-10-18
+- The Settings usage figure comes from `navigator.storage.estimate()` and represents combined origin storage, while section workspaces still save widgets, ink and recovery/history data through `localStorage`.
+- History is bounded to 2 MiB per section, but there is no global `localStorage` budget across sections. A tablet can therefore reject a workspace write at the much smaller Web Storage limit while still reporting substantial device free space and modest combined origin use.
+- `saveWorkspace()` currently converts every serialization or storage exception into `false`; the persistence controller consequently labels every such failure as storage pressure. The warning does not prove that device or browser-origin storage is full.
+- The diagnostic pass made no application changes; its corrective direction was implemented on 2026-10-19 as described below.
+
+### Workspace storage migration — 2026-10-19
+- Section workspace payloads now use the dedicated `notes-app-workspaces` IndexedDB database. Startup hydrates an in-memory cache before canvas restoration, durably copies legacy `localStorage` workspaces, and removes legacy records only after the IndexedDB flush succeeds. Failed migration retains the original records and falls back to `localStorage` for that session.
+- IndexedDB writes are serialized per workspace key. Save feedback and Retry wait for workspace and asset writes; asynchronous failures identify the IndexedDB backend and actual exception instead of displaying every failure as device storage exhaustion. The Settings meter labels combined browser-origin use separately from workspace bytes.
+- Persisted undo/redo history has an 8 MiB combined workspace budget in addition to the existing 2 MiB per-section cap. Startup trims oldest section history when existing data exceeds the global budget; Recently Deleted entries remain separate.
+- Editable backup format v2 includes both asset and workspace IndexedDB records. Inspection and restore remain compatible with v1 backups, and failed/cancelled restore rolls back workspace records as well as newly staged assets.
+- Browser coverage reads persisted workspaces through the IndexedDB inspection API. Reliability coverage verifies legacy migration, repeated section switching, injected IndexedDB quota failure/Retry, and sibling-tab restore coordination.
+
+## Verification — 2026-10-19
+- `npm test`: **67 passed**, 0 failed.
+- `npm run test:browser`: all eight browser workflows passed after the migration; the focused offline and reliability workflows also passed after their final fixture/migration assertions.
+- `npm run offline:build`: 278 assets, version `53a0cc92423f6ed9`.
+- Chromium 153 / Playwright 1.63 ran from `/tmp/notes-app-browsers`; test-only shared libraries ran from `/tmp/notes-app-libs`.
 
 ### Push handoff
 - User requested committing and pushing the implementation. `git fetch origin` confirmed local `main` and `origin/main` were aligned before this commit; `git diff --check` passed. Existing validation remains 67 unit/storage tests and seven browser workflows passing.

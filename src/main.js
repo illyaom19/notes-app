@@ -1,6 +1,7 @@
 import { prepareNotebookSearch as indexNotebook } from "./features/search/notebook-search.js";
 import { organizeSettingsMenu } from "./features/ui/settings-menu.js";
 import { flushAssetWrites } from "./features/storage/asset-manager.js";
+import { flushWorkspaceWrites, inspectWorkspaceStorage } from "./features/storage/workspace-database.js";
 import { recoverInterruptedRestore, RESTORE_EVENT_KEY } from "./features/storage/workspace-backup.js";
 recoverInterruptedRestore();
 import { createSourceUpdateRuntime } from "./features/runtime/source-update-runtime.js";
@@ -469,7 +470,10 @@ async function refreshStorageUsageUi() {
 
   storageUsageRefreshInFlight = true;
   try {
-    const snapshot = await readStorageEstimateSnapshot();
+    const [snapshot, workspaceStorage] = await Promise.all([
+      readStorageEstimateSnapshot(),
+      inspectWorkspaceStorage(),
+    ]);
     if (!snapshot) {
       storageUsageProgress.max = 1;
       storageUsageProgress.value = 0;
@@ -479,8 +483,9 @@ async function refreshStorageUsageUi() {
     storageUsageProgress.max = snapshot.hasQuota ? snapshot.quota : 1;
     storageUsageProgress.value = snapshot.hasQuota ? Math.min(snapshot.usage, snapshot.quota) : 0;
     storageUsageLabel.textContent = snapshot.hasQuota
-      ? `${formatMegabytes(snapshot.usage)} / ${formatMegabytes(snapshot.quota)}`
-      : `${formatMegabytes(snapshot.usage)} / Unknown`;
+      ? `${formatMegabytes(snapshot.usage)} / ${formatMegabytes(snapshot.quota)} · workspaces ${formatMegabytes(workspaceStorage.bytes)}`
+      : `${formatMegabytes(snapshot.usage)} / Unknown · workspaces ${formatMegabytes(workspaceStorage.bytes)}`;
+    storageUsageMeter.title = "Combined site storage / browser quota · workspace data in IndexedDB";
   } catch (_error) {
     storageUsageProgress.max = 1;
     storageUsageProgress.value = 0;
@@ -3303,6 +3308,19 @@ function setupCrossTabRestoreCoordination() {
   });
 }
 
+function setupStorageFailureReporting() {
+  window.addEventListener("notes-app-storage-error", (event) => {
+    showSaveState("failed");
+    const detail = event.detail ?? {};
+    const reason = detail.name === "QuotaExceededError"
+      ? "The browser refused the workspace write because this site reached its storage quota."
+      : `The ${detail.backend ?? "browser storage"} write failed${detail.message ? `: ${detail.message}` : "."}`;
+    void showNoticeDialog(`${reason}\nThe tablet's free-space number is separate from this browser limit. Export a backup before clearing site data.`, {
+      title: "Workspace not saved",
+    });
+  });
+}
+
 let saveStatusGeneration = 0;
 function showSaveState(state) {
   const output = document.querySelector('#save-status');
@@ -3314,7 +3332,7 @@ function showSaveState(state) {
   output.textContent = state === 'failed' ? 'Not saved — Retry' : 'Saving…';
   if (state !== 'saved') return;
   // A late asset-write completion must never hide a newer save or failure.
-  void flushAssetWrites().then(() => {
+  void Promise.all([flushAssetWrites(), flushWorkspaceWrites()]).then(() => {
     if (generation !== saveStatusGeneration) return;
     output.dataset.state = 'saved';
     output.textContent = 'Saved';
@@ -3384,7 +3402,10 @@ function setupHistory() {
   });
   historyRuntime.initialize(snapshotForHistory(), pendingRecovery?.recovery);
   sourceUpdateRuntime = createSourceUpdateRuntime({ runtime, canvas, notebookLibraryStore, notebookDocumentLibraryStore, getNotebookId: () => activeContextId, isRestoring: () => restoringContext, getHistory: () => historyRuntime, snapshotForHistory, workspaceScopeId, makeId, showConfirmDialog, notifyRecovery, onChanged: updateWidgetUi, persist: scheduleWorkspacePersist });
-  document.querySelector('#save-status').onclick = () => flushWorkspacePersist();
+  document.querySelector('#save-status').onclick = async () => {
+    try { await flushWorkspaceWrites(); } catch (_error) { return; }
+    flushWorkspacePersist();
+  };
   document.querySelector('#recently-deleted').onclick = async () => {
     const entries = historyRuntime.listDeleted();
     const action = await showActionDialog({ title: 'Recently Deleted · this section', message: entries.length ? 'Content is kept for 30 days. Undo history may retain older edits separately.' : 'No recently deleted content in this section.', actions: [...entries.map((entry) => ({ id: entry.id, label: `Restore ${entry.label}` })), ...(entries.length ? [{ id: 'empty', label: 'Empty Recently Deleted', variant: 'danger' }] : [])] });
@@ -5519,6 +5540,7 @@ async function bootstrap() {
   organizeSettingsMenu();
   wireBaseEventHandlers();
   setupCrossTabRestoreCoordination();
+  setupStorageFailureReporting();
   setupBackupControls();
   wireWidgetInteractionManager();
   wireWidgetCreationController();
